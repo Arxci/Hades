@@ -37,6 +37,15 @@ void AHadesCharacterBase::UnPossessed()
 void AHadesCharacterBase::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// Granted once per lifetime rather than per possession, so re-possessing doesn't stack grant counts.
+	if (HadesAbilitySystemComponent)
+	{
+		for (const TSubclassOf<UHadesAbility>& AbilityClass : DefaultAbilities)
+		{
+			HadesAbilitySystemComponent->GiveAbility(AbilityClass);
+		}
+	}
 	
 	if (HadesCharacterMovement)
 	{

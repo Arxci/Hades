@@ -231,6 +231,23 @@ bool UHadesAbilitySystemComponent::TryDeactivateAbilityByTag(FGameplayTag InAbil
 	return false;
 }
 
+bool UHadesAbilitySystemComponent::ToggleAbilityByTag(FGameplayTag InAbilityTag)
+{
+	if (!InAbilityTag.IsValid()) return false;
+
+	for (const auto& Pair : GrantedAbilities)
+	{
+		const UHadesAbility* Ability = Pair.Value;
+		if (Ability && Ability->AbilityTags.HasTag(InAbilityTag))
+		{
+			return Ability->IsActivationRequested()
+				? TryDeactivateAbilityByClass(Pair.Key)
+				: TryActivateAbilityByClass(Pair.Key);
+		}
+	}
+	return false;
+}
+
 void UHadesAbilitySystemComponent::DeactivateAllAbilities()
 {
 	for (const auto& Pair : GrantedAbilities)

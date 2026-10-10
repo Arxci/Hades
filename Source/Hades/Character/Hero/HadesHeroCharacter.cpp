@@ -5,10 +5,16 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Camera/CameraComponent.h"
 
-#include "EnhancedInputComponent.h"
 #include "InputActionValue.h"
 
 #include "GameFramework/CharacterMovementComponent.h"
+
+#include "Hades/Hades.h"
+#include "Hades/HadesGameplayTags.h"
+#include "Hades/AbilitySystem/HadesAbilitySystemComponent.h"
+#include "Hades/Input/HadesInputComponent.h"
+#include "Hades/Input/HadesInputConfig.h"
+#include "Hades/Player/HadesPlayerController.h"
 
 AHadesHeroCharacter::AHadesHeroCharacter(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
@@ -51,29 +57,139 @@ void AHadesHeroCharacter::PostInitializeComponents()
 	}
 }
 
+void AHadesHeroCharacter::BeginPlay()
+{
+	Super::BeginPlay();
+
+	SetEyeHeight(BaseEyeHeight);
+}
+
+void AHadesHeroCharacter::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	
+	FMath::CriticallyDampedSmoothing(EyeHeight, EyeHeightRate, BaseEyeHeight, 0.0f, DeltaSeconds, EyeHeightSmoothingTime);
+	SetEyeHeight(EyeHeight);
+}
+
+void AHadesHeroCharacter::OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust)
+{
+	Super::OnStartCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust);
+	
+	if (GetCharacterMovement()->bCrouchMaintainsBaseLocation)
+	{
+		SetEyeHeight(EyeHeight + ScaledHalfHeightAdjust);
+	}
+}
+
+void AHadesHeroCharacter::OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust)
+{
+	Super::OnEndCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust);
+	
+	if (GetCharacterMovement()->bCrouchMaintainsBaseLocation)
+	{
+		SetEyeHeight(EyeHeight - ScaledHalfHeightAdjust);
+	}
+}
+
+void AHadesHeroCharacter::SetEyeHeight(float NewEyeHeight)
+{
+	EyeHeight = NewEyeHeight;
+	ViewRoot->SetRelativeLocation(FVector(0.0f, 0.0f, EyeHeight));
+}
+
+UInputComponent* AHadesHeroCharacter::CreatePlayerInputComponent()
+{
+	static const FName InputComponentName(TEXT("PawnInputComponent0"));
+	return NewObject<UHadesInputComponent>(this, InputComponentName);
+}
+
 void AHadesHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 
-	UEnhancedInputComponent* EnhancedInput = CastChecked<UEnhancedInputComponent>(PlayerInputComponent);
+	if (!InputConfig)
+	{
+		UE_LOG(LogHadesInput, Error, TEXT("[Input] %s has no InputConfig; player input is unbound."), *GetNameSafe(this));
+		return;
+	}
+
+	UHadesInputComponent* HadesInput = CastChecked<UHadesInputComponent>(PlayerInputComponent);
 	
-	EnhancedInput->BindAction(MoveAction, ETriggerEvent::Triggered, this, &ThisClass::Move);
-	EnhancedInput->BindAction(LookAction, ETriggerEvent::Triggered, this, &ThisClass::Look);
-	EnhancedInput->BindAction(JumpAction, ETriggerEvent::Started, this, &ACharacter::Jump);
-	EnhancedInput->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
+	HadesInput->BindNativeAction(InputConfig, HadesGameplayTags::Input_Move, ETriggerEvent::Triggered, this, &ThisClass::Input_Move);
+	HadesInput->BindNativeAction(InputConfig, HadesGameplayTags::Input_Look, ETriggerEvent::Triggered, this, &ThisClass::Input_Look);
+	HadesInput->BindNativeAction(InputConfig, HadesGameplayTags::Input_Jump, ETriggerEvent::Started, this, &ACharacter::Jump);
+	HadesInput->BindNativeAction(InputConfig, HadesGameplayTags::Input_Jump, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
+
+	HadesInput->BindAbilityActions(InputConfig, this, &ThisClass::Input_AbilityInputPressed, &ThisClass::Input_AbilityInputReleased);
+	HadesInput->BindInputValues(InputConfig);
 }
 
-void AHadesHeroCharacter::Move(const FInputActionValue& Value)
+FInputActionValue AHadesHeroCharacter::GetInputValue(FGameplayTag InputTag) const
+{
+	const UHadesInputComponent* HadesInput = Cast<UHadesInputComponent>(InputComponent);
+	return HadesInput ? HadesInput->GetInputValue(InputTag) : FInputActionValue();
+}
+
+void AHadesHeroCharacter::UnPossessed()
+{
+	if (UHadesInputComponent* HadesInput = Cast<UHadesInputComponent>(InputComponent))
+	{
+		HadesInput->ReleaseHeldAbilityInputs();
+	}
+
+	Super::UnPossessed();
+}
+
+void AHadesHeroCharacter::Input_Move(const FInputActionValue& Value)
 {
 	const FVector2D Input = Value.Get<FVector2D>();
 	AddMovementInput(GetActorForwardVector(), Input.Y);
 	AddMovementInput(GetActorRightVector(), Input.X);
 }
 
-void AHadesHeroCharacter::Look(const FInputActionValue& Value)
+void AHadesHeroCharacter::Input_Look(const FInputActionValue& Value)
 {
 	const FVector2D Input = Value.Get<FVector2D>();
 	AddControllerYawInput(Input.X);
 	AddControllerPitchInput(Input.Y);
 }
 
+void AHadesHeroCharacter::Input_AbilityInputPressed(FGameplayTag InputTag)
+{
+	const FHadesAbilityInputAction* AbilityInput = InputConfig ? InputConfig->FindAbilityInputActionForTag(InputTag) : nullptr;
+	if (!AbilityInput || !HadesAbilitySystemComponent) return;
+
+	if (ResolveAbilityInputMode(*AbilityInput) == EHadesAbilityInputMode::Toggle)
+	{
+		HadesAbilitySystemComponent->ToggleAbilityByTag(AbilityInput->AbilityTag);
+	}
+	else
+	{
+		HadesAbilitySystemComponent->TryActivateAbilityByTag(AbilityInput->AbilityTag);
+	}
+}
+
+void AHadesHeroCharacter::Input_AbilityInputReleased(FGameplayTag InputTag)
+{
+	const FHadesAbilityInputAction* AbilityInput = InputConfig ? InputConfig->FindAbilityInputActionForTag(InputTag) : nullptr;
+	if (!AbilityInput || !HadesAbilitySystemComponent) return;
+
+	if (ResolveAbilityInputMode(*AbilityInput) == EHadesAbilityInputMode::Hold)
+	{
+		HadesAbilitySystemComponent->TryDeactivateAbilityByTag(AbilityInput->AbilityTag);
+	}
+}
+
+EHadesAbilityInputMode AHadesHeroCharacter::ResolveAbilityInputMode(const FHadesAbilityInputAction& AbilityInput) const
+{
+	if (AbilityInput.InputMode == EHadesAbilityInputMode::Hold)
+	{
+		const AHadesPlayerController* PC = GetController<AHadesPlayerController>();
+		if (PC && PC->IsInputToggleEnabled(AbilityInput.InputTag))
+		{
+			return EHadesAbilityInputMode::Toggle;
+		}
+	}
+	return AbilityInput.InputMode;
+}

@@ -41,7 +41,10 @@ void UHadesAbility_Run::TickAbility(float DeltaTime)
 	{
 		if (UHadesAbilitySystemComponent* ASC = GetHadesAbilitySystemComponent())
 		{
-			ASC->AddLooseGameplayTag(HadesGameplayTags::Ability_Intent_Run);
+			if (!ASC->HasTag(HadesGameplayTags::Ability_Intent_Run))
+			{
+				ASC->AddLooseGameplayTag(HadesGameplayTags::Ability_Intent_Run);
+			}
 		}
 		CommitAbilityEnd();
 	}
@@ -53,7 +56,11 @@ bool UHadesAbility_Run::RequestActivateAbility()
 	
 	if (UHadesAbilitySystemComponent* ASC = GetHadesAbilitySystemComponent())
 	{
-		ASC->AddLooseGameplayTag(HadesGameplayTags::Ability_Intent_Run);
+		//Intent tags are flags; a second ref would survive the single remove in RequestDeactivateAbility.
+		if (!ASC->HasTag(HadesGameplayTags::Ability_Intent_Run))
+		{
+			ASC->AddLooseGameplayTag(HadesGameplayTags::Ability_Intent_Run);
+		}
 		ASC->RemoveLooseGameplayTag(HadesGameplayTags::Ability_Intent_Walk);
 	}
 	
@@ -114,6 +121,17 @@ bool UHadesAbility_Run::CanCharacterWalk() const
 	if (IsActive()) return true;
 
 	return false;
+}
+
+bool UHadesAbility_Run::IsActivationRequested() const
+{
+	if (const UHadesAbilitySystemComponent* ASC = GetHadesAbilitySystemComponent())
+	{
+		//Run intent survives stopping and resumes on forward movement; walk intent means the run was already let go.
+		if (ASC->HasTag(HadesGameplayTags::Ability_Intent_Run)) return true;
+		if (ASC->HasTag(HadesGameplayTags::Ability_Intent_Walk)) return false;
+	}
+	return Super::IsActivationRequested();
 }
 
 bool UHadesAbility_Run::CanTick()

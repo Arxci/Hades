@@ -121,7 +121,6 @@ void UHadesCharacterMovementComponent::UpdateGroundedAcceleration()
 	}
 }
 
-
 FVector UHadesCharacterMovementComponent::CalculateRelativeAcceleration() const
 {
 	const FVector Accel = GetAcceleration();

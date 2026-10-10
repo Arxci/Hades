@@ -45,7 +45,11 @@ bool UHadesAbility_Crouch::RequestActivateAbility()
 	
 	if (UHadesAbilitySystemComponent* ASC = GetHadesAbilitySystemComponent())
 	{
-		ASC->AddLooseGameplayTag(HadesGameplayTags::Ability_Intent_Crouch);
+		//Intent tags are flags; a second ref would survive the single remove in RequestDeactivateAbility.
+		if (!ASC->HasTag(HadesGameplayTags::Ability_Intent_Crouch))
+		{
+			ASC->AddLooseGameplayTag(HadesGameplayTags::Ability_Intent_Crouch);
+		}
 		ASC->RemoveLooseGameplayTag(HadesGameplayTags::Ability_Intent_UnCrouch);
 	}
 	
@@ -54,6 +58,12 @@ bool UHadesAbility_Crouch::RequestActivateAbility()
 
 bool UHadesAbility_Crouch::RequestDeactivateAbility(bool bForce)
 {
+	//Always clear crouch intent, even if not active: a crouch requested mid-air and released before landing must not commit on landing.
+	if (UHadesAbilitySystemComponent* ASC = GetHadesAbilitySystemComponent())
+	{
+		ASC->RemoveLooseGameplayTag(HadesGameplayTags::Ability_Intent_Crouch);
+	}
+
 	if (!Super::RequestDeactivateAbility(bForce)) return false;
 	
 	if (UHadesAbilitySystemComponent* ASC = GetHadesAbilitySystemComponent())
@@ -62,7 +72,6 @@ bool UHadesAbility_Crouch::RequestDeactivateAbility(bool bForce)
 		{
 			ASC->AddLooseGameplayTag(HadesGameplayTags::Ability_Intent_UnCrouch);
 		}
-		ASC->RemoveLooseGameplayTag(HadesGameplayTags::Ability_Intent_Crouch);
 	}
 	
 	return true;
@@ -105,6 +114,17 @@ bool UHadesAbility_Crouch::CanCharacterUnCrouch() const
 	if (IsActive()) return true;
 
 	return false;
+}
+
+bool UHadesAbility_Crouch::IsActivationRequested() const
+{
+	if (const UHadesAbilitySystemComponent* ASC = GetHadesAbilitySystemComponent())
+	{
+		//Crouch intent waits on being grounded; uncrouch intent waits on headroom but means the crouch was already let go.
+		if (ASC->HasTag(HadesGameplayTags::Ability_Intent_Crouch)) return true;
+		if (ASC->HasTag(HadesGameplayTags::Ability_Intent_UnCrouch)) return false;
+	}
+	return Super::IsActivationRequested();
 }
 
 bool UHadesAbility_Crouch::CanTick()
@@ -172,4 +192,3 @@ void UHadesAbility_Crouch::ForceEndAbility()
 	CommitAbilityEnd();
 	}
 }
-

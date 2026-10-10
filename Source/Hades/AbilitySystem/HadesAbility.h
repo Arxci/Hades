@@ -60,6 +60,13 @@ public:
 	bool IsIdle() const { return ActivationState == EHadesAbilityActivationState::Idle; }
 	UFUNCTION(BlueprintCallable, Category = "Hades Ability|State")
 	bool IsEnabled() const { return bIsEnabled; }
+	/**
+	* True while the owner wants this ability on: it is active, or an activation request is still pending.
+	* Abilities that commit later than they are requested (Run waits for forward movement) override this
+	* so toggling flips what the player asked for, not just what has committed.
+	**/
+	UFUNCTION(BlueprintCallable, Category = "Hades Ability|State")
+	virtual bool IsActivationRequested() const { return IsActive(); }
 
 public:
 	// Cooldown

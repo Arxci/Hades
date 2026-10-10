@@ -23,6 +23,7 @@ protected:
 	
 	virtual void TickAbility(float DeltaTime) override;
 	virtual bool CanTick() override;
+	virtual bool IsActivationRequested() const override;
 
 protected:
 	float BoostThreshold = 0.2f;

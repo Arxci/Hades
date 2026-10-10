@@ -79,6 +79,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Ability System")
 	bool TryDeactivateAbilityByTag(FGameplayTag InAbilityTag);
 	/**
+	* Toggle a granted ability using an associated InAbilityTag: deactivate it if its activation is requested
+	* (see UHadesAbility::IsActivationRequested), otherwise activate it.
+	* @param InAbilityTag the tag reference for the HadesAbility to toggle
+	* @return True if the activation or deactivation request was accepted.
+	**/
+	UFUNCTION(BlueprintCallable, Category = "Ability System")
+	bool ToggleAbilityByTag(FGameplayTag InAbilityTag);
+	/**
 	* Deactivates all active abilities.
 	**/
 	UFUNCTION(BlueprintCallable, Category = "Ability System")

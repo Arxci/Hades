@@ -13,6 +13,18 @@ AHadesPlayerController::AHadesPlayerController()
 	PlayerCameraManagerClass = AHadesPlayerCameraManager::StaticClass();
 }
 
+void AHadesPlayerController::SetInputToggleEnabled(FGameplayTag InputTag, bool bEnabled)
+{
+	if (bEnabled)
+	{
+		ToggleInputTags.AddTag(InputTag);
+	}
+	else
+	{
+		ToggleInputTags.RemoveTag(InputTag);
+	}
+}
+
 void AHadesPlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
