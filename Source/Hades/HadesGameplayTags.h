@@ -1,0 +1,17 @@
+﻿#pragma once
+
+#include "NativeGameplayTags.h"
+
+namespace HadesGameplayTags
+{
+
+	HADES_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Ability_Run);
+	HADES_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Ability_Crouch);
+	HADES_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Ability_Intent_Crouch);
+	HADES_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Ability_Intent_UnCrouch);
+	HADES_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Ability_Intent_Run);
+	HADES_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Ability_Intent_Walk);
+
+	HADES_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Character_State_Running);
+	HADES_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Character_State_Crouching);
+}
