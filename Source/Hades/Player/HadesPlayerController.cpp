@@ -1,6 +1,6 @@
 ﻿#include "HadesPlayerController.h"
 
-#include "Hades/Player/HadesPlayerCameraManager.h"
+#include "Hades/Camera/HadesPlayerCameraManager.h"
 
 #include "EnhancedInputSubsystems.h"
 

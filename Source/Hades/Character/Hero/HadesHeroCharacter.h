@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 
-#include "Hades/Character//HadesCharacterBase.h"
+#include "Hades/Character/HadesCharacterBase.h"
 
 #include "GameplayTagContainer.h"
 #include "InputActionValue.h"
@@ -21,7 +21,7 @@ class HADES_API AHadesHeroCharacter : public AHadesCharacterBase
 	GENERATED_BODY()
 
 public:
-	AHadesHeroCharacter(const FObjectInitializer& ObjectInitializer  = FObjectInitializer::Get());
+	AHadesHeroCharacter(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
 	//~ Begin AActor Interface
 	virtual void PostInitializeComponents() override;
@@ -46,11 +46,11 @@ public:
 	FInputActionValue GetInputValue(UPARAM(meta = (Categories = "Input")) FGameplayTag InputTag) const;
 	
 protected:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Character|Camera")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character|Camera")
 	TObjectPtr<USceneComponent> ViewRoot;
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Character|Camera")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character|Camera")
 	TObjectPtr<UCameraComponent> FirstPersonCamera;
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Character|Viewmodel")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character|Viewmodel")
 	TObjectPtr<USkeletalMeshComponent> ArmsMesh;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Character|Camera", meta = (ClampMin = "0.0", Units = "s"))

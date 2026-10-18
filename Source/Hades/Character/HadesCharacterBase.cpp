@@ -70,7 +70,7 @@ void AHadesCharacterBase::Run()
 	}
 }
 
-void AHadesCharacterBase::StopRun() 
+void AHadesCharacterBase::StopRun()
 {
 	if (HadesCharacterMovement)
 	{

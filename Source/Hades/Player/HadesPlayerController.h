@@ -18,12 +18,10 @@ class HADES_API AHadesPlayerController : public APlayerController
 	
 public:
 	AHadesPlayerController();
-
-	/** Whether the player prefers toggle over hold for this Hold-mode ability input. */
+	
 	UFUNCTION(BlueprintPure, Category = "Input")
 	bool IsInputToggleEnabled(FGameplayTag InputTag) const { return ToggleInputTags.HasTagExact(InputTag); }
-
-	/** Switch a Hold-mode ability input (Input.Run, Input.Crouch) between hold and toggle. A player setting. */
+	
 	UFUNCTION(BlueprintCallable, Category = "Input")
 	void SetInputToggleEnabled(FGameplayTag InputTag, bool bEnabled);
 
@@ -32,8 +30,7 @@ protected:
 	
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TArray<TObjectPtr<UInputMappingContext>> DefaultMappingContexts;
-
-	/** Hold-mode ability inputs the player has switched to toggle. Lives here, not on the pawn, so it survives respawns. */
+	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", meta = (Categories = "Input"))
 	FGameplayTagContainer ToggleInputTags;
 };

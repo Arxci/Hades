@@ -80,7 +80,10 @@ float UHadesCharacterMovementComponent::GetMoveSpeedMultiplier() const
 
 void UHadesCharacterMovementComponent::StartRunning()
 {
-	if (bIsRunning) return;
+	if (bIsRunning)
+	{
+		return;
+	}
 
 	bIsRunning = true;
 	
@@ -92,7 +95,10 @@ void UHadesCharacterMovementComponent::StartRunning()
 
 void UHadesCharacterMovementComponent::StopRunning()
 {
-	if (!bIsRunning) return;
+	if (!bIsRunning)
+	{
+		return;
+	}
 
 	bIsRunning = false;
 
