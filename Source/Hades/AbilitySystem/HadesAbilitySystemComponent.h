@@ -13,7 +13,6 @@ class HADES_API UHadesAbilitySystemComponent : public UAbilitySystemComponent
 	GENERATED_BODY()
 
 public:
-
-	UFUNCTION(BlueprintCallable, Category = "Ability System")
-	void ToggleAbilitiesByTag(const FGameplayTagContainer& AbilityTags);
+	void AbilityInputTagPressed(FGameplayTag InputTag);
+	void AbilityInputTagReleased(FGameplayTag InputTag);
 };

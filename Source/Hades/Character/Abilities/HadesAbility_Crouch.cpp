@@ -1,7 +1,5 @@
 ﻿#include "HadesAbility_Crouch.h"
 
-#include "GameFramework/CharacterMovementComponent.h"
-
 #include "Hades/Character/HadesCharacterBase.h"
 #include "Hades/HadesGameplayTags.h"
 
@@ -10,6 +8,9 @@ UHadesAbility_Crouch::UHadesAbility_Crouch()
 {
 	SetAssetTags(FGameplayTagContainer(HadesGameplayTags::Ability_Crouch));
 	CancelAbilitiesWithTag.AddTag(HadesGameplayTags::Ability_Run);
+
+	InputTag = HadesGameplayTags::Input_Crouch;
+	bEndOnInputRelease = true;
 }
 
 void UHadesAbility_Crouch::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
@@ -25,7 +26,7 @@ void UHadesAbility_Crouch::ActivateAbility(const FGameplayAbilitySpecHandle Hand
 
 	if (AHadesCharacterBase* Character = GetHadesCharacterFromActorInfo())
 	{
-		Character->GetCharacterMovement()->bWantsToCrouch = true;
+		Character->Crouch();
 	}
 	
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);

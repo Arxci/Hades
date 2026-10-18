@@ -7,6 +7,9 @@ UHadesAbility_Run::UHadesAbility_Run()
 {
 	SetAssetTags(FGameplayTagContainer(HadesGameplayTags::Ability_Run));
 	CancelAbilitiesWithTag.AddTag(HadesGameplayTags::Ability_Crouch);
+
+	InputTag = HadesGameplayTags::Input_Run;
+	bEndOnInputRelease = true;
 }
 
 void UHadesAbility_Run::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,

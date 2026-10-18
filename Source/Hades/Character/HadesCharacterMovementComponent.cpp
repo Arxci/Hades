@@ -2,7 +2,8 @@
 
 #include "GameFramework/Character.h"
 #include "Components/CapsuleComponent.h"
-#include "Kismet/KismetSystemLibrary.h"
+#include "Curves/CurveVector.h"
+#include "Engine/World.h"
 
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
@@ -15,26 +16,28 @@ void UHadesCharacterMovementComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	if (const ACharacter* Char = GetCharacterOwner())
-	{
-		StandingHalfHeight = Char->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
-	}
-	
 	if (const UAbilitySystemComponent* ASC = UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(GetOwner()))
 	{
 		MovementSet = ASC->GetSet<UHadesMovementSet>();
 	}
 
-	CachedVelocity = Velocity;
+	LastVelocity = Velocity;
 }
 
 void UHadesCharacterMovementComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-	
-	UpdateMovementVariables();
-	
-	UpdateCachedVariables();
+
+	if (DeltaTime > UE_SMALL_NUMBER)
+	{
+		MeasuredAcceleration = (Velocity - LastVelocity) / DeltaTime;
+	}
+	LastVelocity = Velocity;
+
+	const float MaxAccel = IsAccelerating() ? GetMaxAcceleration() : GetMaxBrakingDeceleration();
+	RelativeAcceleration = MaxAccel > UE_SMALL_NUMBER
+		? GetOwner()->GetActorQuat().UnrotateVector(MeasuredAcceleration.GetClampedToMaxSize(MaxAccel) / MaxAccel)
+		: FVector::ZeroVector;
 }
 
 void UHadesCharacterMovementComponent::UpdateCharacterStateBeforeMovement(float DeltaSeconds)
@@ -48,6 +51,14 @@ void UHadesCharacterMovementComponent::UpdateCharacterStateBeforeMovement(float 
 	else
 	{
 		StopRunning();
+	}
+
+	if (AccelerationCurve && IsMovingOnGround())
+	{
+		const FVector Value = AccelerationCurve->GetVectorValue(GetMappedSpeed());
+		MaxAcceleration = Value.X;
+		BrakingDecelerationWalking = Value.Y;
+		GroundFriction = Value.Z;
 	}
 }
 
@@ -93,102 +104,38 @@ void UHadesCharacterMovementComponent::StopRunning()
 
 bool UHadesCharacterMovementComponent::IsMovingForward(float Threshold) const
 {
-	if (!IsMovingOnGround()) return false;
-	
-	const FVector InputVector = GetLastInputVector();
-	if (InputVector.IsNearlyZero()) return false;
+	// Acceleration (not the pawn's input vector) is what the server receives and what replays use.
+	if (!IsMovingOnGround() || Acceleration.IsNearlyZero())
+	{
+		return false;
+	}
 
-	const FVector Forward = GetOwner()->GetActorForwardVector();
-	return FVector::DotProduct(Forward, InputVector.GetSafeNormal()) > Threshold;
+	return FVector::DotProduct(GetOwner()->GetActorForwardVector(), Acceleration.GetSafeNormal()) > Threshold;
 }
 
 bool UHadesCharacterMovementComponent::IsAccelerating() const
 {
-	const FVector Accel = GetAcceleration();
-	
-	return FVector::DotProduct(Accel, Velocity) > 0;
+	return FVector::DotProduct(MeasuredAcceleration, Velocity) > 0.0f;
 }
 
 bool UHadesCharacterMovementComponent::CanStand() const
 {
-	if (ACharacter* Char = Cast<ACharacter>(GetCharacterOwner()))
+	const ACharacter* Character = GetCharacterOwner();
+	if (!Character || !IsCrouching())
 	{
-		const UCapsuleComponent* Capsule = Char->GetCapsuleComponent();
-		const float Radius = Capsule->GetScaledCapsuleRadius();
-		const FVector Location = Char->GetActorLocation();
-
-		const float CurrentHalfHeight = Capsule->GetScaledCapsuleHalfHeight();
-		const FVector TraceLocation = Location + FVector(0.f, 0.f, StandingHalfHeight - CurrentHalfHeight);
-
-		TArray<FHitResult> Hits;
-		UKismetSystemLibrary::CapsuleTraceMulti(
-			Char->GetWorld(),
-			TraceLocation,
-			TraceLocation,
-			Radius,
-			StandingHalfHeight,
-			UEngineTypes::ConvertToTraceType(ECC_Pawn),
-			false,
-			{Char},
-			EDrawDebugTrace::None,
-			Hits,
-			true,
-			FLinearColor::Green,  
-			FLinearColor::Red,    
-			0.f  
-		);
-
-		return Hits.IsEmpty();
-	}
-	return true;
-}
-
-void UHadesCharacterMovementComponent::UpdateCachedVariables()
-{
-	CachedVelocity = Velocity;
-}
-
-void UHadesCharacterMovementComponent::UpdateMovementVariables()
-{
-	RelativeAcceleration = CalculateRelativeAcceleration();
-	UpdateGroundedAcceleration();
-}
-
-void UHadesCharacterMovementComponent::UpdateGroundedAcceleration()
-{
-	if (AccelerationCurve && IsGrounded())
-	{
-		const float MappedSpeed = GetMappedSpeed();
-		const FVector Value = AccelerationCurve->GetVectorValue(MappedSpeed);
-
-		MaxAcceleration = Value.X;
-		BrakingDecelerationWalking = Value.Y;
-		GroundFriction = Value.Z;
-	}
-}
-
-FVector UHadesCharacterMovementComponent::CalculateRelativeAcceleration() const
-{
-	const FVector Accel = GetAcceleration();
-
-	if (const ACharacter* Char = GetCharacterOwner())
-	{
-		const bool bAccelerating = FVector::DotProduct(Accel, Velocity) > 0;
-		const float MaxMag = bAccelerating ? GetMaxAcceleration() : GetMaxBrakingDeceleration();
-
-		return Char->GetActorRotation().UnrotateVector(
-			Accel.GetClampedToMaxSize(MaxMag) / MaxMag);
+		return true;
 	}
 
-	return FVector::ZeroVector;
-}
+	const UCapsuleComponent* Capsule = Character->GetCapsuleComponent();
+	const float StandingHalfHeight = Character->GetClass()->GetDefaultObject<ACharacter>()->GetCapsuleComponent()->GetUnscaledCapsuleHalfHeight() * Capsule->GetShapeScale();
+	const FVector StandingLocation = Capsule->GetComponentLocation() + FVector(0.0f, 0.0f, StandingHalfHeight - Capsule->GetScaledCapsuleHalfHeight());
 
-FVector UHadesCharacterMovementComponent::GetAcceleration() const
-{
-	const float DT = GetWorld()->GetDeltaSeconds();
-	if (DT < SMALL_NUMBER) return FVector::ZeroVector;
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(CanStand), false, Character);
+	FCollisionResponseParams ResponseParams;
+	InitCollisionParams(QueryParams, ResponseParams);
 
-	return (Velocity - CachedVelocity) / DT;
+	return !GetWorld()->OverlapBlockingTestByChannel(StandingLocation, FQuat::Identity, Capsule->GetCollisionObjectType(),
+		FCollisionShape::MakeCapsule(Capsule->GetScaledCapsuleRadius(), StandingHalfHeight), QueryParams, ResponseParams);
 }
 
 float UHadesCharacterMovementComponent::GetMappedSpeed() const

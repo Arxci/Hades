@@ -14,8 +14,6 @@ class UCameraComponent;
 class USkeletalMeshComponent;
 class UInputComponent;
 class UHadesInputConfig;
-struct FHadesAbilityInputAction;
-enum class EHadesAbilityInputMode : uint8;
 
 UCLASS()
 class HADES_API AHadesHeroCharacter : public AHadesCharacterBase
@@ -27,11 +25,13 @@ public:
 
 	//~ Begin AActor Interface
 	virtual void PostInitializeComponents() override;
+	virtual void Tick(float DeltaSeconds) override;
 	//~ End AActor Interface
 
 	//~ Begin APawn Interface
 	virtual UInputComponent* CreatePlayerInputComponent() override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
+	virtual void UnPossessed() override;
 	//~ End APawn Interface
 
 	//~ Begin ACharacter Interface
@@ -58,8 +58,6 @@ protected:
 	
 protected:
 	virtual void BeginPlay() override;
-	virtual void Tick(float DeltaSeconds) override;
-	virtual void UnPossessed() override;
 
 protected:
 	//~~Start Input
@@ -68,10 +66,6 @@ protected:
 
 	void Input_Move(const FInputActionValue& Value);
 	void Input_Look(const FInputActionValue& Value);
-	void Input_AbilityInputPressed(FGameplayTag InputTag);
-	void Input_AbilityInputReleased(FGameplayTag InputTag);
-	
-	EHadesAbilityInputMode ResolveAbilityInputMode(const FHadesAbilityInputAction& AbilityInput) const;
 	//~~Stop Input
 
 private:

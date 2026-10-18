@@ -38,8 +38,8 @@ void AHadesCharacterBase::NotifyControllerChanged()
 void AHadesCharacterBase::BeginPlay()
 {
 	Super::BeginPlay();
-	
-	if (HadesAbilitySystemComponent)
+
+	if (HasAuthority() && HadesAbilitySystemComponent)
 	{
 		FGameplayEffectContextHandle EffectContext = HadesAbilitySystemComponent->MakeEffectContext();
 		EffectContext.AddSourceObject(this);
@@ -62,7 +62,7 @@ void AHadesCharacterBase::BeginPlay()
 	}
 }
 
-void AHadesCharacterBase::Run() const
+void AHadesCharacterBase::Run()
 {
 	if (HadesCharacterMovement)
 	{
@@ -70,7 +70,7 @@ void AHadesCharacterBase::Run() const
 	}
 }
 
-void AHadesCharacterBase::StopRun() const
+void AHadesCharacterBase::StopRun() 
 {
 	if (HadesCharacterMovement)
 	{
@@ -119,29 +119,7 @@ void AHadesCharacterBase::OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHe
 }
 
 //Utility
-bool AHadesCharacterBase::GetIsCrouched() const
+bool AHadesCharacterBase::IsRunning() const
 {
-	if (HadesCharacterMovement)
-	{
-		return HadesCharacterMovement->IsCrouching();
-	}
-	return false;
-}
-
-bool AHadesCharacterBase::GetIsRunning() const
-{
-	if (HadesCharacterMovement)
-	{
-		return HadesCharacterMovement->IsRunning();
-	}
-	return false;
-}
-
-bool AHadesCharacterBase::GetIsGrounded() const
-{
-	if (HadesCharacterMovement)
-	{
-		return HadesCharacterMovement->IsGrounded();
-	}
-	return true;
+	return HadesCharacterMovement && HadesCharacterMovement->IsRunning();
 }

@@ -2,32 +2,32 @@
 
 #include "InputAction.h"
 
-void UHadesInputComponent::HandleAbilityInputTriggered(FGameplayTag InputTag)
+void UHadesInputComponent::HandleInputTriggered(FGameplayTag InputTag)
 {
 	bool bAlreadyHeld = false;
-	HeldAbilityInputTags.Add(InputTag, &bAlreadyHeld);
+	HeldInputTags.Add(InputTag, &bAlreadyHeld);
 	if (!bAlreadyHeld)
 	{
-		AbilityInputPressed.ExecuteIfBound(InputTag);
+		OnInputPressed.ExecuteIfBound(InputTag);
 	}
 }
 
-void UHadesInputComponent::HandleAbilityInputEnded(FGameplayTag InputTag)
+void UHadesInputComponent::HandleInputEnded(FGameplayTag InputTag)
 {
-	if (HeldAbilityInputTags.Remove(InputTag) > 0)
+	if (HeldInputTags.Remove(InputTag) > 0)
 	{
-		AbilityInputReleased.ExecuteIfBound(InputTag);
+		OnInputReleased.ExecuteIfBound(InputTag);
 	}
 }
 
-void UHadesInputComponent::ReleaseHeldAbilityInputs()
+void UHadesInputComponent::ReleaseHeldInputs()
 {
-	const TArray<FGameplayTag> HeldTags = HeldAbilityInputTags.Array();
-	HeldAbilityInputTags.Reset();
+	const TArray<FGameplayTag> HeldTags = HeldInputTags.Array();
+	HeldInputTags.Reset();
 
 	for (const FGameplayTag& InputTag : HeldTags)
 	{
-		AbilityInputReleased.ExecuteIfBound(InputTag);
+		OnInputReleased.ExecuteIfBound(InputTag);
 	}
 }
 
@@ -35,22 +35,13 @@ void UHadesInputComponent::BindInputValues(const UHadesInputConfig* InputConfig)
 {
 	check(InputConfig);
 
-	auto BindValue = [this](const FGameplayTag& InputTag, const UInputAction* InputAction)
+	for (const FHadesInputAction& Action : InputConfig->InputActions)
 	{
-		if (InputAction && InputTag.IsValid() && !ValueBoundActions.Contains(InputTag))
+		if (Action.InputAction && Action.InputTag.IsValid() && !ValueBoundActions.Contains(Action.InputTag))
 		{
-			BindActionValue(InputAction);
-			ValueBoundActions.Add(InputTag, InputAction);
+			BindActionValue(Action.InputAction);
+			ValueBoundActions.Add(Action.InputTag, Action.InputAction);
 		}
-	};
-
-	for (const FHadesInputAction& Action : InputConfig->NativeInputActions)
-	{
-		BindValue(Action.InputTag, Action.InputAction);
-	}
-	for (const FHadesAbilityInputAction& Action : InputConfig->AbilityInputActions)
-	{
-		BindValue(Action.InputTag, Action.InputAction);
 	}
 }
 

@@ -7,7 +7,7 @@
 #include "HadesAbility_Run.generated.h"
 
 
-UCLASS(Blueprintable)
+UCLASS()
 class HADES_API UHadesAbility_Run : public UHadesAbility
 {
 	GENERATED_BODY()

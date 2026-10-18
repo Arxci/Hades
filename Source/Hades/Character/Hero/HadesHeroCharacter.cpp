@@ -14,7 +14,6 @@
 #include "Hades/AbilitySystem/HadesAbilitySystemComponent.h"
 #include "Hades/Input/HadesInputComponent.h"
 #include "Hades/Input/HadesInputConfig.h"
-#include "Hades/Player/HadesPlayerController.h"
 
 AHadesHeroCharacter::AHadesHeroCharacter(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
@@ -115,13 +114,17 @@ void AHadesHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInput
 	}
 
 	UHadesInputComponent* HadesInput = CastChecked<UHadesInputComponent>(PlayerInputComponent);
-	
-	HadesInput->BindNativeAction(InputConfig, HadesGameplayTags::Input_Move, ETriggerEvent::Triggered, this, &ThisClass::Input_Move);
-	HadesInput->BindNativeAction(InputConfig, HadesGameplayTags::Input_Look, ETriggerEvent::Triggered, this, &ThisClass::Input_Look);
-	HadesInput->BindNativeAction(InputConfig, HadesGameplayTags::Input_Jump, ETriggerEvent::Started, this, &ACharacter::Jump);
-	HadesInput->BindNativeAction(InputConfig, HadesGameplayTags::Input_Jump, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
 
-	HadesInput->BindAbilityActions(InputConfig, this, &ThisClass::Input_AbilityInputPressed, &ThisClass::Input_AbilityInputReleased);
+	HadesInput->BindActionByTag(InputConfig, HadesGameplayTags::Input_Move, ETriggerEvent::Triggered, this, &ThisClass::Input_Move);
+	HadesInput->BindActionByTag(InputConfig, HadesGameplayTags::Input_Look, ETriggerEvent::Triggered, this, &ThisClass::Input_Look);
+	HadesInput->BindActionByTag(InputConfig, HadesGameplayTags::Input_Jump, ETriggerEvent::Started, this, &ACharacter::Jump);
+	HadesInput->BindActionByTag(InputConfig, HadesGameplayTags::Input_Jump, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
+
+	if (HadesAbilitySystemComponent)
+	{
+		HadesInput->BindPressedAndReleased(InputConfig, HadesAbilitySystemComponent.Get(),
+			&UHadesAbilitySystemComponent::AbilityInputTagPressed, &UHadesAbilitySystemComponent::AbilityInputTagReleased);
+	}
 	HadesInput->BindInputValues(InputConfig);
 }
 
@@ -135,7 +138,7 @@ void AHadesHeroCharacter::UnPossessed()
 {
 	if (UHadesInputComponent* HadesInput = Cast<UHadesInputComponent>(InputComponent))
 	{
-		HadesInput->ReleaseHeldAbilityInputs();
+		HadesInput->ReleaseHeldInputs();
 	}
 
 	Super::UnPossessed();
@@ -146,52 +149,11 @@ void AHadesHeroCharacter::Input_Move(const FInputActionValue& Value)
 	const FVector2D Input = Value.Get<FVector2D>();
 	AddMovementInput(GetActorForwardVector(), Input.Y);
 	AddMovementInput(GetActorRightVector(), Input.X);
-}
+} 
 
 void AHadesHeroCharacter::Input_Look(const FInputActionValue& Value)
 {
 	const FVector2D Input = Value.Get<FVector2D>();
 	AddControllerYawInput(Input.X);
 	AddControllerPitchInput(Input.Y);
-}
-
-void AHadesHeroCharacter::Input_AbilityInputPressed(FGameplayTag InputTag)
-{
-	const FHadesAbilityInputAction* AbilityInput = InputConfig ? InputConfig->FindAbilityInputActionForTag(InputTag) : nullptr;
-	if (!AbilityInput || !AbilityInput->AbilityTag.IsValid() || !HadesAbilitySystemComponent) return;
-
-	const FGameplayTagContainer AbilityTags(AbilityInput->AbilityTag);
-	if (ResolveAbilityInputMode(*AbilityInput) == EHadesAbilityInputMode::Toggle)
-	{
-		HadesAbilitySystemComponent->ToggleAbilitiesByTag(AbilityTags);
-	}
-	else
-	{
-		HadesAbilitySystemComponent->TryActivateAbilitiesByTag(AbilityTags);
-	}
-}
-
-void AHadesHeroCharacter::Input_AbilityInputReleased(FGameplayTag InputTag)
-{
-	const FHadesAbilityInputAction* AbilityInput = InputConfig ? InputConfig->FindAbilityInputActionForTag(InputTag) : nullptr;
-	if (!AbilityInput || !AbilityInput->AbilityTag.IsValid() || !HadesAbilitySystemComponent) return;
-
-	if (ResolveAbilityInputMode(*AbilityInput) == EHadesAbilityInputMode::Hold)
-	{
-		const FGameplayTagContainer AbilityTags(AbilityInput->AbilityTag);
-		HadesAbilitySystemComponent->CancelAbilities(&AbilityTags);
-	}
-}
-
-EHadesAbilityInputMode AHadesHeroCharacter::ResolveAbilityInputMode(const FHadesAbilityInputAction& AbilityInput) const
-{
-	if (AbilityInput.InputMode == EHadesAbilityInputMode::Hold)
-	{
-		const AHadesPlayerController* PC = GetController<AHadesPlayerController>();
-		if (PC && PC->IsInputToggleEnabled(AbilityInput.InputTag))
-		{
-			return EHadesAbilityInputMode::Toggle;
-		}
-	}
-	return AbilityInput.InputMode;
 }
