@@ -6,27 +6,20 @@
 
 #include "HadesAbility_Crouch.generated.h"
 
+
 UCLASS()
 class HADES_API UHadesAbility_Crouch : public UHadesAbility
 {
 	GENERATED_BODY()
 
-protected:
+public:
 	UHadesAbility_Crouch();
 
 protected:
-	virtual bool RequestActivateAbility() override;
-	virtual bool RequestDeactivateAbility(bool bForce) override;
-	virtual void ForceEndAbility() override;
-	virtual void CommitAbility() override;
-	virtual void CommitAbilityEnd() override;
-	
-	virtual void TickAbility(float DeltaTime) override;
-	virtual bool CanTick() override;
-	virtual bool IsActivationRequested() const override;
-	
-private:
-	bool CanCharacterCrouch() const;
-	bool CanCharacterUnCrouch() const;
+	//~ Begin UGameplayAbility Interface
+	virtual void ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData) override;
+	virtual void EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled) override;
+	//~ End UGameplayAbility Interface
 };
-	

@@ -158,26 +158,28 @@ void AHadesHeroCharacter::Input_Look(const FInputActionValue& Value)
 void AHadesHeroCharacter::Input_AbilityInputPressed(FGameplayTag InputTag)
 {
 	const FHadesAbilityInputAction* AbilityInput = InputConfig ? InputConfig->FindAbilityInputActionForTag(InputTag) : nullptr;
-	if (!AbilityInput || !HadesAbilitySystemComponent) return;
+	if (!AbilityInput || !AbilityInput->AbilityTag.IsValid() || !HadesAbilitySystemComponent) return;
 
+	const FGameplayTagContainer AbilityTags(AbilityInput->AbilityTag);
 	if (ResolveAbilityInputMode(*AbilityInput) == EHadesAbilityInputMode::Toggle)
 	{
-		HadesAbilitySystemComponent->ToggleAbilityByTag(AbilityInput->AbilityTag);
+		HadesAbilitySystemComponent->ToggleAbilitiesByTag(AbilityTags);
 	}
 	else
 	{
-		HadesAbilitySystemComponent->TryActivateAbilityByTag(AbilityInput->AbilityTag);
+		HadesAbilitySystemComponent->TryActivateAbilitiesByTag(AbilityTags);
 	}
 }
 
 void AHadesHeroCharacter::Input_AbilityInputReleased(FGameplayTag InputTag)
 {
 	const FHadesAbilityInputAction* AbilityInput = InputConfig ? InputConfig->FindAbilityInputActionForTag(InputTag) : nullptr;
-	if (!AbilityInput || !HadesAbilitySystemComponent) return;
+	if (!AbilityInput || !AbilityInput->AbilityTag.IsValid() || !HadesAbilitySystemComponent) return;
 
 	if (ResolveAbilityInputMode(*AbilityInput) == EHadesAbilityInputMode::Hold)
 	{
-		HadesAbilitySystemComponent->TryDeactivateAbilityByTag(AbilityInput->AbilityTag);
+		const FGameplayTagContainer AbilityTags(AbilityInput->AbilityTag);
+		HadesAbilitySystemComponent->CancelAbilities(&AbilityTags);
 	}
 }
 

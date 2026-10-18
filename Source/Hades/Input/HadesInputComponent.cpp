@@ -4,7 +4,6 @@
 
 void UHadesInputComponent::HandleAbilityInputTriggered(FGameplayTag InputTag)
 {
-	// Triggered repeats every frame the action stays triggered; only the first one is a press.
 	bool bAlreadyHeld = false;
 	HeldAbilityInputTags.Add(InputTag, &bAlreadyHeld);
 	if (!bAlreadyHeld)
@@ -15,7 +14,6 @@ void UHadesInputComponent::HandleAbilityInputTriggered(FGameplayTag InputTag)
 
 void UHadesInputComponent::HandleAbilityInputEnded(FGameplayTag InputTag)
 {
-	// Canceled also fires for presses that never triggered (a Hold released early). Those have nothing to release.
 	if (HeldAbilityInputTags.Remove(InputTag) > 0)
 	{
 		AbilityInputReleased.ExecuteIfBound(InputTag);

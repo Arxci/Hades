@@ -1,8 +1,12 @@
 ﻿#include "HadesCharacterBase.h"
 
+#include "Abilities/GameplayAbility.h"
+#include "GameplayEffect.h"
+
 #include "HadesCharacterMovementComponent.h"
 #include "Hades/AbilitySystem/HadesAbilitySystemComponent.h"
-#include "Hades/AbilitySystem/HadesAbility.h"
+#include "Hades/AbilitySystem/Attributes/HadesMovementSet.h"
+#include "Hades/HadesGameplayTags.h"
 
 
 AHadesCharacterBase::AHadesCharacterBase(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer.SetDefaultSubobjectClass<UHadesCharacterMovementComponent>(CharacterMovementComponentName))
@@ -11,65 +15,58 @@ AHadesCharacterBase::AHadesCharacterBase(const FObjectInitializer& ObjectInitial
 
 	HadesCharacterMovement = Cast<UHadesCharacterMovementComponent>(GetCharacterMovement());
 	HadesAbilitySystemComponent = CreateDefaultSubobject<UHadesAbilitySystemComponent>(TEXT("AbilitySystemComponent"));
-	
+	MovementSet = CreateDefaultSubobject<UHadesMovementSet>(TEXT("MovementSet"));
+
 	GetCharacterMovement()->GetNavAgentPropertiesRef().bCanCrouch = true;
 }
 
-void AHadesCharacterBase::PossessedBy(AController* NewController)
+UAbilitySystemComponent* AHadesCharacterBase::GetAbilitySystemComponent() const
 {
-	Super::PossessedBy(NewController);
-
-	if (HadesAbilitySystemComponent)
-	{
-		HadesAbilitySystemComponent->InitAbilityActorInfo(NewController);
-	}
+	return HadesAbilitySystemComponent;
 }
 
-void AHadesCharacterBase::UnPossessed()
+void AHadesCharacterBase::NotifyControllerChanged()
 {
+	Super::NotifyControllerChanged();
+	
 	if (HadesAbilitySystemComponent)
 	{
-		HadesAbilitySystemComponent->InitAbilityActorInfo(nullptr);
+		HadesAbilitySystemComponent->RefreshAbilityActorInfo();
 	}
-	Super::UnPossessed();
 }
 
 void AHadesCharacterBase::BeginPlay()
 {
 	Super::BeginPlay();
-
-	// Granted once per lifetime rather than per possession, so re-possessing doesn't stack grant counts.
+	
 	if (HadesAbilitySystemComponent)
 	{
-		for (const TSubclassOf<UHadesAbility>& AbilityClass : DefaultAbilities)
+		FGameplayEffectContextHandle EffectContext = HadesAbilitySystemComponent->MakeEffectContext();
+		EffectContext.AddSourceObject(this);
+		for (const TSubclassOf<UGameplayEffect>& EffectClass : DefaultEffects)
 		{
-			HadesAbilitySystemComponent->GiveAbility(AbilityClass);
+			const FGameplayEffectSpecHandle EffectSpec = HadesAbilitySystemComponent->MakeOutgoingSpec(EffectClass, 1.0f, EffectContext);
+			if (EffectSpec.IsValid())
+			{
+				HadesAbilitySystemComponent->ApplyGameplayEffectSpecToSelf(*EffectSpec.Data);
+			}
+		}
+
+		for (const TSubclassOf<UGameplayAbility>& AbilityClass : DefaultAbilities)
+		{
+			if (AbilityClass)
+			{
+				HadesAbilitySystemComponent->GiveAbility(FGameplayAbilitySpec(AbilityClass));
+			}
 		}
 	}
-	
-	if (HadesCharacterMovement)
-	{
-		HadesCharacterMovement->OnRunStart.AddDynamic(this, &AHadesCharacterBase::OnStartRun);
-		HadesCharacterMovement->OnRunEnd.AddDynamic(this, &AHadesCharacterBase::OnEndRun);
-	}
-}
-
-void AHadesCharacterBase::EndPlay(const EEndPlayReason::Type EndPlayReason)
-{
-	if (HadesCharacterMovement)
-	{
-		HadesCharacterMovement->OnRunStart.RemoveDynamic(this, &AHadesCharacterBase::OnStartRun);
-		HadesCharacterMovement->OnRunEnd.RemoveDynamic(this, &AHadesCharacterBase::OnEndRun);
-	}
-
-	Super::EndPlay(EndPlayReason);
 }
 
 void AHadesCharacterBase::Run() const
 {
 	if (HadesCharacterMovement)
 	{
-		HadesCharacterMovement->StartRunning();
+		HadesCharacterMovement->SetWantsToRun(true);
 	}
 }
 
@@ -77,18 +74,48 @@ void AHadesCharacterBase::StopRun() const
 {
 	if (HadesCharacterMovement)
 	{
-		HadesCharacterMovement->StopRunning();
+		HadesCharacterMovement->SetWantsToRun(false);
 	}
 }
 
 void AHadesCharacterBase::OnStartRun()
 {
+	if (HadesAbilitySystemComponent)
+	{
+		HadesAbilitySystemComponent->SetLooseGameplayTagCount(HadesGameplayTags::Character_State_Running, 1);
+	}
 
+	K2_OnStartRun();
 }
 
 void AHadesCharacterBase::OnEndRun()
 {
+	if (HadesAbilitySystemComponent)
+	{
+		HadesAbilitySystemComponent->SetLooseGameplayTagCount(HadesGameplayTags::Character_State_Running, 0);
+	}
 
+	K2_OnEndRun();
+}
+
+void AHadesCharacterBase::OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust)
+{
+	if (HadesAbilitySystemComponent)
+	{
+		HadesAbilitySystemComponent->SetLooseGameplayTagCount(HadesGameplayTags::Character_State_Crouching, 1);
+	}
+	
+	Super::OnStartCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust);
+}
+
+void AHadesCharacterBase::OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust)
+{
+	if (HadesAbilitySystemComponent)
+	{
+		HadesAbilitySystemComponent->SetLooseGameplayTagCount(HadesGameplayTags::Character_State_Crouching, 0);
+	}
+	
+	Super::OnEndCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust);
 }
 
 //Utility
@@ -98,7 +125,7 @@ bool AHadesCharacterBase::GetIsCrouched() const
 	{
 		return HadesCharacterMovement->IsCrouching();
 	}
-	return false;	
+	return false;
 }
 
 bool AHadesCharacterBase::GetIsRunning() const
@@ -107,7 +134,7 @@ bool AHadesCharacterBase::GetIsRunning() const
 	{
 		return HadesCharacterMovement->IsRunning();
 	}
-	return false;	
+	return false;
 }
 
 bool AHadesCharacterBase::GetIsGrounded() const
@@ -116,5 +143,5 @@ bool AHadesCharacterBase::GetIsGrounded() const
 	{
 		return HadesCharacterMovement->IsGrounded();
 	}
-	return true;	
+	return true;
 }

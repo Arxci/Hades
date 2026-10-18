@@ -50,7 +50,7 @@ struct FHadesAbilityInputAction
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<const UInputAction> InputAction = nullptr;
 
-	/** The ability this input drives, matched against the ability's AbilityTags. */
+	/** The ability this input drives, matched against the ability's Asset Tags. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input", meta = (Categories = "Ability"))
 	FGameplayTag AbilityTag;
 
@@ -59,11 +59,6 @@ struct FHadesAbilityInputAction
 };
 
 
-/**
- * Maps a pawn's Input Actions to input tags. Native actions are bound to C++ handlers by tag;
- * ability actions route to the ability system with no handler code. Keys live in the Input
- * Mapping Context, never here, so gameplay code only ever deals in Input.* tags.
- */
 UCLASS(BlueprintType, Const)
 class HADES_API UHadesInputConfig : public UDataAsset
 {
@@ -78,11 +73,9 @@ public:
 #endif
 
 public:
-	/** Actions the pawn binds to its own handlers (Input.Move, Input.Look, Input.Jump). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input", meta = (TitleProperty = "InputTag"))
 	TArray<FHadesInputAction> NativeInputActions;
-
-	/** Actions that activate abilities (Input.Run, Input.Crouch). */
+	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input", meta = (TitleProperty = "InputTag"))
 	TArray<FHadesAbilityInputAction> AbilityInputActions;
 };

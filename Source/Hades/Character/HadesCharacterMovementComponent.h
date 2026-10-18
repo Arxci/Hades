@@ -9,7 +9,7 @@
 #include "HadesCharacterMovementComponent.generated.h"
 
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnRunStateChanged);
+class UHadesMovementSet;
 
 
 UCLASS()
@@ -21,13 +21,17 @@ public:
 	virtual void BeginPlay() override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
+	//~ Begin UCharacterMovementComponent Interface
+	virtual void UpdateCharacterStateBeforeMovement(float DeltaSeconds) override;
+	virtual bool CanCrouchInCurrentState() const override;
+	virtual float GetMaxSpeed() const override;
+	//~ End UCharacterMovementComponent Interface
+
 public:
 	// Movement
 	UFUNCTION(BlueprintCallable, Category = "Character Movement: Run")
-	void StartRunning();
-	UFUNCTION(BlueprintCallable, Category = "Character Movement: Run")
-	void StopRunning();
-	
+	void SetWantsToRun(bool bNewWantsToRun) { bWantsToRun = bNewWantsToRun; }
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Character Movement: Run")
 	float MaxWalkSpeedRun = 1000.0f;
 
@@ -55,18 +59,18 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Character Movement")
 	FVector GetAcceleration() const;
 
-public:
-	// Delegates
-	UPROPERTY(BlueprintAssignable, Category = "Character Movement: Run")
-	FOnRunStateChanged OnRunStart;
-
-	UPROPERTY(BlueprintAssignable, Category = "Character Movement: Run")
-	FOnRunStateChanged OnRunEnd;
-
 private:
+	bool bWantsToRun = false;
 	bool bIsRunning = false;
 	float StandingHalfHeight = 0.0f;
-	float CachedWalkSpeed = 0.0f;
+	
+	UPROPERTY(Transient)
+	TObjectPtr<const UHadesMovementSet> MovementSet;
+
+	void StartRunning();
+	void StopRunning();
+	
+	float GetMoveSpeedMultiplier() const;
 
 	void UpdateMovementVariables();
 	void UpdateGroundedAcceleration();

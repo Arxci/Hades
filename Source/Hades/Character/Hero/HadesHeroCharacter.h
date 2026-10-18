@@ -63,7 +63,6 @@ protected:
 
 protected:
 	//~~Start Input
-	/** Maps this pawn's Input Actions to input tags. Native tags bind to the handlers below; ability tags drive the ASC. */
 	UPROPERTY(EditDefaultsOnly, Category = "Character|Input")
 	TObjectPtr<UHadesInputConfig> InputConfig;
 
@@ -71,13 +70,11 @@ protected:
 	void Input_Look(const FInputActionValue& Value);
 	void Input_AbilityInputPressed(FGameplayTag InputTag);
 	void Input_AbilityInputReleased(FGameplayTag InputTag);
-
-	/** The input's authored mode, or Toggle when it's a Hold input the player has switched to toggle. */
+	
 	EHadesAbilityInputMode ResolveAbilityInputMode(const FHadesAbilityInputAction& AbilityInput) const;
 	//~~Stop Input
 
 private:
-	/** Place ViewRoot EyeHeight above the capsule centre. */
 	void SetEyeHeight(float NewEyeHeight);
 	
 	float EyeHeight = 0.0f;

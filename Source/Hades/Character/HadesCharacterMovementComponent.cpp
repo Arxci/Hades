@@ -4,6 +4,12 @@
 #include "Components/CapsuleComponent.h"
 #include "Kismet/KismetSystemLibrary.h"
 
+#include "AbilitySystemComponent.h"
+#include "AbilitySystemGlobals.h"
+
+#include "Hades/AbilitySystem/Attributes/HadesMovementSet.h"
+#include "Hades/Character/HadesCharacterBase.h"
+
 
 void UHadesCharacterMovementComponent::BeginPlay()
 {
@@ -12,6 +18,11 @@ void UHadesCharacterMovementComponent::BeginPlay()
 	if (const ACharacter* Char = GetCharacterOwner())
 	{
 		StandingHalfHeight = Char->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+	}
+	
+	if (const UAbilitySystemComponent* ASC = UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(GetOwner()))
+	{
+		MovementSet = ASC->GetSet<UHadesMovementSet>();
 	}
 
 	CachedVelocity = Velocity;
@@ -26,14 +37,46 @@ void UHadesCharacterMovementComponent::TickComponent(float DeltaTime, ELevelTick
 	UpdateCachedVariables();
 }
 
+void UHadesCharacterMovementComponent::UpdateCharacterStateBeforeMovement(float DeltaSeconds)
+{
+	Super::UpdateCharacterStateBeforeMovement(DeltaSeconds);
+
+	if (bWantsToRun && !IsCrouching() && IsMovingForward())
+	{
+		StartRunning();
+	}
+	else
+	{
+		StopRunning();
+	}
+}
+
+bool UHadesCharacterMovementComponent::CanCrouchInCurrentState() const
+{
+	return Super::CanCrouchInCurrentState() && (IsMovingOnGround() || IsCrouching());
+}
+
+float UHadesCharacterMovementComponent::GetMaxSpeed() const
+{
+	const float BaseSpeed = (IsRunning() && IsMovingOnGround()) ? MaxWalkSpeedRun : Super::GetMaxSpeed();
+	return BaseSpeed * GetMoveSpeedMultiplier();
+}
+
+float UHadesCharacterMovementComponent::GetMoveSpeedMultiplier() const
+{
+	return MovementSet ? MovementSet->GetMoveSpeedMultiplier() : 1.0f;
+}
+
 void UHadesCharacterMovementComponent::StartRunning()
 {
 	if (bIsRunning) return;
 
 	bIsRunning = true;
-	CachedWalkSpeed = MaxWalkSpeed;
-	MaxWalkSpeed = MaxWalkSpeedRun;
-	OnRunStart.Broadcast();
+	
+	if (AHadesCharacterBase* HadesOwner = Cast<AHadesCharacterBase>(GetCharacterOwner()))
+	{
+		HadesOwner->OnStartRun();
+	}
 }
 
 void UHadesCharacterMovementComponent::StopRunning()
@@ -41,8 +84,11 @@ void UHadesCharacterMovementComponent::StopRunning()
 	if (!bIsRunning) return;
 
 	bIsRunning = false;
-	MaxWalkSpeed = CachedWalkSpeed;
-	OnRunEnd.Broadcast();
+
+	if (AHadesCharacterBase* HadesOwner = Cast<AHadesCharacterBase>(GetCharacterOwner()))
+	{
+		HadesOwner->OnEndRun();
+	}
 }
 
 bool UHadesCharacterMovementComponent::IsMovingForward(float Threshold) const
@@ -148,8 +194,8 @@ FVector UHadesCharacterMovementComponent::GetAcceleration() const
 float UHadesCharacterMovementComponent::GetMappedSpeed() const
 {
 	const float Speed = GetSpeed();
-	const float WalkSpeed = MaxWalkSpeed;
-	const float RunSpeed = MaxWalkSpeedRun;
+	const float WalkSpeed = MaxWalkSpeed * GetMoveSpeedMultiplier();
+	const float RunSpeed = MaxWalkSpeedRun * GetMoveSpeedMultiplier();
 
 	if (Speed <= WalkSpeed)
 	{
