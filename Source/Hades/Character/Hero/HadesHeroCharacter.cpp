@@ -13,7 +13,7 @@
 #include "Hades/HadesGameplayTags.h"
 #include "Hades/AbilitySystem/HadesAbilitySystemComponent.h"
 #include "Hades/Input/HadesInputComponent.h"
-#include "Hades/Input/HadesInputConfig.h"
+#include "Hades/Interaction/HadesInteractorComponent.h"
 
 AHadesHeroCharacter::AHadesHeroCharacter(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
@@ -43,6 +43,8 @@ AHadesHeroCharacter::AHadesHeroCharacter(const FObjectInitializer& ObjectInitial
 	ArmsMesh->SetCollisionProfileName(FName("NoCollision"));
 	ArmsMesh->SetCastShadow(false);
 	ArmsMesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+
+	InteractorComponent = CreateDefaultSubobject<UHadesInteractorComponent>(TEXT("InteractorComponent"));
 }
 
 void AHadesHeroCharacter::PostInitializeComponents()

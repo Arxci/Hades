@@ -13,6 +13,8 @@ class USceneComponent;
 class UCameraComponent;
 class USkeletalMeshComponent;
 class UInputComponent;
+
+class UHadesInteractorComponent;
 class UHadesInputConfig;
 
 UCLASS()
@@ -39,6 +41,7 @@ public:
 	virtual void OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) override;
 	//~ End ACharacter Interface
 
+	UHadesInteractorComponent* GetInteractorComponent() const { return InteractorComponent; }
 	UCameraComponent* GetFirstPersonCamera() const { return FirstPersonCamera; }
 	USkeletalMeshComponent* GetArmsMesh() const { return ArmsMesh; }
 
@@ -52,6 +55,9 @@ protected:
 	TObjectPtr<UCameraComponent> FirstPersonCamera;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character|Viewmodel")
 	TObjectPtr<USkeletalMeshComponent> ArmsMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character|Interaction")
+	TObjectPtr<UHadesInteractorComponent> InteractorComponent;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Character|Camera", meta = (ClampMin = "0.0", Units = "s"))
 	float EyeHeightSmoothingTime = 0.1f;
