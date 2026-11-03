@@ -9,7 +9,7 @@
 class UHadesInteractableComponent;
 
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FHadesInteractionFocusClearedSignature);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FHadesFocusedInteractableChangedSignature, UHadesInteractableComponent*, FocusedInteractable);
 
 
 /** Lets a player-controlled pawn notice nearby interactables and focus the one it is looking at. */
@@ -25,6 +25,13 @@ public:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 	//~ End UActorComponent Interface
 
+	/** Interacts with the focused interactable until StopInteraction is called or focus moves away from it. */
+	UFUNCTION(BlueprintCallable, Category = "Interaction")
+	void StartInteraction();
+
+	UFUNCTION(BlueprintCallable, Category = "Interaction")
+	void StopInteraction();
+
 	/** Turns all interaction off, clearing every marker and the focus, or back on. */
 	UFUNCTION(BlueprintCallable, Category = "Interaction")
 	void SetInteractionEnabled(bool bEnabled);
@@ -35,9 +42,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Interaction")
 	UHadesInteractableComponent* GetFocusedInteractable() const { return FocusedInteractable.Get(); }
 
-	/** The focused interactable was destroyed. Listeners should clear any focus-dependent state. */
+	/** Also fires, with null, when the focused interactable is destroyed. */
 	UPROPERTY(BlueprintAssignable, Category = "Interaction")
-	FHadesInteractionFocusClearedSignature OnInteractionFocusCleared;
+	FHadesFocusedInteractableChangedSignature OnFocusedInteractableChanged;
 
 protected:
 	//~ Begin UActorComponent Interface
@@ -46,16 +53,16 @@ protected:
 	//~ End UActorComponent Interface
 
 	UPROPERTY(EditDefaultsOnly, Category = "Interaction", meta = (ClampMin = "0", Units = "cm"))
-	float AwarenessRadius = 750.0f;
+	float NearbyRadius = 750.0f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Interaction", meta = (ClampMin = "0", Units = "cm"))
 	float FocusDistance = 150.0f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Interaction", meta = (ClampMin = "0.01", Units = "s"))
-	float AwarenessInterval = 0.1f;
+	float NearbyUpdateInterval = 0.1f;
 
 private:
-	void StartAwarenessTimer();
+	void StartNearbyUpdateTimer();
 	void UpdateNearbyInteractables();
 	UHadesInteractableComponent* TraceForInteractable() const;
 	void SetFocusedInteractable(UHadesInteractableComponent* NewFocused);
@@ -66,5 +73,5 @@ private:
 	TSet<TWeakObjectPtr<UHadesInteractableComponent>> NearbyInteractables;
 	TWeakObjectPtr<UHadesInteractableComponent> FocusedInteractable;
 
-	FTimerHandle AwarenessTimerHandle;
+	FTimerHandle NearbyUpdateTimerHandle;
 };

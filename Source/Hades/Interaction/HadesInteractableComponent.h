@@ -10,7 +10,7 @@
 
 class UPrimitiveComponent;
 class USceneComponent;
-class UWidgetComponent;
+class UHadesWorldMarker;
 class UHadesWorldMarkerWidget;
 
 
@@ -51,6 +51,19 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Interaction")
 	float GetElapsedTime() const;
 
+	UFUNCTION(BlueprintPure, Category = "Interaction")
+	bool RequiresHold() const { return InteractionDuration > 0.0f; }
+
+	// Prompt
+	UFUNCTION(BlueprintCallable, Category = "Interaction")
+	void SetInteractionText(const FText& NewText);
+
+	UFUNCTION(BlueprintPure, Category = "Interaction")
+	FText GetInteractionText() const { return InteractionText; }
+
+	UFUNCTION(BlueprintPure, Category = "Interaction")
+	FText GetDisabledText() const { return DisabledText; }
+
 	// Awareness
 	UFUNCTION(BlueprintNativeEvent, Category = "Interaction")
 	void OnEnteredPlayerRange();
@@ -71,6 +84,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Interaction")
 	USceneComponent* GetMarkerTarget() const { return MarkerTarget; }
+
+	/** Null when there is no marker widget class. */
+	UFUNCTION(BlueprintPure, Category = "Interaction")
+	UHadesWorldMarker* GetWorldMarker() const { return WorldMarker; }
 
 	UFUNCTION(BlueprintPure, Category = "Interaction")
 	UPrimitiveComponent* GetFocusTarget() const { return FocusTarget; }
@@ -118,6 +135,14 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Interaction")
 	bool bInteractionEnabled = true;
 
+	/** Shown beside the input glyph while focused. Leave empty to show only the glyph. */
+	UPROPERTY(EditAnywhere, Category = "Interaction|Prompt")
+	FText InteractionText;
+
+	/** Replaces the interaction text while disabled. Leave empty to keep the interaction text. */
+	UPROPERTY(EditAnywhere, Category = "Interaction|Prompt")
+	FText DisabledText;
+
 	/** The collision the player looks at to focus this. Defaults to the actor's root. */
 	UPROPERTY(EditAnywhere, Category = "Interaction")
 	FComponentPicker FocusComponent;
@@ -127,7 +152,7 @@ protected:
 	FComponentPicker MarkerComponent;
 
 	UPROPERTY(EditAnywhere, Category = "Interaction|Marker")
-	TSubclassOf<UHadesWorldMarkerWidget> MarkerWidgetClass;
+	TSoftClassPtr<UHadesWorldMarkerWidget> MarkerWidgetClass;
 
 	/** Components that hide this interactable when they are between the player and the marker. */
 	UPROPERTY(EditAnywhere, Category = "Interaction|Occlusion")
@@ -141,7 +166,6 @@ private:
 
 	void SetStateTag(const FGameplayTag& Tag, bool bEnabled);
 	void UpdateMarkerVisibility();
-	UHadesWorldMarkerWidget* GetMarkerWidget() const;
 
 	/** Set while an interaction is in progress. */
 	UPROPERTY(Transient)
@@ -164,6 +188,6 @@ private:
 	void ResolveMarkerComponent();
 
 	UPROPERTY(Transient)
-	TObjectPtr<UWidgetComponent> MarkerWidgetComponent;
-	void InitializeMarkerWidget();
+	TObjectPtr<UHadesWorldMarker> WorldMarker;
+	void InitializeWorldMarker();
 };

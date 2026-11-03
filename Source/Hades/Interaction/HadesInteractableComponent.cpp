@@ -1,13 +1,13 @@
 ﻿#include "HadesInteractableComponent.h"
 
 #include "Components/PrimitiveComponent.h"
-#include "Components/WidgetComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 
 #include "Hades/Hades.h"
 #include "Hades/HadesCollisionChannels.h"
 #include "Hades/HadesGameplayTags.h"
+#include "Hades/UI/HadesWorldMarker.h"
 #include "Hades/UI/HadesWorldMarkerWidget.h"
 
 UHadesInteractableComponent::UHadesInteractableComponent()
@@ -23,17 +23,17 @@ void UHadesInteractableComponent::BeginPlay()
 	ResolveFocusComponent();
 	ResolveOcclusionComponents();
 	ResolveMarkerComponent();
-	InitializeMarkerWidget();
+	InitializeWorldMarker();
 
 	SetStateTag(HadesGameplayTags::Interactable_State_Disabled, !bInteractionEnabled);
 }
 
 void UHadesInteractableComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	if (MarkerWidgetComponent)
+	if (WorldMarker)
 	{
-		MarkerWidgetComponent->DestroyComponent();
-		MarkerWidgetComponent = nullptr;
+		WorldMarker->Unregister();
+		WorldMarker = nullptr;
 	}
 
 	Super::EndPlay(EndPlayReason);
@@ -89,9 +89,9 @@ void UHadesInteractableComponent::InteractionProgress_Implementation()
 	const float ElapsedTime = GetElapsedTime();
 	OnInteractionProgressed.Broadcast(ElapsedTime);
 
-	if (UHadesWorldMarkerWidget* Marker = GetMarkerWidget())
+	if (WorldMarker)
 	{
-		Marker->SetProgress(FMath::Clamp(ElapsedTime / InteractionDuration, 0.0f, 1.0f));
+		WorldMarker->SetProgress(FMath::Clamp(ElapsedTime / InteractionDuration, 0.0f, 1.0f));
 	}
 
 	if (ElapsedTime >= InteractionDuration)
@@ -114,6 +114,16 @@ void UHadesInteractableComponent::SetInteractionEnabled(bool bEnabled)
 float UHadesInteractableComponent::GetElapsedTime() const
 {
 	return CurrentInteractor ? GetWorld()->GetTimeSeconds() - InteractionStartTime : 0.0f;
+}
+
+void UHadesInteractableComponent::SetInteractionText(const FText& NewText)
+{
+	InteractionText = NewText;
+
+	if (WorldMarker)
+	{
+		WorldMarker->RefreshWidget();
+	}
 }
 
 void UHadesInteractableComponent::CompleteInteraction()
@@ -144,9 +154,9 @@ AActor* UHadesInteractableComponent::ResetInteraction()
 	CurrentInteractor = nullptr;
 	SetComponentTickEnabled(false);
 
-	if (UHadesWorldMarkerWidget* Marker = GetMarkerWidget())
+	if (WorldMarker)
 	{
-		Marker->SetProgress(0.0f);
+		WorldMarker->SetProgress(0.0f);
 	}
 	SetStateTag(HadesGameplayTags::Interactable_State_Interacting, false);
 
@@ -248,28 +258,18 @@ void UHadesInteractableComponent::ResolveMarkerComponent()
 	}
 }
 
-void UHadesInteractableComponent::InitializeMarkerWidget()
+void UHadesInteractableComponent::InitializeWorldMarker()
 {
-	if (!MarkerWidgetClass || !MarkerTarget)
+	if (MarkerWidgetClass.IsNull() || !MarkerTarget)
 	{
 		return;
 	}
 
-	MarkerWidgetComponent = NewObject<UWidgetComponent>(GetOwner(), NAME_None, RF_Transient);
-	MarkerWidgetComponent->SetupAttachment(MarkerTarget);
-	MarkerWidgetComponent->SetWidgetSpace(EWidgetSpace::Screen);
-	MarkerWidgetComponent->SetDrawAtDesiredSize(true);
-	MarkerWidgetComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	MarkerWidgetComponent->SetWidgetClass(MarkerWidgetClass);
-	MarkerWidgetComponent->SetVisibility(false);
-	MarkerWidgetComponent->PrimaryComponentTick.TickGroup = TG_PostUpdateWork;
-	MarkerWidgetComponent->RegisterComponent();
-	MarkerWidgetComponent->InitWidget();
-
-	if (UHadesWorldMarkerWidget* Marker = GetMarkerWidget())
-	{
-		Marker->SetContext(MarkerTarget, GetOwner());
-	}
+	WorldMarker = NewObject<UHadesWorldMarker>(this);
+	WorldMarker->SetAnchor(MarkerTarget);
+	WorldMarker->SetWidgetClass(MarkerWidgetClass);
+	WorldMarker->SetContextObject(this);
+	WorldMarker->SetVisible(false);
 }
 
 //Utility
@@ -280,16 +280,10 @@ FVector UHadesInteractableComponent::GetInteractionLocation() const
 
 void UHadesInteractableComponent::UpdateMarkerVisibility()
 {
-	// Hidden screen-space widget components are taken off the screen, so hidden markers cost nothing to draw.
-	if (MarkerWidgetComponent)
+	if (WorldMarker)
 	{
-		MarkerWidgetComponent->SetVisibility(HasStateTag(HadesGameplayTags::Interactable_State_InRange) && !IsOccluded());
+		WorldMarker->SetVisible(HasStateTag(HadesGameplayTags::Interactable_State_InRange) && !IsOccluded());
 	}
-}
-
-UHadesWorldMarkerWidget* UHadesInteractableComponent::GetMarkerWidget() const
-{
-	return MarkerWidgetComponent ? Cast<UHadesWorldMarkerWidget>(MarkerWidgetComponent->GetUserWidgetObject()) : nullptr;
 }
 
 void UHadesInteractableComponent::SetStateTag(const FGameplayTag& Tag, bool bEnabled)
@@ -308,9 +302,9 @@ void UHadesInteractableComponent::SetStateTag(const FGameplayTag& Tag, bool bEna
 		StateTags.RemoveTag(Tag);
 	}
 
-	if (UHadesWorldMarkerWidget* Marker = GetMarkerWidget())
+	if (WorldMarker)
 	{
-		Marker->SetStateTag(Tag, bEnabled);
+		WorldMarker->SetStateTag(Tag, bEnabled);
 	}
 
 	OnStateTagChanged.Broadcast(Tag, bEnabled);

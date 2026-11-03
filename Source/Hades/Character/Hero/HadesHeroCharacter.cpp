@@ -120,6 +120,8 @@ void AHadesHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInput
 	HadesInput->BindActionByTag(InputConfig, HadesGameplayTags::Input_Look, ETriggerEvent::Triggered, this, &ThisClass::Input_Look);
 	HadesInput->BindActionByTag(InputConfig, HadesGameplayTags::Input_Jump, ETriggerEvent::Started, this, &ACharacter::Jump);
 	HadesInput->BindActionByTag(InputConfig, HadesGameplayTags::Input_Jump, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
+	HadesInput->BindActionByTag(InputConfig, HadesGameplayTags::Input_Interact, ETriggerEvent::Started, InteractorComponent.Get(), &UHadesInteractorComponent::StartInteraction);
+	HadesInput->BindActionByTag(InputConfig, HadesGameplayTags::Input_Interact, ETriggerEvent::Completed, InteractorComponent.Get(), &UHadesInteractorComponent::StopInteraction);
 
 	if (HadesAbilitySystemComponent)
 	{
