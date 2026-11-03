@@ -17,13 +17,6 @@ namespace HadesGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Interactable_Event_Completed, "Interactable.Event.Completed");
 	UE_DEFINE_GAMEPLAY_TAG(Interactable_Event_Cancelled, "Interactable.Event.Cancelled");
 
-	UE_DEFINE_GAMEPLAY_TAG(UI_Layer_Game,     "UI.Layer.Game");
-	UE_DEFINE_GAMEPLAY_TAG(UI_Layer_GameMenu, "UI.Layer.GameMenu");
-	UE_DEFINE_GAMEPLAY_TAG(UI_Layer_Menu,     "UI.Layer.Menu");
-	UE_DEFINE_GAMEPLAY_TAG(UI_Layer_Modal,    "UI.Layer.Modal");
-
-	UE_DEFINE_GAMEPLAY_TAG(UI_Action_Escape, "UI.Action.Escape");
-
 	UE_DEFINE_GAMEPLAY_TAG(Input_Move,   "Input.Move");
 	UE_DEFINE_GAMEPLAY_TAG(Input_Look,   "Input.Look");
 	UE_DEFINE_GAMEPLAY_TAG(Input_Jump,   "Input.Jump");

@@ -8,10 +8,8 @@ public class Hades : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "GameplayTags", "GameplayAbilities", "GameplayTasks", "Engine", "InputCore", "EnhancedInput", "UMG" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "GameplayTags", "GameplayAbilities", "GameplayTasks", "Engine", "InputCore", "EnhancedInput", "UMG", "ComponentPicker" });
 
-		PrivateDependencyModuleNames.AddRange(new string[] { "ComponentPicker" });
-		
 		PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
 
 		// Uncomment if you are using Slate UI

@@ -10,7 +10,7 @@
 class AActor;
 class USceneComponent;
 
-/** A widget drawn over something in the world. Its owner drives it with state tags and progress; children react in the events below. */
+/** A widget drawn over something in the world. Its owner drives it with state tags, progress and one-shot event tags; children react in the Blueprint events below. */
 UCLASS(Abstract)
 class HADES_API UHadesWorldMarkerWidget : public UUserWidget
 {
@@ -36,6 +36,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "World Marker|State")
 	float GetProgress() const { return Progress; }
 
+	// Events
+	void NotifyEvent(const FGameplayTag& EventTag);
+
 protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "World Marker|Context")
 	void OnContextChanged();
@@ -46,6 +49,10 @@ protected:
 	/** 0 to 1. */
 	UFUNCTION(BlueprintImplementableEvent, Category = "World Marker|State")
 	void OnProgressChanged(float NewProgress);
+
+	/** A one-shot moment, such as an interaction completing. Arrives before the state changes it causes. */
+	UFUNCTION(BlueprintImplementableEvent, Category = "World Marker|Events")
+	void OnEventReceived(FGameplayTag EventTag);
 
 private:
 	TWeakObjectPtr<USceneComponent> Anchor;

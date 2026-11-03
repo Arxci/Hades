@@ -10,7 +10,7 @@
 
 class UPrimitiveComponent;
 class USceneComponent;
-class UHadesWorldMarker;
+class UWidgetComponent;
 class UHadesWorldMarkerWidget;
 
 
@@ -19,7 +19,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FHadesInteractionProgressedSignature
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FHadesInteractionSignature, AActor*, Interactor);
 
 
-/** Makes its actor interactable and shows a world marker while the player is in range. */
+/** Makes its actor interactable and shows a world marker while the player is nearby. */
 UCLASS(Blueprintable, ClassGroup = (Interaction), meta = (BlueprintSpawnableComponent))
 class HADES_API UHadesInteractableComponent : public UActorComponent
 {
@@ -51,43 +51,25 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Interaction")
 	float GetElapsedTime() const;
 
-	UFUNCTION(BlueprintPure, Category = "Interaction")
-	bool RequiresHold() const { return InteractionDuration > 0.0f; }
-
-	// Prompt
-	UFUNCTION(BlueprintCallable, Category = "Interaction")
-	void SetInteractionText(const FText& NewText);
-
-	UFUNCTION(BlueprintPure, Category = "Interaction")
-	FText GetInteractionText() const { return InteractionText; }
-
-	UFUNCTION(BlueprintPure, Category = "Interaction")
-	FText GetDisabledText() const { return DisabledText; }
-
-	// Awareness
+	// Nearby and focus
 	UFUNCTION(BlueprintNativeEvent, Category = "Interaction")
-	void OnEnteredPlayerRange();
+	void OnNearbyBegin();
 	UFUNCTION(BlueprintNativeEvent, Category = "Interaction")
-	void OnLeftPlayerRange();
+	void OnNearbyEnd();
 
 	UFUNCTION(BlueprintNativeEvent, Category = "Interaction")
-	void OnGainedPlayerFocus();
+	void OnFocusBegin();
 	UFUNCTION(BlueprintNativeEvent, Category = "Interaction")
-	void OnLostPlayerFocus();
+	void OnFocusEnd();
 
-	/** Occluded while any occlusion component is between ViewLocation and the marker. Occluded interactables hide their marker and cannot be focused. */
-	void UpdateOcclusion(const FVector& ViewLocation);
+	/** Occluded while another actor or one of the occlusion components blocks the view from ViewLocation to the marker, ignoring Viewer. Occluded interactables hide their marker and cannot be focused. */
+	void UpdateOcclusion(const FVector& ViewLocation, const AActor* Viewer);
 	bool IsOccluded() const;
 
-	/** Where the marker is shown. */
-	FVector GetInteractionLocation() const;
+	FVector GetMarkerLocation() const;
 
 	UFUNCTION(BlueprintPure, Category = "Interaction")
-	USceneComponent* GetMarkerTarget() const { return MarkerTarget; }
-
-	/** Null when there is no marker widget class. */
-	UFUNCTION(BlueprintPure, Category = "Interaction")
-	UHadesWorldMarker* GetWorldMarker() const { return WorldMarker; }
+	USceneComponent* GetMarkerAnchor() const { return MarkerAnchor; }
 
 	UFUNCTION(BlueprintPure, Category = "Interaction")
 	UPrimitiveComponent* GetFocusTarget() const { return FocusTarget; }
@@ -124,10 +106,6 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	//~ End UActorComponent Interface
 
-	/** Runs every frame while an interaction is held. Completes it once the duration has elapsed. */
-	UFUNCTION(BlueprintNativeEvent, Category = "Interaction")
-	void InteractionProgress();
-
 	/** Seconds the interaction must be held. 0 completes on start. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Interaction", meta = (ClampMin = "0", Units = "s"))
 	float InteractionDuration = 0.0f;
@@ -135,37 +113,34 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Interaction")
 	bool bInteractionEnabled = true;
 
-	/** Shown beside the input glyph while focused. Leave empty to show only the glyph. */
-	UPROPERTY(EditAnywhere, Category = "Interaction|Prompt")
-	FText InteractionText;
-
-	/** Replaces the interaction text while disabled. Leave empty to keep the interaction text. */
-	UPROPERTY(EditAnywhere, Category = "Interaction|Prompt")
-	FText DisabledText;
-
 	/** The collision the player looks at to focus this. Defaults to the actor's root. */
 	UPROPERTY(EditAnywhere, Category = "Interaction")
 	FComponentPicker FocusComponent;
 
-	/** The component the marker attaches to. Defaults to the actor's root. */
+	/** The component the marker attaches to. Defaults to the actor's root. Keep it out of other actors' collision, or the marker counts as occluded. */
 	UPROPERTY(EditAnywhere, Category = "Interaction|Marker")
 	FComponentPicker MarkerComponent;
 
 	UPROPERTY(EditAnywhere, Category = "Interaction|Marker")
-	TSoftClassPtr<UHadesWorldMarkerWidget> MarkerWidgetClass;
+	TSubclassOf<UHadesWorldMarkerWidget> MarkerWidgetClass;
 
-	/** Components that hide this interactable when they are between the player and the marker. */
+	/** When false, the marker only shows while this is focused. */
+	UPROPERTY(EditAnywhere, Category = "Interaction|Marker")
+	bool bShowMarkerWhenNearby = true;
+
+	/** Components on this actor that hide it when they are between the player and the marker. Other actors always do. */
 	UPROPERTY(EditAnywhere, Category = "Interaction|Occlusion")
 	TArray<FComponentPicker> OcclusionComponents;
 
 private:
 	void CompleteInteraction();
 	void CancelInteraction();
-	/** Clears the in-progress state and returns the interactor it belonged to. */
-	AActor* ResetInteraction();
+	/** Clears the in-progress state and returns the interactor it belonged to. The marker receives MarkerEvent before its state is cleared. */
+	AActor* ResetInteraction(const FGameplayTag& MarkerEvent);
 
 	void SetStateTag(const FGameplayTag& Tag, bool bEnabled);
 	void UpdateMarkerVisibility();
+	UHadesWorldMarkerWidget* GetMarkerWidget() const;
 
 	/** Set while an interaction is in progress. */
 	UPROPERTY(Transient)
@@ -184,10 +159,10 @@ private:
 	void ResolveOcclusionComponents();
 
 	UPROPERTY(Transient)
-	TObjectPtr<USceneComponent> MarkerTarget;
+	TObjectPtr<USceneComponent> MarkerAnchor;
 	void ResolveMarkerComponent();
 
 	UPROPERTY(Transient)
-	TObjectPtr<UHadesWorldMarker> WorldMarker;
-	void InitializeWorldMarker();
+	TObjectPtr<UWidgetComponent> MarkerWidgetComponent;
+	void InitializeMarkerWidget();
 };

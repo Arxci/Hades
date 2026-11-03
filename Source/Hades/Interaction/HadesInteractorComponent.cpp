@@ -1,5 +1,8 @@
 ﻿#include "HadesInteractorComponent.h"
 
+#include "CollisionShape.h"
+#include "Components/PrimitiveComponent.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 
 #include "Kismet/KismetSystemLibrary.h"
@@ -14,14 +17,12 @@
 #include "Hades/HadesCollisionChannels.h"
 #include "Hades/Camera/HadesCameraLibrary.h"
 #include "Hades/Interaction/HadesInteractableComponent.h"
-#include "Hades/UI/HadesWorldMarker.h"
-#include "Hades/UI/HadesWorldMarkerManagerComponent.h"
 
 namespace
 {
-	bool bShowAwarenessDebug = false;
-	FAutoConsoleVariableRef CVarShowAwareness(TEXT("Hades.Interaction.ShowAwareness"), bShowAwarenessDebug,
-		TEXT("Draw the awareness radius and the interactables in range."), ECVF_Cheat);
+	bool bShowNearbyDebug = false;
+	FAutoConsoleVariableRef CVarShowNearby(TEXT("Hades.Interaction.ShowNearby"), bShowNearbyDebug,
+		TEXT("Draw the nearby radius."), ECVF_Cheat);
 
 	bool bShowFocusDebug = false;
 	FAutoConsoleVariableRef CVarShowFocus(TEXT("Hades.Interaction.ShowFocus"), bShowFocusDebug,
@@ -29,42 +30,34 @@ namespace
 
 	bool bShowOcclusionDebug = false;
 	FAutoConsoleVariableRef CVarShowOcclusion(TEXT("Hades.Interaction.ShowOcclusion"), bShowOcclusionDebug,
-		TEXT("Draw the occlusion check for each interactable in range. Red when occluded."), ECVF_Cheat);
+		TEXT("Draw the occlusion check for each nearby interactable. Red when occluded."), ECVF_Cheat);
 
-	float AwarenessRadiusOverride = -1.0f;
-	FAutoConsoleVariableRef CVarAwarenessRadiusOverride(TEXT("Hades.Interaction.AwarenessRadiusOverride"), AwarenessRadiusOverride,
-		TEXT("Override the awareness radius. -1 uses the component's value."), ECVF_Cheat);
+	float NearbyRadiusOverride = -1.0f;
+	FAutoConsoleVariableRef CVarNearbyRadiusOverride(TEXT("Hades.Interaction.NearbyRadiusOverride"), NearbyRadiusOverride,
+		TEXT("Override the nearby radius. -1 uses the component's value."), ECVF_Cheat);
 
 	float FocusDistanceOverride = -1.0f;
 	FAutoConsoleVariableRef CVarFocusDistanceOverride(TEXT("Hades.Interaction.FocusDistanceOverride"), FocusDistanceOverride,
 		TEXT("Override the focus distance. -1 uses the component's value."), ECVF_Cheat);
 
-	// Only focus targets block the Interaction channel, so each hit is the focus target of exactly one interactable.
-	UHadesInteractableComponent* FindInteractableWithFocusTarget(const FHitResult& Hit)
+	// Only focus targets block the Interaction channel, and each belongs to exactly one interactable.
+	UHadesInteractableComponent* FindInteractableWithFocusTarget(const UPrimitiveComponent* Component)
 	{
-		AActor* HitActor = Hit.GetActor();
-		if (!IsValid(HitActor))
+		AActor* Owner = Component ? Component->GetOwner() : nullptr;
+		if (!IsValid(Owner))
 		{
 			return nullptr;
 		}
 
-		TInlineComponentArray<UHadesInteractableComponent*> Interactables(HitActor);
+		TInlineComponentArray<UHadesInteractableComponent*> Interactables(Owner);
 		for (UHadesInteractableComponent* Interactable : Interactables)
 		{
-			if (Interactable->GetFocusTarget() == Hit.GetComponent())
+			if (Interactable->GetFocusTarget() == Component)
 			{
 				return Interactable;
 			}
 		}
 		return nullptr;
-	}
-
-	void UnregisterWorldMarker(const UHadesInteractableComponent& Interactable)
-	{
-		if (UHadesWorldMarker* Marker = Interactable.GetWorldMarker())
-		{
-			Marker->Unregister();
-		}
 	}
 }
 
@@ -78,14 +71,14 @@ void UHadesInteractorComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	StartAwarenessTimer();
+	StartNearbyUpdateTimer();
 }
 
 void UHadesInteractorComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	if (const UWorld* World = GetWorld())
 	{
-		World->GetTimerManager().ClearTimer(AwarenessTimerHandle);
+		World->GetTimerManager().ClearTimer(NearbyUpdateTimerHandle);
 	}
 	ClearInteractables();
 
@@ -99,6 +92,22 @@ void UHadesInteractorComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	SetFocusedInteractable(TraceForInteractable());
 }
 
+void UHadesInteractorComponent::StartInteraction()
+{
+	if (UHadesInteractableComponent* Interactable = FocusedInteractable.Get())
+	{
+		Interactable->TryStartInteraction(GetOwner());
+	}
+}
+
+void UHadesInteractorComponent::StopInteraction()
+{
+	if (UHadesInteractableComponent* Interactable = FocusedInteractable.Get())
+	{
+		Interactable->TryStopInteraction(GetOwner());
+	}
+}
+
 void UHadesInteractorComponent::SetInteractionEnabled(bool bEnabled)
 {
 	if (bInteractionEnabled == bEnabled)
@@ -110,27 +119,27 @@ void UHadesInteractorComponent::SetInteractionEnabled(bool bEnabled)
 
 	if (bEnabled)
 	{
-		StartAwarenessTimer();
+		StartNearbyUpdateTimer();
 	}
 	else
 	{
 		if (const UWorld* World = GetWorld())
 		{
-			World->GetTimerManager().ClearTimer(AwarenessTimerHandle);
+			World->GetTimerManager().ClearTimer(NearbyUpdateTimerHandle);
 		}
 		ClearInteractables();
 	}
 }
 
-void UHadesInteractorComponent::StartAwarenessTimer()
+void UHadesInteractorComponent::StartNearbyUpdateTimer()
 {
 	if (const UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().SetTimer(
-			AwarenessTimerHandle,
+			NearbyUpdateTimerHandle,
 			this,
 			&ThisClass::UpdateNearbyInteractables,
-			AwarenessInterval,
+			NearbyUpdateInterval,
 			true);
 	}
 }
@@ -144,34 +153,26 @@ void UHadesInteractorComponent::UpdateNearbyInteractables()
 		return;
 	}
 
-	UHadesWorldMarkerManagerComponent* MarkerManager = UHadesWorldMarkerManagerComponent::Get(Pawn->GetController());
-
-	const float Radius = AwarenessRadiusOverride >= 0.0f ? AwarenessRadiusOverride : AwarenessRadius;
+	const float Radius = NearbyRadiusOverride >= 0.0f ? NearbyRadiusOverride : NearbyRadius;
 	const FVector Location = Pawn->GetActorLocation();
 
-	TArray<FHitResult> Hits;
-	UKismetSystemLibrary::SphereTraceMulti(
-		Pawn,
-		Location,
-		Location,
-		Radius,
-		UEngineTypes::ConvertToTraceType(HadesCollisionChannels::Interaction),
-		false,
-		{},
-		bShowAwarenessDebug ? EDrawDebugTrace::ForDuration : EDrawDebugTrace::None,
-		Hits,
-		true,
-		FLinearColor::Red,
-		FLinearColor::Green,
-		AwarenessInterval
-	);
+	// An overlap rather than a multi trace: a multi trace stops at the first blocking hit, and every focus target blocks this channel.
+	TArray<FOverlapResult> Overlaps;
+	const FCollisionQueryParams Params(SCENE_QUERY_STAT(HadesNearbyInteractables), false, Pawn);
+	GetWorld()->OverlapMultiByChannel(Overlaps, Location, FQuat::Identity, HadesCollisionChannels::Interaction,
+		FCollisionShape::MakeSphere(Radius), Params);
+
+	if (bShowNearbyDebug)
+	{
+		UKismetSystemLibrary::DrawDebugSphere(this, Location, Radius, 24, FLinearColor::Green, NearbyUpdateInterval);
+	}
 
 	TSet<TWeakObjectPtr<UHadesInteractableComponent>> NewNearby;
-	NewNearby.Reserve(Hits.Num());
+	NewNearby.Reserve(Overlaps.Num());
 
-	for (const FHitResult& Hit : Hits)
+	for (const FOverlapResult& Overlap : Overlaps)
 	{
-		if (UHadesInteractableComponent* Interactable = FindInteractableWithFocusTarget(Hit))
+		if (UHadesInteractableComponent* Interactable = FindInteractableWithFocusTarget(Overlap.GetComponent()))
 		{
 			NewNearby.Add(Interactable);
 		}
@@ -195,12 +196,12 @@ void UHadesInteractorComponent::UpdateNearbyInteractables()
 	{
 		if (UHadesInteractableComponent* Interactable = WeakInteractable.Get())
 		{
-			Interactable->UpdateOcclusion(ViewLocation);
+			Interactable->UpdateOcclusion(ViewLocation, Pawn);
 
 			if (bShowOcclusionDebug)
 			{
-				UKismetSystemLibrary::DrawDebugLine(this, ViewLocation, Interactable->GetInteractionLocation(),
-					Interactable->IsOccluded() ? FLinearColor::Red : FLinearColor::Green, AwarenessInterval);
+				UKismetSystemLibrary::DrawDebugLine(this, ViewLocation, Interactable->GetMarkerLocation(),
+					Interactable->IsOccluded() ? FLinearColor::Red : FLinearColor::Green, NearbyUpdateInterval);
 			}
 		}
 	}
@@ -209,8 +210,7 @@ void UHadesInteractorComponent::UpdateNearbyInteractables()
 	{
 		if (Interactable.IsValid() && !NewNearby.Contains(Interactable))
 		{
-			UnregisterWorldMarker(*Interactable);
-			Interactable->OnLeftPlayerRange();
+			Interactable->OnNearbyEnd();
 		}
 	}
 
@@ -218,11 +218,7 @@ void UHadesInteractorComponent::UpdateNearbyInteractables()
 	{
 		if (Interactable.IsValid() && !OldNearby.Contains(Interactable))
 		{
-			if (MarkerManager)
-			{
-				MarkerManager->AddMarker(Interactable->GetWorldMarker());
-			}
-			Interactable->OnEnteredPlayerRange();
+			Interactable->OnNearbyBegin();
 		}
 	}
 }
@@ -241,7 +237,7 @@ UHadesInteractableComponent* UHadesInteractorComponent::TraceForInteractable() c
 		0.0f,
 		bShowFocusDebug ? EDrawDebugTrace::ForOneFrame : EDrawDebugTrace::None);
 
-	UHadesInteractableComponent* Interactable = bHit ? FindInteractableWithFocusTarget(Hit) : nullptr;
+	UHadesInteractableComponent* Interactable = bHit ? FindInteractableWithFocusTarget(Hit.GetComponent()) : nullptr;
 	if (!Interactable || !NearbyInteractables.Contains(Interactable) || Interactable->IsOccluded())
 	{
 		return nullptr;
@@ -252,8 +248,7 @@ UHadesInteractableComponent* UHadesInteractorComponent::TraceForInteractable() c
 void UHadesInteractorComponent::SetFocusedInteractable(UHadesInteractableComponent* NewFocused)
 {
 	UHadesInteractableComponent* OldFocused = FocusedInteractable.Get();
-	const bool bFocusedWasDestroyed = FocusedInteractable.IsStale();
-	if (OldFocused == NewFocused && !bFocusedWasDestroyed)
+	if (OldFocused == NewFocused && !FocusedInteractable.IsStale())
 	{
 		return;
 	}
@@ -262,17 +257,16 @@ void UHadesInteractorComponent::SetFocusedInteractable(UHadesInteractableCompone
 
 	if (OldFocused)
 	{
-		OldFocused->OnLostPlayerFocus();
-	}
-	else if (bFocusedWasDestroyed)
-	{
-		OnInteractionFocusCleared.Broadcast();
+		OldFocused->TryStopInteraction(GetOwner());
+		OldFocused->OnFocusEnd();
 	}
 
 	if (NewFocused)
 	{
-		NewFocused->OnGainedPlayerFocus();
+		NewFocused->OnFocusBegin();
 	}
+
+	OnFocusedInteractableChanged.Broadcast(NewFocused);
 }
 
 void UHadesInteractorComponent::ClearInteractables()
@@ -287,8 +281,7 @@ void UHadesInteractorComponent::ClearInteractables()
 	{
 		if (Interactable.IsValid())
 		{
-			UnregisterWorldMarker(*Interactable);
-			Interactable->OnLeftPlayerRange();
+			Interactable->OnNearbyEnd();
 		}
 	}
 }
