@@ -17,6 +17,8 @@
 #include "Hades/HadesCollisionChannels.h"
 #include "Hades/Camera/HadesCameraLibrary.h"
 #include "Hades/Interaction/HadesInteractableComponent.h"
+#include "Hades/UI/WorldMarker/HadesWorldMarker.h"
+#include "Hades/UI/WorldMarker/HadesWorldMarkerManagerComponent.h"
 
 namespace
 {
@@ -58,6 +60,15 @@ namespace
 			}
 		}
 		return nullptr;
+	}
+
+	// Through the marker rather than the controller's manager, which may already be gone when the pawn is unpossessed.
+	void UnregisterWorldMarker(const UHadesInteractableComponent& Interactable)
+	{
+		if (UHadesWorldMarker* Marker = Interactable.GetWorldMarker())
+		{
+			Marker->Unregister();
+		}
 	}
 }
 
@@ -153,6 +164,8 @@ void UHadesInteractorComponent::UpdateNearbyInteractables()
 		return;
 	}
 
+	UHadesWorldMarkerManagerComponent* MarkerManager = UHadesWorldMarkerManagerComponent::Get(Pawn->GetController());
+
 	const float Radius = NearbyRadiusOverride >= 0.0f ? NearbyRadiusOverride : NearbyRadius;
 	const FVector Location = Pawn->GetActorLocation();
 
@@ -210,6 +223,7 @@ void UHadesInteractorComponent::UpdateNearbyInteractables()
 	{
 		if (Interactable.IsValid() && !NewNearby.Contains(Interactable))
 		{
+			UnregisterWorldMarker(*Interactable);
 			Interactable->OnNearbyEnd();
 		}
 	}
@@ -218,6 +232,10 @@ void UHadesInteractorComponent::UpdateNearbyInteractables()
 	{
 		if (Interactable.IsValid() && !OldNearby.Contains(Interactable))
 		{
+			if (MarkerManager)
+			{
+				MarkerManager->AddMarker(Interactable->GetWorldMarker());
+			}
 			Interactable->OnNearbyBegin();
 		}
 	}
@@ -281,6 +299,7 @@ void UHadesInteractorComponent::ClearInteractables()
 	{
 		if (Interactable.IsValid())
 		{
+			UnregisterWorldMarker(*Interactable);
 			Interactable->OnNearbyEnd();
 		}
 	}

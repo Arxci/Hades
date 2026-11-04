@@ -10,6 +10,8 @@ public class Hades : ModuleRules
 	
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "GameplayTags", "GameplayAbilities", "GameplayTasks", "Engine", "InputCore", "EnhancedInput", "UMG", "ComponentPicker" });
 
+		PublicDependencyModuleNames.AddRange(new string[] { "CommonUI", "CommonInput", "CommonGame", "AsyncMixin", "ModularGameplayActors" });
+
 		PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
 
 		// Uncomment if you are using Slate UI
