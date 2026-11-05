@@ -58,6 +58,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Interaction", meta = (ClampMin = "0", Units = "cm"))
 	float FocusDistance = 150.0f;
 
+	/** After the look trace leaves the focused interactable without finding another, it stays focused while it's within this angle of the view and Focus Distance of the camera. 0 drops focus as soon as the trace leaves it. */
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction", meta = (ClampMin = "0", ClampMax = "90", Units = "deg"))
+	float FocusKeepAngle = 15.0f;
+
 	UPROPERTY(EditDefaultsOnly, Category = "Interaction", meta = (ClampMin = "0.01", Units = "s"))
 	float NearbyUpdateInterval = 0.1f;
 
@@ -65,6 +69,8 @@ private:
 	void StartNearbyUpdateTimer();
 	void UpdateNearbyInteractables();
 	UHadesInteractableComponent* TraceForInteractable() const;
+	bool CanKeepFocus() const;
+	float GetFocusDistance() const;
 	void SetFocusedInteractable(UHadesInteractableComponent* NewFocused);
 	void ClearInteractables();
 

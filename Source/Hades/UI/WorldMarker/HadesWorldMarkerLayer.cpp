@@ -4,12 +4,13 @@
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/PlayerController.h"
 #include "SceneView.h"
+#include "Widgets/Layout/SDPIScaler.h"
 
 #include "Hades/UI/WorldMarker/HadesWorldMarker.h"
 #include "Hades/UI/WorldMarker/HadesWorldMarkerManagerComponent.h"
 #include "Hades/UI/WorldMarker/HadesWorldMarkerWidget.h"
 
-/** Calls OnUpdate every frame until StopUpdates. Like Lyra's SActorCanvas, the timer is registered from inside the Slate widget. */
+/** Calls OnUpdate every frame until StopUpdates. */
 class SHadesWorldMarkerCanvas : public SConstraintCanvas
 {
 public:
@@ -51,7 +52,6 @@ namespace
 	{
 		const FVector AnchorLocation = Marker.GetAnchorLocation();
 
-		// As in Lyra, relies on locations behind the camera still landing on the side of the screen they are on.
 		FVector2D Position;
 		const bool bInFront = ULocalPlayer::GetPixelPoint(ProjectionData, AnchorLocation, Position, &CanvasSize);
 
@@ -89,8 +89,8 @@ namespace
 				FromCenter = Direction * FVector2D(CanvasSize).Size();
 			}
 
-			const FVector2D Padding = Widget.GetDesiredSize() * 0.5 + FVector2D(Widget.GetEdgePadding());
-			const FVector2D Bounds = (HalfSize - Padding).ComponentMax(FVector2D(1.0));
+			const FMargin Padding = Widget.GetEdgePadding() * Widget.GetMarkerScale();
+			const FVector2D Bounds = (HalfSize - FVector2D(FromCenter.X > 0.0 ? Padding.Right : Padding.Left, FromCenter.Y > 0.0 ? Padding.Bottom : Padding.Top)).ComponentMax(FVector2D(1.0));
 			const double Overshoot = FMath::Max(FMath::Abs(FromCenter.X) / Bounds.X, FMath::Abs(FromCenter.Y) / Bounds.Y);
 			const bool bClamped = Overshoot > 1.0;
 
@@ -182,14 +182,14 @@ EActiveTimerReturnType UHadesWorldMarkerLayer::UpdateMarkers(double InCurrentTim
 			continue;
 		}
 
-		const bool bShowing = Entry.Widget->UpdateVisibilityFade(!Entry.bRemoving && Entry.Marker->IsVisible(), InDeltaTime);
-		if (!bShowing && Entry.bRemoving)
+		const bool bShowing = Entry.Widget->UpdateShowHide(!Entry.bRemoving && Entry.Marker->IsVisible(), InDeltaTime);
+		const bool bPlaced = bShowing && bCanProject && PlaceMarker(*Entry.Marker, *Entry.Widget, *Entry.Slot, ProjectionData, CanvasSize);
+		if (Entry.bRemoving && !bPlaced)
 		{
 			RemoveEntry(Index);
 			continue;
 		}
 
-		const bool bPlaced = bShowing && bCanProject && PlaceMarker(*Entry.Marker, *Entry.Widget, *Entry.Slot, ProjectionData, CanvasSize);
 		const ESlateVisibility DesiredVisibility = bPlaced ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed;
 		if (Entry.Widget->GetVisibility() != DesiredVisibility)
 		{
@@ -289,10 +289,14 @@ void UHadesWorldMarkerLayer::AddEntry(UHadesWorldMarker* Marker, TSubclassOf<UHa
 	Canvas->AddSlot()
 		.Expose(Entry.Slot)
 		.Anchors(FAnchors(0.0f))
-		.Alignment(FVector2D(0.5, 0.5))
+		.Alignment(Widget->GetAnchorAlignment())
 		.AutoSize(true)
 		[
-			Widget->TakeWidget()
+			SNew(SDPIScaler)
+			.DPIScale(Widget->GetMarkerScale())
+			[
+				Widget->TakeWidget()
+			]
 		];
 
 	Widget->SetVisibility(ESlateVisibility::Collapsed);
@@ -307,7 +311,7 @@ void UHadesWorldMarkerLayer::RemoveEntry(int32 Index)
 	Entry.Marker->Widget = nullptr;
 	if (Canvas)
 	{
-		Canvas->RemoveSlot(Entry.Widget->TakeWidget());
+		Canvas->RemoveSlot(Entry.Slot->GetWidget());
 	}
 	WidgetPool.Release(Entry.Widget.Get());
 

@@ -10,6 +10,7 @@
 class AActor;
 class USceneComponent;
 class UWidget;
+class UWidgetAnimation;
 class UHadesWorldMarker;
 
 UENUM(BlueprintType)
@@ -34,7 +35,7 @@ class HADES_API UHadesWorldMarkerWidget : public UUserWidget
 
 public:
 	// Context
-	/** Called by the layer when the widget is taken from its pool. Starts hidden, so it fades in. */
+	/** Called by the layer when the widget is taken from its pool. Starts hidden, so it fades or animates in. */
 	void SetMarker(UHadesWorldMarker* InMarker);
 
 	UFUNCTION(BlueprintPure, Category = "World Marker|Context")
@@ -58,8 +59,10 @@ public:
 	float GetProgress() const;
 
 	// Screen
-	EHadesWorldMarkerEdgeMode GetEdgeMode() const { return EdgeMode; }
-	float GetEdgePadding() const { return EdgePadding; }
+	float GetMarkerScale() const { return MarkerScale; }
+	FVector2D GetAnchorAlignment() const { return AnchorAlignment; }
+	EHadesWorldMarkerEdgeMode GetEdgeMode() const { return bForceClamp || bReleasingClamp ? EHadesWorldMarkerEdgeMode::Clamp : EdgeMode; }
+	const FMargin& GetEdgePadding() const { return EdgePadding; }
 
 	/** NormalizedPosition runs from -1 to 1 between opposite screen edges. */
 	void UpdateEdgeFade(const FVector2D& NormalizedPosition);
@@ -68,19 +71,21 @@ public:
 	void SetClampedToEdge(bool bClamped, float Angle);
 
 	// Visibility
-	/** Returns true while any of the marker is showing. */
-	bool UpdateVisibilityFade(bool bVisible, float DeltaTime);
+	/** Fades or animates toward shown or hidden. Returns true while the marker should stay on screen. */
+	bool UpdateShowHide(bool bShow, float DeltaTime);
 
 protected:
-	//~ Begin UUserWidget Interface
-	virtual void NativeOnInitialized() override;
-	//~ End UUserWidget Interface
-
 	/** Also called when the widget is reused for another marker, so derive everything from the current marker. */
 	virtual void NativeOnContextChanged();
 	virtual void NativeOnStateTagChanged(const FGameplayTag& Tag, bool bAdded);
 	virtual void NativeOnProgressChanged(float NewProgress);
 	virtual void NativeOnEventReceived(const FGameplayTag& EventTag);
+
+	/** While set, the marker clamps to the screen edge whatever its Edge Mode. */
+	void SetForceClamp(bool bInForceClamp);
+
+	/** True while a transition that should finish on screen is playing. A marker leaving a forced clamp waits for it before moving off screen, since UMG animations don't advance on widgets that aren't drawn. */
+	virtual bool IsTransitionPlaying() const { return false; }
 
 	UFUNCTION(BlueprintImplementableEvent, Category = "World Marker|Context")
 	void OnContextChanged();
@@ -99,6 +104,14 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "World Marker|Screen")
 	void OnEdgeClampChanged(bool bClamped);
 
+	/** Scales the whole marker while keeping text and images sharp. Edge Padding scales with it, so set that as if this were 1. */
+	UPROPERTY(EditDefaultsOnly, Category = "World Marker|Screen", meta = (ClampMin = "0.1"))
+	float MarkerScale = 1.0f;
+
+	/** The point of the widget placed on the anchor, from (0, 0) at the top left to (1, 1) at the bottom right. (0.5, 1) suits markers that point down at their anchor. */
+	UPROPERTY(EditDefaultsOnly, Category = "World Marker|Screen")
+	FVector2D AnchorAlignment = FVector2D(0.5, 0.5);
+
 	UPROPERTY(EditDefaultsOnly, Category = "World Marker|Screen")
 	EHadesWorldMarkerEdgeMode EdgeMode = EHadesWorldMarkerEdgeMode::None;
 
@@ -109,28 +122,42 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "World Marker|Screen", meta = (EditCondition = "EdgeMode == EHadesWorldMarkerEdgeMode::Fade", EditConditionHides, ClampMin = "0"))
 	float EdgeFadeEnd = 0.95f;
 
-	/** Gap between a clamped marker and the screen edge. */
-	UPROPERTY(EditDefaultsOnly, Category = "World Marker|Screen", meta = (EditCondition = "EdgeMode == EHadesWorldMarkerEdgeMode::Clamp", EditConditionHides, ClampMin = "0"))
-	float EdgePadding = 16.0f;
+	/** Distance kept between the anchor point and each screen edge while clamped. Give a side more room when more of the marker's visible content is on that side of the anchor. */
+	UPROPERTY(EditDefaultsOnly, Category = "World Marker|Screen")
+	FMargin EdgePadding = FMargin(48.0f);
 
 	UPROPERTY(EditDefaultsOnly, Category = "World Marker|Visibility", meta = (ClampMin = "0", Units = "s"))
 	float FadeInTime = 0.15f;
 
+	/** Also how long a marker takes to fade out at the screen edge when its forced clamp ends. */
 	UPROPERTY(EditDefaultsOnly, Category = "World Marker|Visibility", meta = (ClampMin = "0", Units = "s"))
 	float FadeOutTime = 0.2f;
 
-	/** Shown while clamped, rotated around its own center to point at the anchor. Draw it pointing right. */
+	/** Played forward when the marker appears and in reverse when it disappears, in place of the fades. */
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "World Marker|Visibility", meta = (BindWidgetAnimOptional))
+	TObjectPtr<UWidgetAnimation> ShowAnimation;
+
+	/** Shown while clamped, rotated around its own center to point at the anchor. Draw it as it looks on screen, pointing down. */
 	UPROPERTY(BlueprintReadOnly, Category = "World Marker|Screen", meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> EdgeArrow;
+
+	/** Keeps Edge Arrow visible while the marker is on screen, pointing down, instead of only while clamped. */
+	UPROPERTY(EditDefaultsOnly, Category = "World Marker|Screen")
+	bool bShowEdgeArrowOnScreen = false;
 
 private:
 	friend class UHadesWorldMarker;
 
 	void ApplyOpacity();
+	void ResetEdgeState();
+	void UpdateClampRelease(float DeltaTime);
 
 	TWeakObjectPtr<UHadesWorldMarker> Marker;
 
 	float VisibilityAlpha = 0.0f;
+	bool bShouldShow = false;
 	float EdgeAlpha = 1.0f;
 	bool bClampedToEdge = false;
+	bool bForceClamp = false;
+	bool bReleasingClamp = false;
 };

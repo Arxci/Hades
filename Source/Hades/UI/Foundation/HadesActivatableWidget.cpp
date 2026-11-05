@@ -33,7 +33,6 @@ void UHadesActivatableWidget::ValidateCompiledWidgetTree(const UWidgetTree& Blue
 		}
 		else
 		{
-			// A native subclass may implement it, which this can't detect.
 			CompileLog.Note(LOCTEXT("ValidateGetDesiredFocusTarget_Note", "GetDesiredFocusTarget wasn't implemented, you're going to have trouble using gamepads on this screen. If it was implemented in the native base class you can ignore this message."));
 		}
 	}

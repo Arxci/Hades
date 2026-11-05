@@ -47,6 +47,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "World Marker")
 	void SetPriority(int32 InPriority) { Priority = InPriority; }
 
+	UFUNCTION(BlueprintPure, Category = "World Marker")
 	int32 GetPriority() const { return Priority; }
 
 	/** Hidden markers stay registered and fade out. */
@@ -80,6 +81,7 @@ public:
 	void RefreshWidget();
 
 	// Registration
+	UFUNCTION(BlueprintCallable, Category = "World Marker")
 	void Unregister();
 
 private:

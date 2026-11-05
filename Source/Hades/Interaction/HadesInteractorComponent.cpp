@@ -100,7 +100,12 @@ void UHadesInteractorComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	SetFocusedInteractable(TraceForInteractable());
+	UHadesInteractableComponent* NewFocused = TraceForInteractable();
+	if (!NewFocused && CanKeepFocus())
+	{
+		NewFocused = FocusedInteractable.Get();
+	}
+	SetFocusedInteractable(NewFocused);
 }
 
 void UHadesInteractorComponent::StartInteraction()
@@ -243,12 +248,10 @@ void UHadesInteractorComponent::UpdateNearbyInteractables()
 
 UHadesInteractableComponent* UHadesInteractorComponent::TraceForInteractable() const
 {
-	const float Distance = FocusDistanceOverride >= 0.0f ? FocusDistanceOverride : FocusDistance;
-
 	FHitResult Hit;
 	const bool bHit = UHadesCameraLibrary::CameraForwardTrace(
 		GetOwner<APawn>(),
-		Distance,
+		GetFocusDistance(),
 		UEngineTypes::ConvertToTraceType(HadesCollisionChannels::Interaction),
 		Hit,
 		false,
@@ -261,6 +264,34 @@ UHadesInteractableComponent* UHadesInteractorComponent::TraceForInteractable() c
 		return nullptr;
 	}
 	return Interactable;
+}
+
+bool UHadesInteractorComponent::CanKeepFocus() const
+{
+	const UHadesInteractableComponent* Interactable = FocusedInteractable.Get();
+	const UPrimitiveComponent* FocusTarget = Interactable ? Interactable->GetFocusTarget() : nullptr;
+	if (!FocusTarget || FocusKeepAngle <= 0.0f || Interactable->IsOccluded())
+	{
+		return false;
+	}
+
+	FVector ViewLocation;
+	FRotator ViewRotation;
+	UHadesCameraLibrary::GetCameraViewPoint(GetOwner<APawn>(), ViewLocation, ViewRotation);
+
+	const FBox Bounds = FocusTarget->Bounds.GetBox();
+	if (FVector::DistSquared(ViewLocation, Bounds.GetClosestPointTo(ViewLocation)) > FMath::Square(GetFocusDistance()))
+	{
+		return false;
+	}
+
+	const FVector ToTarget = (Bounds.GetCenter() - ViewLocation).GetSafeNormal();
+	return FVector::DotProduct(ViewRotation.Vector(), ToTarget) >= FMath::Cos(FMath::DegreesToRadians(FocusKeepAngle));
+}
+
+float UHadesInteractorComponent::GetFocusDistance() const
+{
+	return FocusDistanceOverride >= 0.0f ? FocusDistanceOverride : FocusDistance;
 }
 
 void UHadesInteractorComponent::SetFocusedInteractable(UHadesInteractableComponent* NewFocused)

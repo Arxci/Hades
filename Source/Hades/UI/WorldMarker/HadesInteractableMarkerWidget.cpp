@@ -1,5 +1,6 @@
 ﻿#include "HadesInteractableMarkerWidget.h"
 
+#include "Animation/WidgetAnimation.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -10,6 +11,21 @@
 UHadesInteractableComponent* UHadesInteractableMarkerWidget::GetInteractable() const
 {
 	return Cast<UHadesInteractableComponent>(GetContextObject());
+}
+
+void UHadesInteractableMarkerWidget::OnAnimationFinished_Implementation(const UWidgetAnimation* Animation)
+{
+	Super::OnAnimationFinished_Implementation(Animation);
+
+	if (Animation == FocusAnimation)
+	{
+		ShowIndicatorOrPrompt();
+	}
+	else if (Animation == CompleteAnimation)
+	{
+		bRingHeldFull = false;
+		SetRingProgress(GetProgress());
+	}
 }
 
 void UHadesInteractableMarkerWidget::NativeOnContextChanged()
@@ -42,10 +58,64 @@ void UHadesInteractableMarkerWidget::NativeOnProgressChanged(float NewProgress)
 	Super::NativeOnProgressChanged(NewProgress);
 }
 
+void UHadesInteractableMarkerWidget::NativeOnEventReceived(const FGameplayTag& EventTag)
+{
+	if (CompleteAnimation && EventTag == HadesGameplayTags::Interactable_Event_Completed)
+	{
+		PlayAnimation(CompleteAnimation, 0.0f, 1, EUMGSequencePlayMode::Forward, 1.0f, /*bRestoreState*/ true);
+		bRingHeldFull = true;
+	}
+
+	Super::NativeOnEventReceived(EventTag);
+}
+
+bool UHadesInteractableMarkerWidget::IsTransitionPlaying() const
+{
+	return FocusAnimation && IsAnimationPlaying(FocusAnimation);
+}
+
 void UHadesInteractableMarkerWidget::SetFocused(bool bFocused)
 {
-	Indicator->SetVisibility(bFocused ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
-	Prompt->SetVisibility(bFocused ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	SetForceClamp(bFocused && bClampWhileFocused);
+
+	if (FocusAnimation && bPromptShown != bFocused)
+	{
+		bPromptShown = bFocused;
+
+		Indicator->SetVisibility(ESlateVisibility::HitTestInvisible);
+		Prompt->SetVisibility(ESlateVisibility::HitTestInvisible);
+		if (bFocused)
+		{
+			PlayAnimationForward(FocusAnimation);
+		}
+		else
+		{
+			PlayAnimationReverse(FocusAnimation);
+		}
+	}
+	else if (!FocusAnimation || !IsAnimationPlaying(FocusAnimation))
+	{
+		bPromptShown = bFocused;
+		ShowIndicatorOrPrompt();
+	}
+
+	if (FocusLoopAnimation)
+	{
+		if (!bFocused)
+		{
+			StopAnimation(FocusLoopAnimation);
+		}
+		else if (!IsAnimationPlaying(FocusLoopAnimation))
+		{
+			PlayAnimation(FocusLoopAnimation, 0.0f, /*NumLoopsToPlay*/ 0, EUMGSequencePlayMode::Forward, 1.0f, /*bRestoreState*/ true);
+		}
+	}
+}
+
+void UHadesInteractableMarkerWidget::ShowIndicatorOrPrompt()
+{
+	Indicator->SetVisibility(bPromptShown ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
+	Prompt->SetVisibility(bPromptShown ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 }
 
 void UHadesInteractableMarkerWidget::RefreshPrompt()
@@ -68,7 +138,6 @@ void UHadesInteractableMarkerWidget::RefreshPrompt()
 
 	if (ProgressRing)
 	{
-		// Showing the empty ring while focused tells the player it's a hold before they press anything.
 		const bool bShowRing = Interactable && Interactable->RequiresHold() && !bDisabled;
 		ProgressRing->SetVisibility(bShowRing ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
@@ -76,8 +145,9 @@ void UHadesInteractableMarkerWidget::RefreshPrompt()
 
 void UHadesInteractableMarkerWidget::SetRingProgress(float NewProgress)
 {
+	// The ring stays full while the completion plays, unless a new interaction has started.
 	if (UMaterialInstanceDynamic* Material = ProgressRing ? ProgressRing->GetDynamicMaterial() : nullptr)
 	{
-		Material->SetScalarParameterValue(TEXT("Progress"), NewProgress);
+		Material->SetScalarParameterValue(TEXT("Progress"), bRingHeldFull && NewProgress <= 0.0f ? 1.0f : NewProgress);
 	}
 }
