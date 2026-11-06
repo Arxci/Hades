@@ -1,7 +1,9 @@
 ﻿#include "HadesAbility.h"
 
+#include "GameFramework/PlayerController.h"
+
 #include "Hades/Character/HadesCharacterBase.h"
-#include "Hades/Player/HadesPlayerController.h"
+#include "Hades/Player/HadesPlayerSettings.h"
 
 UHadesAbility::UHadesAbility()
 {
@@ -39,6 +41,7 @@ AHadesCharacterBase* UHadesAbility::GetHadesCharacterFromActorInfo() const
 
 bool UHadesAbility::IsInputToggled(const FGameplayAbilityActorInfo* ActorInfo) const
 {
-	const AHadesPlayerController* PC = ActorInfo ? Cast<AHadesPlayerController>(ActorInfo->PlayerController.Get()) : nullptr;
-	return PC && PC->IsInputToggleEnabled(InputTag);
+	const APlayerController* PC = ActorInfo ? ActorInfo->PlayerController.Get() : nullptr;
+	const UHadesPlayerSettings* Settings = PC ? UHadesPlayerSettings::Get(PC->GetLocalPlayer()) : nullptr;
+	return Settings && Settings->IsInputToggleEnabled(InputTag);
 }

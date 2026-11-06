@@ -26,15 +26,14 @@ public:
 	AHadesCharacterBase* GetHadesCharacterFromActorInfo() const;
 
 	const FGameplayTag& GetInputTag() const { return InputTag; }
+	bool EndsOnInputRelease() const { return bEndOnInputRelease; }
+	bool IsInputToggled(const FGameplayAbilityActorInfo* ActorInfo) const;
 
 protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input", meta = (Categories = "Input"))
 	FGameplayTag InputTag;
 
-	/** Ends the ability when its input is released, or on the next press if the player switched this input to toggle. */
+	/** Ends the ability when its input is released, and restarts it while the input is held once the ability that cancelled or blocked it finishes. If the player set this input to toggle, the next press ends it instead. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	bool bEndOnInputRelease = false;
-
-private:
-	bool IsInputToggled(const FGameplayAbilityActorInfo* ActorInfo) const;
 };

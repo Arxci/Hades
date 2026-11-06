@@ -4,8 +4,6 @@
 
 #include "CommonPlayerController.h"
 
-#include "GameplayTagContainer.h"
-
 #include "HadesPlayerController.generated.h"
 
 class UCommonActivatableWidget;
@@ -23,12 +21,6 @@ public:
 	
 	virtual void ReceivedPlayer() override;
 
-	UFUNCTION(BlueprintPure, Category = "Input")
-	bool IsInputToggleEnabled(FGameplayTag InputTag) const { return ToggleInputTags.HasTagExact(InputTag); }
-	
-	UFUNCTION(BlueprintCallable, Category = "Input")
-	void SetInputToggleEnabled(FGameplayTag InputTag, bool bEnabled);
-
 protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void SetupInputComponent() override;
@@ -36,9 +28,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TArray<TObjectPtr<UInputMappingContext>> DefaultMappingContexts;
 	
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", meta = (Categories = "Input"))
-	FGameplayTagContainer ToggleInputTags;
-
 	UPROPERTY(VisibleAnywhere, Category = "UI")
 	TObjectPtr<UHadesWorldMarkerManagerComponent> WorldMarkerManager;
 

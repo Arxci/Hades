@@ -52,18 +52,6 @@ void AHadesPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	Super::EndPlay(EndPlayReason);
 }
 
-void AHadesPlayerController::SetInputToggleEnabled(FGameplayTag InputTag, bool bEnabled)
-{
-	if (bEnabled)
-	{
-		ToggleInputTags.AddTag(InputTag);
-	}
-	else
-	{
-		ToggleInputTags.RemoveTag(InputTag);
-	}
-}
-
 void AHadesPlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();

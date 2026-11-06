@@ -139,6 +139,11 @@ FInputActionValue AHadesHeroCharacter::GetInputValue(FGameplayTag InputTag) cons
 
 void AHadesHeroCharacter::UnPossessed()
 {
+	// First, so toggled abilities stop too and the releases below can't restart anything.
+	if (HadesAbilitySystemComponent)
+	{
+		HadesAbilitySystemComponent->ClearAbilityInput();
+	}
 	if (UHadesInputComponent* HadesInput = Cast<UHadesInputComponent>(InputComponent))
 	{
 		HadesInput->ReleaseHeldInputs();

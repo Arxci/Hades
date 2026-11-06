@@ -45,6 +45,7 @@ public:
 	UCameraComponent* GetFirstPersonCamera() const { return FirstPersonCamera; }
 	USkeletalMeshComponent* GetArmsMesh() const { return ArmsMesh; }
 
+	/** The live value of the action mapped to InputTag. Zero for unmapped tags and on pawns that aren't locally controlled. */
 	UFUNCTION(BlueprintPure, Category = "Character|Input")
 	FInputActionValue GetInputValue(UPARAM(meta = (Categories = "Input")) FGameplayTag InputTag) const;
 	
