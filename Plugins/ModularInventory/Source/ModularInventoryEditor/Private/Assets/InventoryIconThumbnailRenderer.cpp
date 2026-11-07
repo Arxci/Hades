@@ -1,4 +1,4 @@
-#include "InventoryIconThumbnailRenderer.h"
+#include "Assets/InventoryIconThumbnailRenderer.h"
 
 #include "Engine/Texture2D.h"
 

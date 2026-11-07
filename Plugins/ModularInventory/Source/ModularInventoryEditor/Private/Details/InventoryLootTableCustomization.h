@@ -5,8 +5,8 @@
 #include "IDetailCustomization.h"
 
 
-/** Adds a picture of the item's cells and the cells its sockets reach, unrotated and rotated, above its sockets. */
-class FInventoryItemDefinitionCustomization : public IDetailCustomization
+/** Replaces a loot table's Simulate button and dialog with drop rates that update as tables are edited. */
+class FInventoryLootTableCustomization : public IDetailCustomization
 {
 public:
 	static TSharedRef<IDetailCustomization> MakeInstance();

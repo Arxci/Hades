@@ -31,6 +31,10 @@ class UInventoryItemDefinitionFactory : public UInventoryAssetFactory
 
 public:
 	UInventoryItemDefinitionFactory();
+
+	//~ Begin UFactory Interface
+	virtual UObject* FactoryCreateNew(UClass* InClass, UObject* InParent, FName InName, EObjectFlags Flags, UObject* Context, FFeedbackContext* Warn) override;
+	//~ End UFactory Interface
 };
 
 

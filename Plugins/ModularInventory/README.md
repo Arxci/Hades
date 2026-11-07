@@ -45,7 +45,7 @@ A data-driven inventory system for Unreal Engine 5.7. Items live in grid, slot o
 | Crafting | Recipes with consumed ingredients and tools, tag requirements, fixed and random outputs. |
 | Safety | Every change is a transaction: it fully succeeds or is fully undone. |
 | UI | Common UI widgets for mouse, keyboard and gamepad, with drag and drop and placement previews. |
-| Editor | An Inventory section in the Add menu, icon thumbnails, a socket preview, one-click item creation, loot simulation and Asset Manager setup. |
+| Editor | An Inventory section in the Add menu, one-click item creation, an icon generator with a live studio, icon thumbnails, a socket preview, live loot drop rates, extra validation and Asset Manager setup. |
 | Debugging | A Gameplay Debugger category, Unreal Insights scopes, automation tests, and a console command to give items. |
 
 ### 1.2 Modules
@@ -59,7 +59,7 @@ A data-driven inventory system for Unreal Engine 5.7. Items live in grid, slot o
 ### 1.3 Requirements
 
 - Unreal Engine 5.7.
-- The plugins **Gameplay Abilities**, **Game Features** and **Common UI**. Modular Inventory turns them on for you.
+- The plugins **Gameplay Abilities**, **Game Features** and **Common UI**, and **Data Validation** for the editor. Modular Inventory turns them on for you.
 - An Ability System Component on actors that equip items, for the GAS grants only. Meshes, actors and anim layers work without one.
 
 ### 1.4 Glossary
@@ -120,7 +120,7 @@ Click **Yes**. The question then never comes back. If it keeps coming back, the 
    | Rules > Cook Rule | Always Cook |
 4. Restart the editor.
 
-**InventoryItem**, which gives every item definition an ID. Choose **Tools > Modular Inventory > Register Items With Asset Manager** once. It adds this entry:
+**InventoryItem**, which gives every item definition an ID. Choose **Tools > Modular Inventory > Register Items With Asset Manager** once, or click **Register Items** on the prompt that appears when you create your first item. It adds this entry:
 
 | Field | Value |
 | --- | --- |
@@ -197,13 +197,15 @@ This builds a working inventory: a character that starts with a flashlight in ha
 | `DA_Battery` | Size `1 × 1`, Stack Rules `SR_Battery`, Tags `Item.Type.Consumable` |
 | `DA_Flashlight` | Size `1 × 2`, Equip Rules `ER_HandItem`, Tags `Item.Type.Light`, Tag Values `Item.Stat.Charge = 100` |
 
+Items made from a mesh get an icon rendered from it. After changing an item's Size, right-click it and choose **Generate Item Icons** so the icon takes the new shape ([12.3](#123-item-icons)).
+
 Open `DA_Flashlight_Cosmetics`. Under **Pieces**, add a **Static Mesh** piece and set:
 - Mesh: the flashlight mesh;
 - Attach Component: the name of your first-person mesh component;
 - Attach Socket: the hand socket;
 - First Person Primitive Type: First Person.
 
-**Step 6. Register the items.** Choose **Tools > Modular Inventory > Register Items With Asset Manager**.
+**Step 6. Register the items.** Choose **Tools > Modular Inventory > Register Items With Asset Manager**, if you didn't click **Register Items** when the prompt appeared.
 
 **Step 7. Set up the character.** Open your character Blueprint and add an **Inventory Component** and an **Inventory Equipment Component** (**Add > Inventory**). Select the Inventory Component and set:
 
@@ -345,14 +347,14 @@ What a kind of item is. Every item record points at one.
 | Tags | Tags | empty | What kind of item this is. Matched by queries and filters. |
 | Tags | Tag Values | empty | Starting numbers, such as `Item.Stat.Charge = 100`. |
 | Containers | Containers | empty | Tag + Layout pairs. Every item of this kind carries these containers. |
-| Sockets | Footprint | | Editor preview of cells and sockets ([12.4](#124-footprint-preview)). |
+| Sockets | Footprint | | Editor preview of cells and sockets ([12.4](#124-item-definition-details)). |
 | Sockets | Sockets | empty | Boosts for neighbouring items ([7.2](#72-sockets)). |
 | Fragments | Fragments | empty | Structs shared by all items of this kind, such as a use sound. |
 | Fragments | Instance Fragments | empty | Structs copied onto each new item as its own state, such as a magazine. |
 
 - **Asset Manager ID:** `InventoryItem:<asset name>`, so item definition names must be unique across the project.
 - **Stack size:** taken from the Stack Rules. It is always 1 without Stack Rules, or when the item carries containers.
-- **Validation** checks the size, container layouts, duplicate container tags, empty sockets, fragments, and Asset Manager registration.
+- **Validation** checks the size, container layouts, duplicate container tags, empty sockets, fragments, and Asset Manager registration. The editor also checks for items sharing a name, and for missing or wrongly shaped icons ([12.9](#129-data-validation)).
 
 ### 5.2 Item Cosmetics
 
@@ -449,7 +451,7 @@ Random item generation. See [9. Loot tables](#9-loot-tables) for how a roll work
 | Entry | Weight | 1 | Chance relative to the pool's other entries. |
 | Entry | Condition | empty | Tag query; entries that fail are skipped. |
 | Entry | Tag Values | | Item only: Tag, Min, Max, Whole Number. Random starting values. |
-| Simulation | Simulation Rolls / Simulation Context / Simulate | 1000 | Editor-only odds check ([12.5](#125-loot-table-simulation)). |
+| Drop Rates | Simulation Rolls / Simulation Context | 1000 | Editor-only live odds ([12.6](#126-loot-table-drop-rates)). |
 
 ### 5.7 Recipe
 
@@ -495,6 +497,9 @@ An item spec says what to create. It is used by Starting Items, Starting Equipme
 | Loot Table | `LT_` | `LT_Drawer` |
 | Recipe | `RCP_` | `RCP_Torch` |
 | Recipe Book | `RB_` | `RB_Workbench` |
+| Item icon | `T_` + `_Icon` | `T_Flashlight_Icon` |
+
+The editor tools name the item definitions, cosmetics and icons they create this way. Change the prefixes in the settings ([12.8](#128-settings)).
 
 ---
 
@@ -587,7 +592,7 @@ A socket lets an item affect neighbouring items in a grid. Sockets do nothing in
 - When the item turns, every socket cell (x, y) becomes (Size.Y − 1 − y, x).
 - Read the results with **Get Effective Tag Value** and **Get Effective Item Tags**. **Get Socket Sources** lists the items affecting an item.
 - Filters and queries never see socket bonuses, so placing an item can't change what its neighbours accept.
-- Check your sockets with the Footprint preview ([12.4](#124-footprint-preview)).
+- Check your sockets with the Footprint preview ([12.4](#124-item-definition-details)).
 
 ---
 
@@ -656,7 +661,7 @@ Rolls are deterministic for a given random stream, so a fixed seed gives the sam
 
 ### 9.3 Checking the odds
 
-Open the table, set **Simulation Rolls** and **Simulation Context**, then click **Simulate** ([12.5](#125-loot-table-simulation)).
+Open the table and look at its **Drop Rates** section. Set **Simulation Context** to the tags a real roll would have; the rates update as you edit the table ([12.6](#126-loot-table-drop-rates)).
 
 ---
 
@@ -830,6 +835,18 @@ Get it with **Get Inventory UI Subsystem** (it needs the player).
 
 ## 12. Editor tools
 
+| Tool | Where |
+| --- | --- |
+| Add › Inventory | Content Browser **Add** menu ([12.1](#121-add--inventory)) |
+| Create Inventory Item | Right-click static meshes or textures ([12.2](#122-create-inventory-item)) |
+| Generate Item Icons, Edit Item Icon | Right-click item definitions; **Edit Icon...** in an item's details ([12.3](#123-item-icons)) |
+| Generate All Item Icons, Register Items With Asset Manager, Settings | **Tools › Modular Inventory** |
+| Cosmetics Create button, Icon preview, Footprint | An item definition's details ([12.4](#124-item-definition-details)) |
+| Drop Rates | A loot table's details ([12.6](#126-loot-table-drop-rates)) |
+| Validation | On save, and right-click › **Validate Assets** ([12.9](#129-data-validation)) |
+
+Tools that skip or fail on some assets list them in **Window › Message Log › Modular Inventory**. Click an asset's name there to find it.
+
 ### 12.1 Add › Inventory
 
 Every plugin asset type has its own entry under **Inventory** in the Content Browser's **Add** menu and in the right-click menu: Item Definition, Item Cosmetics, Container Layout, Stack Rules, Equip Rules, Loot Table, Recipe, Recipe Book.
@@ -843,34 +860,110 @@ Every plugin asset type has its own entry under **Inventory** in the Content Bro
 3. For each asset, an item definition and its cosmetics are created in the same folder and selected.
    - Meshes become the **World Mesh** and textures the **Icon**.
    - Selecting exactly one mesh and one texture makes a single item with both.
-   - The name drops the prefixes `SM_`, `T_`, `TX_` and `UI_` and the suffix `_Icon`. The Display Name is the name with spaces: `FlashlightBattery` becomes "Flashlight Battery".
+   - Items made from a mesh alone get a generated icon ([12.3](#123-item-icons)). Turn this off with **Generate Icons For New Items** ([12.8](#128-settings)).
+   - Names follow the Naming settings. With the defaults, `SM_FlashlightBattery` gives `DA_FlashlightBattery` and `DA_FlashlightBattery_Cosmetics`, and the Display Name "Flashlight Battery".
 4. The new assets are unsaved. Fill in the rest, then **Save All**. Moving them to another folder is fine.
 
-### 12.3 Thumbnails
+### 12.3 Item icons
 
-Item definitions and cosmetics use the item's icon as their Content Browser thumbnail. Assets made before the editor module was installed show it once they're opened or saved.
+Inventory widgets stretch an icon over the item's cells, so a 1 × 3 item needs an icon three times as tall as it is wide. The icon generator renders the item's **World Mesh** in exactly that shape, with a transparent background.
 
-### 12.4 Footprint preview
+| Action | Where | What it does |
+| --- | --- | --- |
+| Generate Item Icons | Right-click one or more item definitions | Renders an icon for each item. |
+| Edit Item Icon... | Right-click one item definition, or **Edit Icon...** in its details | Opens the Icon Studio for that item. |
+| Generate All Item Icons | Tools › Modular Inventory | Generate Item Icons for every item in the project, such as after changing the lighting. |
+
+**What gets made**
+
+- A texture named like `T_FlashlightBattery_Icon`, next to the item's cosmetics or in the **Icon Folder**, assigned to the cosmetics' **Icon**.
+- Its size is the item's cells times **Pixels Per Cell**: a 1 × 3 item gets 128 × 384 pixels by default.
+- It uses the texture settings for UI: UserInterface2D compression, no mipmaps, the UI texture group.
+- The changed assets are left unsaved, like any other edit.
+
+**Generated and hand-made icons**
+
+- A generated texture remembers how its item was framed. Generating again re-renders it with the current settings and size but the same framing, so every item keeps its angle.
+- Any other texture is hand-made, and the tools never change it. Generate Item Icons skips items with hand-made icons. Saving from the Icon Studio makes a new texture and switches the item to it, and the hand-made texture is left as it is.
+- The framing is stored as editor-only data on the texture and isn't packaged.
+
+**Icon Studio**
+
+- The preview is the real icon, at its exact shape. **Drag** to turn the mesh, **right-drag** to move it, and **scroll** to zoom. **Rotation**, **Zoom** and **Offset** below the preview take exact values.
+- **Reset** goes back to the default framing. **Quarter Turn** turns the mesh a quarter in the picture, to stand a long item up or lay it down.
+- **Lighting...** opens the icon settings. The preview updates as you change them, and so does every icon you generate afterwards.
+- **Save Icon** renders and saves the icon. The window stays open, so you can keep adjusting.
+- The preview follows the item: change its size or its World Mesh and the preview updates.
+
+**How an icon is framed**
+
+1. The mesh is turned by **Rotation**. New icons start from **Default Rotation**, and long meshes are also turned to lie along the long side of their cells.
+2. The camera fits what's visible of the mesh to the icon, keeping **Padding** around it.
+3. **Zoom** and **Offset** adjust the result.
+
+### 12.4 Item definition details
+
+These appear while a single item definition is open.
+
+| Row | What it does |
+| --- | --- |
+| Display › Cosmetics | Has a **Create** button while empty. It makes cosmetics next to the item, named after it, and assigns them. |
+| Display › Icon | The icon stretched over the item's cells, exactly as inventory widgets show it, so a wrongly shaped icon looks wrong here too. **Edit Icon...** opens the Icon Studio. |
+| Sockets › Footprint | A picture of the item's cells and the cells its sockets reach. See below. |
 
 ![The Footprint preview in an item definition: grey item cells and numbered socket cells, unrotated and rotated](Docs/Images/footprint.png)
 
-At the top of an item definition's **Sockets** section. Grey cells are the item; colored cells are the cells each socket reaches, numbered like the Sockets array. The **Rotated** view appears when the item can rotate. It redraws as you edit. It only shows while a single item definition is open.
+In the Footprint, grey cells are the item; colored cells are the cells each socket reaches, numbered like the Sockets array. The **Rotated** view appears when the item can rotate. It redraws as you edit.
 
-### 12.5 Loot table simulation
+### 12.5 Thumbnails
 
-In a loot table's **Simulation** section:
+Item definitions and cosmetics use the item's icon as their Content Browser thumbnail. Assets made before the editor module was installed show it once they're opened or saved.
 
-1. Set **Simulation Rolls**, for example 1000.
-2. Set **Simulation Context** to the tags a real roll would have, such as `Difficulty.Hard`.
-3. Click **Simulate**.
+### 12.6 Loot table drop rates
 
-A dialog lists how often nothing drops, then each item with the percentage of rolls it appears in and the average count per roll. The settings aren't saved with the table.
+A loot table's **Drop Rates** section shows how the table behaves, and updates as you edit it:
 
-### 12.6 Register Items With Asset Manager
+| Column | Meaning |
+| --- | --- |
+| Chance | The share of rolls that contain the item. |
+| Count | The fewest and most of it that one roll gave, when it dropped. |
+| Per Roll | How many a roll gives on average, counting the rolls where it didn't drop. |
+
+Above the table is how often a roll gives nothing at all.
+
+- **Simulation Rolls** is how many rolls are simulated. More rolls give steadier numbers.
+- **Simulation Context** holds the tags a real roll would have, such as `Difficulty.Hard`, for pool and entry conditions.
+- The rolls use a fixed seed, so the numbers only change when the table does. Editing any loot table updates them, since tables can roll other tables.
+- Both settings are for the editor only and aren't saved with the table.
+
+### 12.7 Register Items With Asset Manager
 
 Under **Tools › Modular Inventory**. It adds the `InventoryItem` entry described in [2.2](#22-asset-manager) if it's missing, resaves item definitions that still carry an old ID, and reloads the Asset Manager settings. A notification says how many items it resaved. Running it again is harmless.
 
-### 12.7 Data validation
+Until items are registered, creating an item definition shows a prompt with a **Register Items** button that does the same.
+
+### 12.8 Settings
+
+**Project Settings › Plugins › Modular Inventory**, also under **Tools › Modular Inventory › Settings**. They are saved in `Config/DefaultEditor.ini`; commit that file so the whole team names assets and renders icons the same way.
+
+| Category | Setting | Default | Description |
+| --- | --- | --- | --- |
+| Naming | Item Prefix | `DA_` | Put before item definition names. |
+| Naming | Cosmetics Prefix / Suffix | `DA_` / `_Cosmetics` | Put around cosmetics names. |
+| Naming | Icon Prefix / Suffix | `T_` / `_Icon` | Put around generated icon names. |
+| Naming | Source Prefixes | `SM_`, `SK_`, `T_`, `TX_`, `UI_` | Dropped from mesh and texture names when naming items. All the prefixes and suffixes above are dropped too. |
+| Icons | Pixels Per Cell | 128 | Icon pixels per grid cell. |
+| Icons | Supersampling | 2 | Renders this many times larger and shrinks the result, for smooth edges. |
+| Icons | Field Of View | 15 | Lower looks flatter, closer to an orthographic camera. |
+| Icons | Padding | 0.06 | Empty space around the mesh, as a fraction of the icon. |
+| Icons | Default Rotation | 0, 120, 20 | How new icons turn the mesh. The camera looks along X with Z up, so this shows a mesh modelled facing X from three-quarters, top tipped toward the camera. |
+| Icons | Icon Folder | empty | A folder next to the cosmetics, such as `Icons`, or a full path, such as `/Game/UI/Icons`. Empty saves icons beside the cosmetics. |
+| Icons | Generate Icons For New Items | on | Create Inventory Item renders icons for items made from a mesh alone. |
+| Icons › Lighting | Exposure | 1 | Brightens or darkens every icon. |
+| Icons › Lighting | Ambient Intensity | 1 | Soft light from every direction. |
+| Icons › Lighting | Lights | key, fill, rim | Directional lights. **Direction** is seen from the camera: Yaw 0 shines away from it, Yaw 90 to the right, Pitch -90 straight down. |
+
+### 12.9 Data validation
 
 Every plugin asset checks itself when saved, and when you right-click a folder and choose **Validate Assets**. Problems appear in the Message Log, such as:
 - missing layouts or tables;
@@ -880,7 +973,15 @@ Every plugin asset checks itself when saved, and when you right-click a folder a
 - invalid fragments;
 - items not registered with the Asset Manager.
 
-### 12.8 Inventory.Give
+The editor adds these item checks:
+
+| Check | Result |
+| --- | --- |
+| Another item definition has the same asset name. Item IDs are asset names, so the two would share one. | Error |
+| The item has no icon, so inventory widgets show nothing for it. | Warning |
+| The icon's shape doesn't match the item's cells, so widgets stretch it. | Warning |
+
+### 12.10 Inventory.Give
 
 A console command for Play In Editor and development builds:
 
@@ -1094,10 +1195,11 @@ From the item widget's **On Context Requested**, show a menu with **Use**. On Us
 | Tool | How |
 | --- | --- |
 | Gameplay Debugger | In Play In Editor, press the apostrophe key (`'`), then the number for **Inventory** (numpad by default). It shows the selected debug actor's inventory, or your own pawn's when none is selected: containers as a tree, an ASCII map of each grid, every item's state, and equipped items with their grants. Spawned pieces are marked in the world. |
-| Inventory.Give | Gives items by asset name ([12.8](#128-inventorygive)). |
+| Inventory.Give | Gives items by asset name ([12.10](#1210-inventorygive)). |
 | Unreal Insights | Operations appear as `Inventory_*` CPU scopes. Run with `-trace=default,counters` to graph the `Inventory/Items` and `Inventory/Containers` counters. |
 | Automation tests | **Tools › Session Frontend › Automation**, filter `ModularInventory`, tick and run. Command line: `UnrealEditor-Cmd.exe YourProject.uproject -ExecCmds="Automation RunTests ModularInventory; Quit" -unattended -nullrhi`. |
-| Data validation | Right-click a folder › **Validate Assets** ([12.7](#127-data-validation)). |
+| Data validation | Right-click a folder › **Validate Assets** ([12.9](#129-data-validation)). |
+| Message Log | **Window › Message Log › Modular Inventory** lists what the editor tools skipped and why. |
 | Log | Category `LogInventory`. |
 
 ---
@@ -1108,7 +1210,7 @@ From the item widget's **On Context Requested**, show a menu with **Use**. On Us
 | --- | --- | --- |
 | The editor asks about GameFeatureData on every start | The Asset Manager entry was never saved | Click **Yes**, or add the entry by hand ([2.2](#22-asset-manager)) |
 | "Modules are missing or built with a different engine version" | The plugin wasn't compiled | Regenerate project files and build Development Editor from your IDE |
-| Item definitions warn "Items aren't registered with the Asset Manager" | No `InventoryItem` entry | **Tools › Modular Inventory › Register Items With Asset Manager** |
+| Item definitions warn "Items aren't registered with the Asset Manager" | No `InventoryItem` entry | **Tools › Modular Inventory › Register Items With Asset Manager**, or **Register Items** on the prompt |
 | `Inventory.Give` says there's no such item | Not registered, wrong name, or an item saved before registering | Run the register action. Use the asset name, such as `DA_Battery` |
 | Add Item adds nothing | No storage containers, everything is full, or a filter rejects the item | Give the component a non-equipment container; check filters; check the Out Error |
 | Starting equipment isn't equipped (warning in the log) | No equipment container has that slot tag, **Equipment** isn't ticked, or the equip rules don't allow the slot | Match the slot tags between the layout, Equip Rules and Starting Equipment |
@@ -1119,12 +1221,17 @@ From the item widget's **On Context Requested**, show a menu with **Use**. On Us
 | Icons are stretched or turn wrong | The Icon fills its parent | Set its alignment to Center |
 | Items don't stack | No Stack Rules, the item carries containers, or the stacks' state differs | Compare their tag values, tags and fragments |
 | A swap is refused | One stack is partial, a filter refuses, or an item would end up inside itself | Swap whole stacks; check filters |
-| A loot table gives nothing | Pool or entry conditions fail with your context tags, weights are 0, or Min Rolls is 0 | Simulate with the same context ([12.5](#125-loot-table-simulation)) |
+| A loot table gives nothing | Pool or entry conditions fail with your context tags, weights are 0, or Min Rolls is 0 | Check its Drop Rates with the same context ([12.6](#126-loot-table-drop-rates)) |
 | Can't craft | Missing Ingredients, Requirements Not Met, or No Space | Read the Out Error. Each item counts toward one ingredient only |
 | Visuals pop in | Assets load on demand | Tick **Preload Cosmetics** on the player; set placed pickups' meshes in the editor |
 | No thumbnail icon | The asset hasn't been loaded since installing, or there's no Icon | Open or save the asset; set the Icon |
-| No Footprint preview | Several assets are being edited at once | Open a single item definition |
+| No Footprint, Icon row or Cosmetics Create button | Several assets are being edited at once | Open a single item definition |
 | No **Create Inventory Item** in the menu | The selection has no Static Meshes or Textures | Select those asset types |
+| Generate Item Icons skips an item | It has a hand-made icon, or no World Mesh | See the Message Log. Use **Edit Item Icon...** to replace a hand-made icon |
+| An icon is stretched in the inventory, or validation says its shape doesn't match | The item's Size changed after the icon was made, or the texture is hand-made in another shape | **Generate Item Icons** for a generated icon; reshape a hand-made one |
+| Generated icons are too dark or too bright | Lighting settings | Open **Edit Item Icon...**, click **Lighting...** and adjust Exposure and the lights while watching the preview, then **Generate All Item Icons** |
+| A generated icon looks blurry | Supersampling or Pixels Per Cell is low, or the mesh's textures are low resolution | Raise them in the settings ([12.8](#128-settings)) and generate again |
+| A generated icon is empty | The World Mesh has no visible geometry from that angle, or its materials are translucent or masked away | Turn the mesh in the Icon Studio |
 
 ---
 

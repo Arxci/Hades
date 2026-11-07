@@ -1,8 +1,9 @@
-#include "InventoryAssetFactories.h"
+#include "Assets/InventoryAssetFactories.h"
 
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
 
+#include "Assets/InventoryAssetManagerSetup.h"
 #include "Crafting/InventoryRecipe.h"
 #include "Data/InventoryContainerLayout.h"
 #include "Data/InventoryEquipRules.h"
@@ -42,6 +43,12 @@ uint32 UInventoryAssetFactory::GetMenuCategories() const
 UInventoryItemDefinitionFactory::UInventoryItemDefinitionFactory()
 {
 	SupportedClass = UInventoryItemDefinition::StaticClass();
+}
+
+UObject* UInventoryItemDefinitionFactory::FactoryCreateNew(UClass* InClass, UObject* InParent, FName InName, EObjectFlags Flags, UObject* Context, FFeedbackContext* Warn)
+{
+	InventoryAssetManagerSetup::PromptIfUnregistered();
+	return Super::FactoryCreateNew(InClass, InParent, InName, Flags, Context, Warn);
 }
 
 UInventoryItemCosmeticsFactory::UInventoryItemCosmeticsFactory()
