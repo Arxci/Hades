@@ -23,6 +23,9 @@ namespace HadesGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(UI_Layer_Modal,    "UI.Layer.Modal");
 
 	UE_DEFINE_GAMEPLAY_TAG(UI_Action_Escape, "UI.Action.Escape");
+	UE_DEFINE_GAMEPLAY_TAG(UI_Action_Inventory, "UI.Action.Inventory");
+	UE_DEFINE_GAMEPLAY_TAG(UI_Action_RotateItem, "UI.Action.RotateItem");
+	UE_DEFINE_GAMEPLAY_TAG(UI_Action_SplitStack, "UI.Action.SplitStack");
 
 	UE_DEFINE_GAMEPLAY_TAG(Input_Move,   "Input.Move");
 	UE_DEFINE_GAMEPLAY_TAG(Input_Look,   "Input.Look");

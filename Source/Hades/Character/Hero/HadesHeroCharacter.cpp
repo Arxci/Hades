@@ -15,6 +15,9 @@
 #include "Hades/Input/HadesInputComponent.h"
 #include "Hades/Interaction/HadesInteractorComponent.h"
 
+#include "Equipment/InventoryEquipmentComponent.h"
+#include "InventoryComponent.h"
+
 AHadesHeroCharacter::AHadesHeroCharacter(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
 	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
@@ -45,6 +48,8 @@ AHadesHeroCharacter::AHadesHeroCharacter(const FObjectInitializer& ObjectInitial
 	ArmsMesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 
 	InteractorComponent = CreateDefaultSubobject<UHadesInteractorComponent>(TEXT("InteractorComponent"));
+	InventoryComponent = CreateDefaultSubobject<UInventoryComponent>(TEXT("InventoryComponent"));
+	EquipmentComponent = CreateDefaultSubobject<UInventoryEquipmentComponent>(TEXT("EquipmentComponent"));
 }
 
 void AHadesHeroCharacter::PostInitializeComponents()

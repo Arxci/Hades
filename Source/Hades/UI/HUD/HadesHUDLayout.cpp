@@ -11,6 +11,8 @@ void UHadesHUDLayout::NativeOnInitialized()
 
 	RegisterUIActionBinding(FBindUIActionArgs(FUIActionTag::ConvertChecked(HadesGameplayTags::UI_Action_Escape), false,
 		FSimpleDelegate::CreateUObject(this, &ThisClass::HandleEscapeAction)));
+	RegisterUIActionBinding(FBindUIActionArgs(FUIActionTag::ConvertChecked(HadesGameplayTags::UI_Action_Inventory), false,
+		FSimpleDelegate::CreateUObject(this, &ThisClass::HandleInventoryAction)));
 }
 
 void UHadesHUDLayout::HandleEscapeAction()
@@ -18,5 +20,13 @@ void UHadesHUDLayout::HandleEscapeAction()
 	if (ensure(!EscapeMenuClass.IsNull()))
 	{
 		UCommonUIExtensions::PushStreamedContentToLayer_ForPlayer(GetOwningLocalPlayer(), HadesGameplayTags::UI_Layer_Menu, EscapeMenuClass);
+	}
+}
+
+void UHadesHUDLayout::HandleInventoryAction()
+{
+	if (!InventoryScreenClass.IsNull())
+	{
+		UCommonUIExtensions::PushStreamedContentToLayer_ForPlayer(GetOwningLocalPlayer(), HadesGameplayTags::UI_Layer_GameMenu, InventoryScreenClass);
 	}
 }
