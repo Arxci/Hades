@@ -37,6 +37,9 @@ public:
 	/** Everything equipping needs loaded: piece assets and anim layers. */
 	void GatherEquipAssets(TArray<FSoftObjectPath>& OutAssets) const;
 
+	/** Every asset referenced here, for keeping a held item fully loaded. */
+	void GatherAllAssets(TArray<FSoftObjectPath>& OutAssets) const;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Display")
 	TSoftObjectPtr<UTexture2D> Icon;
 

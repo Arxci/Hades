@@ -22,3 +22,21 @@ void UInventoryItemCosmetics::GatherEquipAssets(TArray<FSoftObjectPath>& OutAsse
 		}
 	}
 }
+
+void UInventoryItemCosmetics::GatherAllAssets(TArray<FSoftObjectPath>& OutAssets) const
+{
+	GatherEquipAssets(OutAssets);
+
+	TArray<FSoftObjectPath> Others = { Icon.ToSoftObjectPath(), WorldMesh.ToSoftObjectPath() };
+	for (const TPair<FGameplayTag, TSoftObjectPtr<UObject>>& Asset : Assets)
+	{
+		Others.Add(Asset.Value.ToSoftObjectPath());
+	}
+	for (const FSoftObjectPath& Path : Others)
+	{
+		if (!Path.IsNull())
+		{
+			OutAssets.Add(Path);
+		}
+	}
+}

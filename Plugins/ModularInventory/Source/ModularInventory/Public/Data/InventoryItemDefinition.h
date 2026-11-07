@@ -65,10 +65,20 @@ class MODULARINVENTORY_API UInventoryItemDefinition : public UPrimaryDataAsset
 	GENERATED_BODY()
 
 public:
+	/** The Asset Manager type of every item definition, whatever its class. */
+	static const FPrimaryAssetType AssetType;
+
+	//~ Begin UObject Interface
+	virtual FPrimaryAssetId GetPrimaryAssetId() const override;
+	//~ End UObject Interface
+
 	int32 GetMaxStackSize() const;
 	bool CanSplit() const;
 	bool IsEquippable() const { return EquipRules != nullptr; }
 	FIntPoint GetSize(bool bRotated) const { return bRotated ? FIntPoint(Size.Y, Size.X) : Size; }
+
+	/** Where a cell given relative to the unrotated item lands once the item turns a quarter clockwise. */
+	FIntPoint RotateCell(const FIntPoint& Cell, bool bRotated) const { return bRotated ? FIntPoint(Size.Y - 1 - Cell.Y, Cell.X) : Cell; }
 
 	const FInventoryTagValue* FindTagValue(const FGameplayTag& Tag) const;
 	const FInstancedStruct* FindFragment(const UScriptStruct* Type) const;

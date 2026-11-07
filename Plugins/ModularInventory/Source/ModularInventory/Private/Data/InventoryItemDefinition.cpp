@@ -2,6 +2,14 @@
 
 #include "Data/InventoryStackRules.h"
 
+const FPrimaryAssetType UInventoryItemDefinition::AssetType(FName(TEXT("InventoryItem")));
+
+FPrimaryAssetId UInventoryItemDefinition::GetPrimaryAssetId() const
+{
+	// Class defaults aren't items.
+	return HasAnyFlags(RF_ClassDefaultObject) ? FPrimaryAssetId() : FPrimaryAssetId(AssetType, GetFName());
+}
+
 int32 UInventoryItemDefinition::GetMaxStackSize() const
 {
 	if (!StackRules || !Containers.IsEmpty())
@@ -27,6 +35,9 @@ const FInstancedStruct* UInventoryItemDefinition::FindFragment(const UScriptStru
 }
 
 #if WITH_EDITOR
+#include "Engine/AssetManager.h"
+#include "Engine/Engine.h"
+
 #include "Data/InventoryContainerLayout.h"
 #include "InventoryValidation.h"
 
@@ -40,6 +51,13 @@ EDataValidationResult UInventoryItemDefinition::IsDataValid(FDataValidationConte
 	{
 		Context.AddError(LOCTEXT("InvalidSize", "Size must be at least 1x1."));
 		Result = EDataValidationResult::Invalid;
+	}
+
+	FPrimaryAssetTypeInfo TypeInfo;
+	const UAssetManager* AssetManager = GEngine ? GEngine->AssetManager.Get() : nullptr;
+	if (AssetManager && !AssetManager->GetPrimaryAssetTypeInfo(AssetType, TypeInfo))
+	{
+		Context.AddWarning(LOCTEXT("NotRegistered", "Items aren't registered with the Asset Manager, so they can't be found by ID or given with Inventory.Give, and items that nothing references won't be cooked. Use Tools > Modular Inventory > Register Items With Asset Manager."));
 	}
 
 	if (!Containers.IsEmpty() && StackRules && StackRules->MaxStackSize > 1)

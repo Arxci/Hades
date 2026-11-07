@@ -131,11 +131,24 @@ public:
 
 #if WITH_EDITOR
 	virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;
+
+	/** Rolls the table many times and shows how often each item drops. */
+	UFUNCTION(CallInEditor, Category = "Simulation")
+	void Simulate() const;
 #endif
 
 public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loot")
 	TArray<FInventoryLootPool> Pools;
+
+#if WITH_EDITORONLY_DATA
+	UPROPERTY(EditDefaultsOnly, Transient, Category = "Simulation", meta = (ClampMin = "1"))
+	int32 SimulationRolls = 1000;
+
+	/** The context tags each simulated roll uses, such as a difficulty. */
+	UPROPERTY(EditDefaultsOnly, Transient, Category = "Simulation")
+	FGameplayTagContainer SimulationContext;
+#endif
 
 private:
 	void RollPools(const TArray<FInventoryLootPool>& InPools, FRandomStream& Stream, const FGameplayTagContainer& ContextTags, TArray<FInventoryItemSpec>& OutItems, int32 Depth) const;

@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 
 #include "Components/ActorComponent.h"
+#include "Engine/StreamableManager.h"
 #include "GameplayTagContainer.h"
 
 #include "InventoryTypes.h"
@@ -82,6 +83,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory")
 	bool OwnsContainer(FInventoryContainerHandle Container) const;
 
+	/** What begin play will add, for editor previews such as a pickup showing its item. */
+	const TArray<FInventoryItemSpec>& GetStartingItems() const { return StartingItems; }
+
 	UFUNCTION(BlueprintPure, Category = "Inventory")
 	bool OwnsItem(FInventoryItemHandle Item) const;
 
@@ -137,6 +141,13 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory", meta = (TitleProperty = "Tag"))
 	TArray<FInventoryContainerConfig> Containers;
 
+	/**
+	 * Keeps the cosmetics of everything held here loaded, so menus and equipping never wait on them.
+	 * Turn it on for the player; chests and pickups are better off loading on demand.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory")
+	bool bPreloadCosmetics = false;
+
 	/** Added on begin play. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory|Starting Items")
 	TArray<FInventoryItemSpec> StartingItems;
@@ -156,8 +167,12 @@ private:
 	UInventorySubsystem* GetSubsystem() const { return Subsystem.Get(); }
 	FGameplayTagContainer GatherContextTags(const FGameplayTagContainer& ExtraTags) const;
 	void HandleRegistryChanged(const FInventoryChangeSet& Changes);
+	void RefreshCosmeticsPreload();
 
 	TArray<FInventoryContainerHandle> RootContainers;
 	TWeakObjectPtr<UInventorySubsystem> Subsystem;
 	FDelegateHandle RegistryChangedHandle;
+
+	TSet<FSoftObjectPath> PreloadedCosmetics;
+	TSharedPtr<FStreamableHandle> CosmeticsHandle;
 };

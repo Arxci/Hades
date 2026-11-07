@@ -10,12 +10,6 @@
 
 namespace
 {
-	// A quarter turn clockwise: the item's left column becomes its top row.
-	FIntPoint RotateCell(const FIntPoint& Cell, const FIntPoint& UnrotatedSize, bool bRotated)
-	{
-		return bRotated ? FIntPoint(UnrotatedSize.Y - 1 - Cell.Y, Cell.X) : Cell;
-	}
-
 	const FInstancedStruct* FindFragmentOfType(const TArray<FInstancedStruct>& Fragments, const UScriptStruct* Type)
 	{
 		return Fragments.FindByPredicate([Type](const FInstancedStruct& Fragment) { return Fragment.GetScriptStruct() == Type; });
@@ -230,7 +224,7 @@ void FInventoryRegistry::ForEachSocketAffecting(FInventoryItemHandle Item, TFunc
 		{
 			const bool bReachesTarget = Socket.Cells.ContainsByPredicate([&](const FIntPoint& LocalCell)
 			{
-				const FIntPoint Cell = Source.Placement.Cell + RotateCell(LocalCell, Source.Definition->Size, Source.Placement.bRotated);
+				const FIntPoint Cell = Source.Placement.Cell + Source.Definition->RotateCell(LocalCell, Source.Placement.bRotated);
 				return Cell.X >= TargetMin.X && Cell.X < TargetMax.X && Cell.Y >= TargetMin.Y && Cell.Y < TargetMax.Y;
 			});
 

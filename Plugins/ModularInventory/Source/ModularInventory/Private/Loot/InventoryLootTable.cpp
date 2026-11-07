@@ -128,6 +128,9 @@ void UInventoryLootTable::RemoveInjectedPools(const UObject* Source)
 
 #if WITH_EDITOR
 #include "Misc/DataValidation.h"
+#include "Misc/MessageDialog.h"
+
+#include "Data/InventoryItemDefinition.h"
 
 #define LOCTEXT_NAMESPACE "InventoryLootTable"
 
@@ -167,6 +170,50 @@ EDataValidationResult UInventoryLootTable::IsDataValid(FDataValidationContext& C
 	}
 
 	return Result;
+}
+
+void UInventoryLootTable::Simulate() const
+{
+	struct FDropStats
+	{
+		int32 RollsWithItem = 0;
+		int64 TotalCount = 0;
+	};
+
+	TMap<const UInventoryItemDefinition*, FDropStats> DropStats;
+	int32 EmptyRolls = 0;
+	FRandomStream Stream(FMath::Rand());
+
+	for (int32 RollIndex = 0; RollIndex < SimulationRolls; ++RollIndex)
+	{
+		TArray<FInventoryItemSpec> Rolled;
+		Roll(Stream, SimulationContext, Rolled);
+		EmptyRolls += Rolled.IsEmpty() ? 1 : 0;
+
+		TSet<const UInventoryItemDefinition*> DroppedThisRoll;
+		for (const FInventoryItemSpec& Spec : Rolled)
+		{
+			const UInventoryItemDefinition* Definition = Spec.Definition;
+			FDropStats& ItemStats = DropStats.FindOrAdd(Definition);
+			ItemStats.TotalCount += Spec.Count;
+			if (!DroppedThisRoll.Contains(Definition))
+			{
+				DroppedThisRoll.Add(Definition);
+				++ItemStats.RollsWithItem;
+			}
+		}
+	}
+
+	DropStats.ValueSort([](const FDropStats& A, const FDropStats& B) { return A.RollsWithItem > B.RollsWithItem; });
+
+	const double Rolls = FMath::Max(1, SimulationRolls);
+	FString Report = FString::Printf(TEXT("%s, %d rolls. Nothing dropped in %.1f%% of them.\n"), *GetName(), SimulationRolls, 100.0 * EmptyRolls / Rolls);
+	for (const TPair<const UInventoryItemDefinition*, FDropStats>& Pair : DropStats)
+	{
+		Report += FString::Printf(TEXT("\n%s: in %.1f%% of rolls, %.2f per roll on average"),
+			*GetNameSafe(Pair.Key), 100.0 * Pair.Value.RollsWithItem / Rolls, Pair.Value.TotalCount / Rolls);
+	}
+	FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Report));
 }
 
 #undef LOCTEXT_NAMESPACE

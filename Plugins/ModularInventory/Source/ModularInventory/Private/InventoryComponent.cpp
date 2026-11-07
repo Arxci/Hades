@@ -2,10 +2,12 @@
 
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
+#include "Engine/AssetManager.h"
 #include "GameFramework/Actor.h"
 
 #include "Crafting/InventoryRecipe.h"
 #include "Data/InventoryContainerLayout.h"
+#include "Data/InventoryItemCosmetics.h"
 #include "Data/InventoryItemDefinition.h"
 #include "InventorySubsystem.h"
 #include "Loot/InventoryLootTable.h"
@@ -79,6 +81,7 @@ void UInventoryComponent::BeginPlay()
 	{
 		AddLoot(StartingLoot, StartingLootContext, true);
 	}
+	RefreshCosmeticsPreload();
 }
 
 void UInventoryComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -93,6 +96,8 @@ void UInventoryComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		Registry.OnChanged.Remove(RegistryChangedHandle);
 	}
 	RootContainers.Reset();
+	CosmeticsHandle.Reset();
+	PreloadedCosmetics.Reset();
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -103,10 +108,41 @@ void UInventoryComponent::HandleRegistryChanged(const FInventoryChangeSet& Chang
 	{
 		if (RootContainers.Contains(Container) || OwnsContainer(Container))
 		{
+			RefreshCosmeticsPreload();
 			OnInventoryChanged.Broadcast(this);
 			return;
 		}
 	}
+}
+
+void UInventoryComponent::RefreshCosmeticsPreload()
+{
+	const UInventorySubsystem* InventorySubsystem = GetSubsystem();
+	if (!bPreloadCosmetics || !InventorySubsystem)
+	{
+		return;
+	}
+
+	TArray<FSoftObjectPath> Gathered;
+	for (const FInventoryItemHandle& Item : FindItems(FInventoryItemQuery()))
+	{
+		const UInventoryItemDefinition* Definition = InventorySubsystem->GetItemDefinition(Item);
+		if (Definition && Definition->Cosmetics)
+		{
+			Definition->Cosmetics->GatherAllAssets(Gathered);
+		}
+	}
+
+	TSet<FSoftObjectPath> Wanted;
+	Wanted.Append(Gathered);
+	if (Wanted.Num() == PreloadedCosmetics.Num() && Wanted.Includes(PreloadedCosmetics))
+	{
+		return;
+	}
+
+	// The new request starts before the old handle goes away, so assets in both stay loaded.
+	PreloadedCosmetics = MoveTemp(Wanted);
+	CosmeticsHandle = PreloadedCosmetics.IsEmpty() ? nullptr : UAssetManager::GetStreamableManager().RequestAsyncLoad(PreloadedCosmetics.Array(), FStreamableDelegate());
 }
 
 // Containers

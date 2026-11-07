@@ -4,6 +4,7 @@
 #include "Engine/AssetManager.h"
 #include "Engine/CollisionProfile.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/World.h"
 
 #include "Hades/Interaction/HadesInteractableComponent.h"
 
@@ -25,6 +26,26 @@ AHadesItemPickup::AHadesItemPickup()
 
 	Interactable = CreateDefaultSubobject<UHadesInteractableComponent>(TEXT("Interactable"));
 	Inventory = CreateDefaultSubobject<UInventoryComponent>(TEXT("Inventory"));
+}
+
+void AHadesItemPickup::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+
+	// In the editor, show the first starting item. The level then saves the mesh, so it loads with the level instead of popping in.
+	const UWorld* World = GetWorld();
+	const TArray<FInventoryItemSpec>& StartingItems = Inventory->GetStartingItems();
+	if (!World || World->IsGameWorld() || StartingItems.IsEmpty())
+	{
+		return;
+	}
+
+	const UInventoryItemDefinition* Definition = StartingItems[0].Definition;
+	const UInventoryItemCosmetics* Cosmetics = Definition ? Definition->Cosmetics.Get() : nullptr;
+	if (UStaticMesh* WorldMesh = Cosmetics ? Cosmetics->WorldMesh.LoadSynchronous() : nullptr)
+	{
+		Mesh->SetStaticMesh(WorldMesh);
+	}
 }
 
 void AHadesItemPickup::BeginPlay()
