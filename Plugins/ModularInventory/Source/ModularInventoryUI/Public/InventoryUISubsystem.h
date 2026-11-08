@@ -17,6 +17,7 @@ struct FInventoryRegistry;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FInventoryUIHeldItemChangedSignature);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FInventoryUITargetChangedSignature);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInventoryUIHoveredItemChangedSignature, FInventoryItemHandle, Item);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInventoryUIItemSignature, FInventoryItemHandle, Item);
 
 
 /**
@@ -106,7 +107,23 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory UI")
 	FInventoryItemHandle GetHoveredItem() const { return HoveredItem; }
 
-	/** Drops the hold, the target and the hover. Call it when an inventory screen closes. */
+	// Item menus
+	/** Asks whoever shows item menus, usually the screen, to open one. Item widgets call it on right click; call it from your gamepad binding. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
+	void RequestContext(FInventoryItemHandle Item);
+
+	// Choosing: for "use this on that" actions, such as combining two items.
+	/** Until an item is chosen, a click or Accept on an item fires On Item Chosen instead of picking it up. Puts down anything held. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
+	void BeginChoosingItem();
+
+	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
+	void CancelChoosingItem() { bChoosingItem = false; }
+
+	UFUNCTION(BlueprintPure, Category = "Inventory UI")
+	bool IsChoosingItem() const { return bChoosingItem; }
+
+	/** Drops the hold, the choosing, the target and the hover. Call it when an inventory screen closes. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	void ClearInteraction();
 
@@ -120,6 +137,13 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Inventory UI")
 	FInventoryUIHoveredItemChangedSignature OnHoveredItemChanged;
+
+	UPROPERTY(BlueprintAssignable, Category = "Inventory UI")
+	FInventoryUIItemSignature OnContextRequested;
+
+	/** The item picked after Begin Choosing Item. */
+	UPROPERTY(BlueprintAssignable, Category = "Inventory UI")
+	FInventoryUIItemSignature OnItemChosen;
 
 private:
 	FInventoryRegistry* GetRegistry() const;
@@ -137,6 +161,8 @@ private:
 	EInventoryDropAction TargetAction = EInventoryDropAction::None;
 
 	FInventoryItemHandle HoveredItem;
+
+	bool bChoosingItem = false;
 
 	/** Only listens while holding, to drop the hold when the item goes away. */
 	FInventoryRegistryListener RegistryListener;

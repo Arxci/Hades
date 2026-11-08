@@ -117,29 +117,41 @@ EInventoryError FInventoryRegistry::CanOccupy(int32 ItemIndex, const FInventoryI
 EInventoryError FInventoryRegistry::CanEquipInSlot(int32 ItemIndex, const FInventoryItemRecord& Item, const FInventoryContainerRecord& Container, int32 SlotIndex) const
 {
 	const UInventoryEquipRules* Rules = Item.Definition->EquipRules;
-	const TArray<FInventorySlotDefinition>& Slots = Container.Layout->Slots;
-	const FGameplayTag& SlotTag = Slots[SlotIndex].Tag;
-	if (!Rules || !Rules->AllowsSlot(SlotTag))
+	if (!Rules || !Rules->AllowsSlot(Container.Layout->Slots[SlotIndex].Tag))
 	{
 		return EInventoryError::NotEquippable;
 	}
 
+	// The slot itself is already known to be free, so any conflict is a blocked slot.
+	return FindEquipConflicts(ItemIndex, Item, Container, SlotIndex).IsEmpty() ? EInventoryError::None : EInventoryError::NotEquippable;
+}
+
+TArray<int32> FInventoryRegistry::FindEquipConflicts(int32 ItemIndex, const FInventoryItemRecord& Item, const FInventoryContainerRecord& Container, int32 SlotIndex) const
+{
+	const UInventoryEquipRules* Rules = Item.Definition->EquipRules;
+	const TArray<FInventorySlotDefinition>& Slots = Container.Layout->Slots;
+	const FGameplayTag& SlotTag = Slots[SlotIndex].Tag;
+
 	// Blocking works both ways: a two-handed weapon needs the off hand free, and a full off hand keeps it out.
+	TArray<int32> Conflicts;
 	for (int32 OtherSlot = 0; OtherSlot < Container.Cells.Num() && OtherSlot < Slots.Num(); ++OtherSlot)
 	{
 		const int32 OtherItem = Container.Cells[OtherSlot];
-		if (OtherSlot == SlotIndex || OtherItem == INDEX_NONE || OtherItem == ItemIndex)
+		if (OtherItem == INDEX_NONE || OtherItem == ItemIndex)
 		{
 			continue;
 		}
 
 		const UInventoryEquipRules* OtherRules = Items[OtherItem].Definition->EquipRules;
-		if (Rules->BlocksSlot(Slots[OtherSlot].Tag) || (OtherRules && OtherRules->BlocksSlot(SlotTag)))
+		const bool bInTheWay = OtherSlot == SlotIndex
+			|| (Rules && Rules->BlocksSlot(Slots[OtherSlot].Tag))
+			|| (OtherRules && OtherRules->BlocksSlot(SlotTag));
+		if (bInTheWay)
 		{
-			return EInventoryError::NotEquippable;
+			Conflicts.Add(OtherItem);
 		}
 	}
-	return EInventoryError::None;
+	return Conflicts;
 }
 
 bool FInventoryRegistry::FindPlacementFor(int32 ItemIndex, const FInventoryItemRecord& Item, FInventoryContainerHandle Container, FInventoryPlacement& OutPlacement) const
@@ -588,8 +600,10 @@ EInventoryError FInventoryRegistry::RotateItem(FInventoryItemHandle Item)
 	});
 }
 
-EInventoryError FInventoryRegistry::EquipItem(FInventoryItemHandle Item, FInventoryContainerHandle EquipmentContainer, const FGameplayTag& Slot)
+EInventoryError FInventoryRegistry::EquipItem(FInventoryItemHandle Item, FInventoryContainerHandle EquipmentContainer, const FGameplayTag& Slot, TConstArrayView<FInventoryContainerHandle> DisplaceTo)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(Inventory_EquipItem);
+
 	const FInventoryContainerRecord* ContainerRecord = FindContainer(EquipmentContainer);
 	if (!ContainerRecord)
 	{
@@ -605,7 +619,32 @@ EInventoryError FInventoryRegistry::EquipItem(FInventoryItemHandle Item, FInvent
 	{
 		return EInventoryError::OutOfBounds;
 	}
-	return MoveItem(Item, EquipmentContainer, FInventoryPlacement::AtIndex(SlotIndex));
+
+	const FInventoryPlacement SlotPlacement = FInventoryPlacement::AtIndex(SlotIndex);
+	const FInventoryItemRecord* Record = FindItem(Item);
+	const TArray<int32> Conflicts = Record && !DisplaceTo.IsEmpty() ? FindEquipConflicts(Item.Index, *Record, *ContainerRecord, SlotIndex) : TArray<int32>();
+	if (Conflicts.IsEmpty())
+	{
+		return MoveItem(Item, EquipmentContainer, SlotPlacement);
+	}
+
+	const FInventoryContainerHandle OldContainer = Record->Container;
+	const FInventoryPlacement OldPlacement = GetItemPlacement(Item);
+	return RunTransaction([&]() -> EInventoryError
+	{
+		// Lifted out first, so the item can take the slot and they can use the space it leaves.
+		for (const int32 Conflict : Conflicts)
+		{
+			DetachItem(Conflict);
+		}
+
+		EInventoryError Error = PlaceWholeStack(Item.Index, EquipmentContainer, SlotPlacement);
+		for (int32 Index = 0; Error == EInventoryError::None && Index < Conflicts.Num(); ++Index)
+		{
+			Error = PlaceDisplaced(Conflicts[Index], OldContainer, OldPlacement, DisplaceTo);
+		}
+		return Error;
+	});
 }
 
 EInventoryError FInventoryRegistry::UnequipItem(FInventoryItemHandle Item, FInventoryContainerHandle Container, const TOptional<FInventoryPlacement>& Placement)
@@ -707,6 +746,24 @@ bool FInventoryRegistry::TopUpStacks(int32 ItemIndex, FInventoryContainerHandle 
 	return false;
 }
 
+EInventoryError FInventoryRegistry::PlaceDisplaced(int32 ItemIndex, FInventoryContainerHandle SpotContainer, FInventoryPlacement Spot, TConstArrayView<FInventoryContainerHandle> Targets)
+{
+	Spot.bRotated = Items[ItemIndex].Placement.bRotated;
+	if (IsValid(SpotContainer) && PlaceWholeStack(ItemIndex, SpotContainer, Spot) == EInventoryError::None)
+	{
+		return EInventoryError::None;
+	}
+
+	for (const FInventoryContainerHandle& Target : Targets)
+	{
+		if (IsValid(Target) && PlaceWholeStack(ItemIndex, Target, {}) == EInventoryError::None)
+		{
+			return EInventoryError::None;
+		}
+	}
+	return EInventoryError::NoSpace;
+}
+
 EInventoryError FInventoryRegistry::MoveItemToContainers(FInventoryItemHandle Item, TConstArrayView<FInventoryContainerHandle> TargetContainers, int32 Count, bool bAllowPartial)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(Inventory_MoveItemToContainers);
@@ -769,6 +826,97 @@ EInventoryError FInventoryRegistry::MoveItemToContainers(FInventoryItemHandle It
 		{
 			EditItem(Item.Index).Count += Items[MovingIndex].Count;
 			DestroyItemRecord(MovingIndex);
+		}
+		return EInventoryError::None;
+	});
+}
+
+// Containers
+EInventoryError FInventoryRegistry::SetContainerLayout(FInventoryContainerHandle Container, const UInventoryContainerLayout* Layout)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(Inventory_SetContainerLayout);
+
+	const FInventoryContainerRecord* Record = FindContainer(Container);
+	if (!Record)
+	{
+		return EInventoryError::InvalidContainer;
+	}
+	if (!Layout || Layout->Type != Record->Layout->Type)
+	{
+		return EInventoryError::Rejected;
+	}
+
+	return RunTransaction([&]() -> EInventoryError
+	{
+		FInventoryContainerRecord& Edited = EditContainer(Container.Index);
+		Edited.Layout = Layout;
+		Edited.Cells.Init(INDEX_NONE, Layout->Type == EInventoryContainerType::Grid ? Layout->GetCellCount() : Layout->GetSlotCount());
+		if (Layout->Type == EInventoryContainerType::List && Layout->Capacity > 0 && Edited.Items.Num() > Layout->Capacity)
+		{
+			return EInventoryError::NoSpace;
+		}
+
+		// Stamped one at a time, so each item is checked against those already back in place.
+		const TArray<FInventoryItemHandle> Contents = Edited.Items;
+		for (const FInventoryItemHandle& Item : Contents)
+		{
+			EInventoryError Error = CanEnter(Item.Index, Items[Item.Index], Container);
+			if (Error == EInventoryError::None)
+			{
+				Error = CanOccupy(Item.Index, Items[Item.Index], Container, Items[Item.Index].Placement);
+			}
+			if (Error != EInventoryError::None)
+			{
+				return Error;
+			}
+			StampCells(Container.Index, Item.Index, Item.Index);
+		}
+		return EInventoryError::None;
+	});
+}
+
+EInventoryError FInventoryRegistry::SortContainer(FInventoryContainerHandle Container)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(Inventory_SortContainer);
+
+	const FInventoryContainerRecord* Record = FindContainer(Container);
+	if (!Record)
+	{
+		return EInventoryError::InvalidContainer;
+	}
+	if (Record->Layout->Type != EInventoryContainerType::Grid)
+	{
+		return EInventoryError::Rejected;
+	}
+
+	TArray<FInventoryItemHandle> Sorted = Record->Items;
+	Sorted.StableSort([this](const FInventoryItemHandle& A, const FInventoryItemHandle& B)
+	{
+		const FIntPoint SizeA = Items[A.Index].Definition->Size;
+		const FIntPoint SizeB = Items[B.Index].Definition->Size;
+		return SizeA.X * SizeA.Y > SizeB.X * SizeB.Y;
+	});
+
+	return RunTransaction([&]() -> EInventoryError
+	{
+		for (const FInventoryItemHandle& Item : Sorted)
+		{
+			DetachItem(Item.Index);
+		}
+
+		for (const FInventoryItemHandle& Item : Sorted)
+		{
+			if (TopUpStacks(Item.Index, Container))
+			{
+				continue;
+			}
+
+			FInventoryPlacement Spot;
+			if (!FindPlacementFor(Item.Index, Items[Item.Index], Container, Spot))
+			{
+				return EInventoryError::NoSpace;
+			}
+			AttachItem(Item.Index, Container, Spot);
 		}
 		return EInventoryError::None;
 	});

@@ -121,6 +121,16 @@ void UHadesInteractableComponent::SetInteractionText(const FText& NewText)
 	}
 }
 
+void UHadesInteractableComponent::SetDisabledText(const FText& NewText)
+{
+	DisabledText = NewText;
+
+	if (WorldMarker)
+	{
+		WorldMarker->RefreshWidget();
+	}
+}
+
 void UHadesInteractableComponent::CompleteInteraction()
 {
 	AActor* Interactor = ResetInteraction(HadesGameplayTags::Interactable_Event_Completed);

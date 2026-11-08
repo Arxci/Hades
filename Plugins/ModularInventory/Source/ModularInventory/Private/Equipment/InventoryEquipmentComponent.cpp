@@ -112,25 +112,7 @@ bool UInventoryEquipmentComponent::EquipItem(FInventoryItemHandle Item, FGamepla
 		return false;
 	}
 
-	FInventoryRegistry& Registry = InventorySubsystem->GetRegistry();
-	const FInventoryItemHandle Current = InventorySubsystem->GetItemInSlot(Target, Slot);
-	if (!Current.IsSet() || Current == Item)
-	{
-		OutError = Registry.EquipItem(Item, Target, Slot);
-		return OutError == EInventoryError::None;
-	}
-
-	// The current item takes the new one's place; when it can't, it goes to storage instead.
-	OutError = Registry.SwapItems(Item, Current);
-	if (OutError != EInventoryError::None)
-	{
-		const TArray<FInventoryContainerHandle> Storage = Inventory->GetStorageContainers();
-		OutError = Registry.RunTransaction([&]()
-		{
-			const EInventoryError Error = Registry.MoveItemToContainers(Current, Storage);
-			return Error != EInventoryError::None ? Error : Registry.EquipItem(Item, Target, Slot);
-		});
-	}
+	OutError = InventorySubsystem->GetRegistry().EquipItem(Item, Target, Slot, Inventory->GetStorageContainers());
 	return OutError == EInventoryError::None;
 }
 

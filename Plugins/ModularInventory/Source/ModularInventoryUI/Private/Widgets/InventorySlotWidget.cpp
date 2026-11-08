@@ -50,7 +50,12 @@ void UInventorySlotWidget::SetContainer(FInventoryContainerHandle InContainer)
 		UE_LOG(LogInventory, Warning, TEXT("[Inventory UI] %s: the container has no slot tagged %s."), *GetPathNameSafe(this), *SlotTag.ToString());
 	}
 
-	SetPlacement(SlotIndex != INDEX_NONE ? InContainer : FInventoryContainerHandle(), FInventoryPlacement::AtIndex(FMath::Max(SlotIndex, 0)));
+	SetContainerPlacement(SlotIndex != INDEX_NONE ? InContainer : FInventoryContainerHandle(), FInventoryPlacement::AtIndex(FMath::Max(SlotIndex, 0)));
+}
+
+void UInventorySlotWidget::SetContainerPlacement(FInventoryContainerHandle InContainer, const FInventoryPlacement& InPlacement)
+{
+	SetPlacement(InContainer, InPlacement);
 	Refresh();
 }
 

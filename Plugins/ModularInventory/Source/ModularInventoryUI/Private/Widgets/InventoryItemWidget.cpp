@@ -164,6 +164,10 @@ FReply UInventoryItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
 	}
 	if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton)
 	{
+		if (UInventoryUISubsystem* Interaction = GetInteraction())
+		{
+			Interaction->RequestContext(Item);
+		}
 		OnContextRequested();
 		return FReply::Handled();
 	}

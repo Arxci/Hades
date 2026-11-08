@@ -209,6 +209,16 @@ bool UInventorySubsystem::DestroyContainer(FInventoryContainerHandle Container)
 	return Registry.DestroyContainer(Container) == EInventoryError::None;
 }
 
+bool UInventorySubsystem::SetContainerLayout(FInventoryContainerHandle Container, const UInventoryContainerLayout* Layout, EInventoryError& OutError)
+{
+	return Succeeded(Registry.SetContainerLayout(Container, Layout), OutError);
+}
+
+bool UInventorySubsystem::SortContainer(FInventoryContainerHandle Container, EInventoryError& OutError)
+{
+	return Succeeded(Registry.SortContainer(Container), OutError);
+}
+
 // Operations
 int32 UInventorySubsystem::AddItem(const FInventoryItemSpec& Spec, FInventoryContainerHandle Container, bool bAllowPartial, TArray<FInventoryItemHandle>& OutItems, EInventoryError& OutError)
 {

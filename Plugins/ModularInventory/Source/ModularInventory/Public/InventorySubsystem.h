@@ -180,6 +180,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
 	bool DestroyContainer(FInventoryContainerHandle Container);
 
+	/** Another layout of the same type, such as a bigger grid for an upgraded backpack. Items keep their places; fails if one no longer fits. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
+	bool SetContainerLayout(FInventoryContainerHandle Container, const UInventoryContainerLayout* Layout, EInventoryError& OutError);
+
+	/** Repacks a grid, biggest items first, and merges partial stacks. All or nothing. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
+	bool SortContainer(FInventoryContainerHandle Container, EInventoryError& OutError);
+
 	// Operations
 	/** Fills compatible stacks first, then free spots. With Allow Partial, adds what fits; otherwise all or nothing. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Operations")

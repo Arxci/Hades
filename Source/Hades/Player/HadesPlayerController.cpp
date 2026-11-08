@@ -11,14 +11,18 @@
 #include "EnhancedInputSubsystems.h"
 
 #include "Engine/LocalPlayer.h"
+#include "GameFramework/Pawn.h"
 
 #include "InputMappingContext.h"
+
+#include "InventoryComponent.h"
 
 AHadesPlayerController::AHadesPlayerController()
 {
 	PlayerCameraManagerClass = AHadesPlayerCameraManager::StaticClass();
 
 	WorldMarkerManager = CreateDefaultSubobject<UHadesWorldMarkerManagerComponent>(TEXT("WorldMarkerManager"));
+	ItemBoxInventory = CreateDefaultSubobject<UInventoryComponent>(TEXT("ItemBoxInventory"));
 }
 
 void AHadesPlayerController::ReceivedPlayer()
@@ -62,5 +66,44 @@ void AHadesPlayerController::SetupInputComponent()
 		{
 			Subsystem->AddMappingContext(MappingContext, 0);
 		}
+	}
+}
+
+void AHadesPlayerController::ShowMessage(const FText& Message)
+{
+	OnMessage.Broadcast(Message);
+}
+
+void AHadesPlayerController::ShowMessageTo(const AActor* PlayerPawn, const FText& Message)
+{
+	const APawn* AsPawn = Cast<APawn>(PlayerPawn);
+	if (AHadesPlayerController* Controller = AsPawn ? AsPawn->GetController<AHadesPlayerController>() : nullptr)
+	{
+		Controller->ShowMessage(Message);
+	}
+}
+
+void AHadesPlayerController::AddPauseRequest(const UObject* Requester)
+{
+	PauseRequests.AddUnique(Requester);
+	UpdatePause();
+}
+
+void AHadesPlayerController::RemovePauseRequest(const UObject* Requester)
+{
+	if (PauseRequests.Remove(Requester) > 0)
+	{
+		UpdatePause();
+	}
+}
+
+void AHadesPlayerController::UpdatePause()
+{
+	PauseRequests.RemoveAll([](const TWeakObjectPtr<const UObject>& Requester) { return !Requester.IsValid(); });
+
+	const bool bWantsPause = !PauseRequests.IsEmpty();
+	if (bWantsPause != IsPaused())
+	{
+		SetPause(bWantsPause);
 	}
 }

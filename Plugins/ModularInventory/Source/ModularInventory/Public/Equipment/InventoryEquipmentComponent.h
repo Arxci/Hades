@@ -105,7 +105,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory|Equipment", meta = (DefaultToSelf = "Actor"))
 	static UInventoryEquipmentComponent* FindEquipmentComponent(const AActor* Actor);
 
-	/** Moves the item into the first equipment container with that slot. Whatever is in the slot swaps places with it, or goes to storage when it can't. */
+	/**
+	 * Moves the item into the first equipment container with that slot. Whatever is in the way, the item in the slot or one its equip rules
+	 * keep apart from it, takes the spot the item left, or goes to storage. Fails when there is no room for it.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Equipment")
 	bool EquipItem(FInventoryItemHandle Item, FGameplayTag Slot, EInventoryError& OutError);
 

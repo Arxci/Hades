@@ -14,9 +14,10 @@
 #include "Hades/AbilitySystem/HadesAbilitySystemComponent.h"
 #include "Hades/Input/HadesInputComponent.h"
 #include "Hades/Interaction/HadesInteractorComponent.h"
+#include "Hades/Inventory/HadesInventoryComponent.h"
+#include "Hades/Inventory/HadesQuickSlotComponent.h"
 
 #include "Equipment/InventoryEquipmentComponent.h"
-#include "InventoryComponent.h"
 
 AHadesHeroCharacter::AHadesHeroCharacter(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
@@ -48,8 +49,9 @@ AHadesHeroCharacter::AHadesHeroCharacter(const FObjectInitializer& ObjectInitial
 	ArmsMesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 
 	InteractorComponent = CreateDefaultSubobject<UHadesInteractorComponent>(TEXT("InteractorComponent"));
-	InventoryComponent = CreateDefaultSubobject<UInventoryComponent>(TEXT("InventoryComponent"));
+	InventoryComponent = CreateDefaultSubobject<UHadesInventoryComponent>(TEXT("InventoryComponent"));
 	EquipmentComponent = CreateDefaultSubobject<UInventoryEquipmentComponent>(TEXT("EquipmentComponent"));
+	QuickSlotComponent = CreateDefaultSubobject<UHadesQuickSlotComponent>(TEXT("QuickSlotComponent"));
 }
 
 void AHadesHeroCharacter::PostInitializeComponents()
@@ -64,9 +66,15 @@ void AHadesHeroCharacter::PostInitializeComponents()
 
 void AHadesHeroCharacter::BeginPlay()
 {
+	// Components begin play in here, so the inventory holds its starting items afterwards.
 	Super::BeginPlay();
 
 	SetEyeHeight(BaseEyeHeight);
+
+	for (const FInventoryItemHandle& Item : InventoryComponent->FindItems(FInventoryItemQuery()))
+	{
+		QuickSlotComponent->AssignToFreeSlot(Item);
+	}
 }
 
 void AHadesHeroCharacter::Tick(float DeltaSeconds)
@@ -127,6 +135,15 @@ void AHadesHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInput
 	HadesInput->BindActionByTag(InputConfig, HadesGameplayTags::Input_Jump, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
 	HadesInput->BindActionByTag(InputConfig, HadesGameplayTags::Input_Interact, ETriggerEvent::Started, InteractorComponent.Get(), &UHadesInteractorComponent::StartInteraction);
 	HadesInput->BindActionByTag(InputConfig, HadesGameplayTags::Input_Interact, ETriggerEvent::Completed, InteractorComponent.Get(), &UHadesInteractorComponent::StopInteraction);
+
+	const TArray<FGameplayTag> QuickSlotInputs = { HadesGameplayTags::Input_QuickSlot_1, HadesGameplayTags::Input_QuickSlot_2, HadesGameplayTags::Input_QuickSlot_3, HadesGameplayTags::Input_QuickSlot_4 };
+	for (int32 SlotIndex = 0; SlotIndex < QuickSlotInputs.Num(); ++SlotIndex)
+	{
+		if (const UInputAction* QuickSlotAction = InputConfig->FindInputActionForTag(QuickSlotInputs[SlotIndex], false))
+		{
+			HadesInput->BindAction(QuickSlotAction, ETriggerEvent::Started, QuickSlotComponent.Get(), &UHadesQuickSlotComponent::ActivateSlot, SlotIndex);
+		}
+	}
 
 	if (HadesAbilitySystemComponent)
 	{

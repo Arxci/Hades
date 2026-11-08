@@ -13,7 +13,10 @@ class UInventoryItemWidget;
 struct FInventoryChangeSet;
 
 
-/** One slot of a slot container, such as the main hand in the equipment slots. Place these by hand to lay out an equipment screen. */
+/**
+ * One slot of a slot container, such as the main hand in the equipment slots. Place these by hand to lay out an equipment screen.
+ * List widgets use it for their entries too.
+ */
 UCLASS(Abstract)
 class MODULARINVENTORYUI_API UInventorySlotWidget : public UInventoryCellWidget
 {
@@ -23,6 +26,10 @@ public:
 	/** Points the slot at a container yourself, instead of finding Container Tag on the player. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Slot")
 	void SetContainer(FInventoryContainerHandle InContainer);
+
+	/** Shows any position of any container, ignoring Slot Tag, such as one entry of a list. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Slot")
+	void SetContainerPlacement(FInventoryContainerHandle InContainer, const FInventoryPlacement& InPlacement);
 
 protected:
 	//~ Begin UUserWidget Interface

@@ -17,7 +17,7 @@ enum class EHadesWidgetInputMode : uint8
 	Menu
 };
 
-/** An activatable widget that sets the player's input mode while it is active. */
+/** An activatable widget that sets the player's input mode while it is active, and can pause the game. */
 UCLASS(Abstract, Blueprintable)
 class HADES_API UHadesActivatableWidget : public UCommonActivatableWidget
 {
@@ -33,6 +33,11 @@ public:
 #endif
 
 protected:
+	//~ Begin UCommonActivatableWidget Interface
+	virtual void NativeOnActivated() override;
+	virtual void NativeOnDeactivated() override;
+	//~ End UCommonActivatableWidget Interface
+
 	/** Whether input reaches the game, the UI or both while this is active. Default leaves the input mode unchanged. */
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	EHadesWidgetInputMode InputConfig = EHadesWidgetInputMode::Default;
@@ -40,4 +45,8 @@ protected:
 	/** Mouse behavior while the game gets input. */
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	EMouseCaptureMode GameMouseCaptureMode = EMouseCaptureMode::CapturePermanently;
+
+	/** The world stops while this is active. */
+	UPROPERTY(EditDefaultsOnly, Category = "Pause")
+	bool bPauseGame = false;
 };

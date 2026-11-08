@@ -2,6 +2,8 @@
 
 #include "Editor/WidgetCompilerLog.h"
 
+#include "Hades/Player/HadesPlayerController.h"
+
 #define LOCTEXT_NAMESPACE "Hades"
 
 TOptional<FUIInputConfig> UHadesActivatableWidget::GetDesiredInputConfig() const
@@ -18,6 +20,28 @@ TOptional<FUIInputConfig> UHadesActivatableWidget::GetDesiredInputConfig() const
 	default:
 		return TOptional<FUIInputConfig>();
 	}
+}
+
+void UHadesActivatableWidget::NativeOnActivated()
+{
+	Super::NativeOnActivated();
+
+	AHadesPlayerController* Controller = Cast<AHadesPlayerController>(GetOwningPlayer());
+	if (bPauseGame && Controller)
+	{
+		Controller->AddPauseRequest(this);
+	}
+}
+
+void UHadesActivatableWidget::NativeOnDeactivated()
+{
+	AHadesPlayerController* Controller = Cast<AHadesPlayerController>(GetOwningPlayer());
+	if (bPauseGame && Controller)
+	{
+		Controller->RemovePauseRequest(this);
+	}
+
+	Super::NativeOnDeactivated();
 }
 
 #if WITH_EDITOR

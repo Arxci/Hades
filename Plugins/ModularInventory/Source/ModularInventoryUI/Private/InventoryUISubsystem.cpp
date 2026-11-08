@@ -2,7 +2,9 @@
 
 #include "Engine/LocalPlayer.h"
 
+#include "Data/InventoryContainerLayout.h"
 #include "Data/InventoryItemDefinition.h"
+#include "InventoryComponent.h"
 #include "InventoryRegistry.h"
 #include "InventorySubsystem.h"
 
@@ -29,7 +31,7 @@ bool UInventoryUISubsystem::BeginHold(FInventoryItemHandle Item, int32 Count)
 {
 	const FInventoryRegistry* Registry = GetRegistry();
 	const FInventoryItemRecord* Record = Registry ? Registry->FindItem(Item) : nullptr;
-	if (!Record)
+	if (!Record || bChoosingItem)
 	{
 		return false;
 	}
@@ -148,6 +150,12 @@ bool UInventoryUISubsystem::ActivatePlacement(FInventoryContainerHandle Containe
 
 	const FInventoryRegistry* Registry = GetRegistry();
 	const FInventoryItemHandle Item = Registry ? Registry->GetItemAt(Container, Placement) : FInventoryItemHandle();
+	if (bChoosingItem && Item.IsSet())
+	{
+		bChoosingItem = false;
+		OnItemChosen.Broadcast(Item);
+		return true;
+	}
 	return Item.IsSet() && BeginHold(Item);
 }
 
@@ -160,7 +168,8 @@ EInventoryDropAction UInventoryUISubsystem::ResolvePlacement(FInventoryContainer
 {
 	FInventoryRegistry* Registry = GetRegistry();
 	const FInventoryItemRecord* Held = Registry ? Registry->FindItem(HeldItem) : nullptr;
-	if (!Held || !Registry->IsValid(Container))
+	const FInventoryContainerRecord* TargetRecord = Registry ? Registry->FindContainer(Container) : nullptr;
+	if (!Held || !TargetRecord)
 	{
 		return EInventoryDropAction::None;
 	}
@@ -172,8 +181,16 @@ EInventoryDropAction UInventoryUISubsystem::ResolvePlacement(FInventoryContainer
 	const bool bOccupiedByOther = Occupant.IsSet() && Occupant != HeldItem;
 	const bool bMerge = bOccupiedByOther && Registry->CanStack(HeldItem, Occupant);
 
+	// Equipment slots make way like the equipment component does: what's in the way goes to the owner's storage.
+	const UInventoryContainerLayout& TargetLayout = *TargetRecord->Layout;
+	const bool bEquipmentSlot = TargetLayout.bEquipment && TargetLayout.Slots.IsValidIndex(Target.Index);
+	const FGameplayTag EquipSlot = bEquipmentSlot ? TargetLayout.Slots[Target.Index].Tag : FGameplayTag();
+	const UInventoryComponent* SlotOwner = bEquipmentSlot ? Cast<UInventoryComponent>(Registry->GetOwner(Container)) : nullptr;
+	const TArray<FInventoryContainerHandle> Storage = SlotOwner ? SlotOwner->GetStorageContainers() : TArray<FInventoryContainerHandle>();
+
 	auto MoveHeld = [&]() { return Registry->MoveItem(HeldItem, Container, Target, MoveCount); };
 	auto SwapHeld = [&]() { return Registry->SwapItems(HeldItem, Occupant); };
+	auto EquipHeld = [&]() { return Registry->EquipItem(HeldItem, Container, EquipSlot, Storage); };
 	auto Attempt = [&](TFunctionRef<EInventoryError()> Operation) { return bApply ? Operation() : Registry->DryRun(Operation); };
 
 	if (Attempt(MoveHeld) == EInventoryError::None)
@@ -183,6 +200,10 @@ EInventoryDropAction UInventoryUISubsystem::ResolvePlacement(FInventoryContainer
 
 	// Only whole stacks swap: the rest of a split stack would have nowhere to go.
 	if (bOccupiedByOther && !bMerge && MoveCount == 0 && Attempt(SwapHeld) == EInventoryError::None)
+	{
+		return EInventoryDropAction::Swap;
+	}
+	if (!Storage.IsEmpty() && MoveCount == 0 && Attempt(EquipHeld) == EInventoryError::None)
 	{
 		return EInventoryDropAction::Swap;
 	}
@@ -228,9 +249,25 @@ void UInventoryUISubsystem::SetHoveredItem(FInventoryItemHandle Item)
 	}
 }
 
+// Item menus and choosing
+void UInventoryUISubsystem::RequestContext(FInventoryItemHandle Item)
+{
+	if (Item.IsSet())
+	{
+		OnContextRequested.Broadcast(Item);
+	}
+}
+
+void UInventoryUISubsystem::BeginChoosingItem()
+{
+	CancelHold();
+	bChoosingItem = true;
+}
+
 void UInventoryUISubsystem::ClearInteraction()
 {
 	CancelHold();
+	CancelChoosingItem();
 	ClearTarget();
 	SetHoveredItem(FInventoryItemHandle());
 }

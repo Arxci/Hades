@@ -16,7 +16,8 @@ class UInputComponent;
 
 class UHadesInteractorComponent;
 class UHadesInputConfig;
-class UInventoryComponent;
+class UHadesInventoryComponent;
+class UHadesQuickSlotComponent;
 class UInventoryEquipmentComponent;
 
 UCLASS()
@@ -44,8 +45,9 @@ public:
 	//~ End ACharacter Interface
 
 	UHadesInteractorComponent* GetInteractorComponent() const { return InteractorComponent; }
-	UInventoryComponent* GetInventoryComponent() const { return InventoryComponent; }
+	UHadesInventoryComponent* GetInventoryComponent() const { return InventoryComponent; }
 	UInventoryEquipmentComponent* GetEquipmentComponent() const { return EquipmentComponent; }
+	UHadesQuickSlotComponent* GetQuickSlotComponent() const { return QuickSlotComponent; }
 	UCameraComponent* GetFirstPersonCamera() const { return FirstPersonCamera; }
 	USkeletalMeshComponent* GetArmsMesh() const { return ArmsMesh; }
 
@@ -64,13 +66,17 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character|Interaction")
 	TObjectPtr<UHadesInteractorComponent> InteractorComponent;
 
-	/** Set its containers in the Blueprint: storage grids, and a slot layout marked as equipment for the hands and body. */
+	/** Set its containers in the Blueprint: Container.Pockets (grid), Container.KeyItems (list) and Container.Hands (equipment slots). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character|Inventory")
-	TObjectPtr<UInventoryComponent> InventoryComponent;
+	TObjectPtr<UHadesInventoryComponent> InventoryComponent;
 
 	/** Applies whatever the inventory's equipment slots hold. Pieces meant for the first-person view should attach to ArmsMesh. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character|Inventory")
 	TObjectPtr<UInventoryEquipmentComponent> EquipmentComponent;
+
+	/** Input.QuickSlot.1 to 4 activate its slots. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character|Inventory")
+	TObjectPtr<UHadesQuickSlotComponent> QuickSlotComponent;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Character|Camera", meta = (ClampMin = "0.0", Units = "s"))
 	float EyeHeightSmoothingTime = 0.1f;

@@ -61,6 +61,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Interaction")
 	FText GetInteractionText() const { return InteractionText; }
 
+	UFUNCTION(BlueprintCallable, Category = "Interaction")
+	void SetDisabledText(const FText& NewText);
+
 	UFUNCTION(BlueprintPure, Category = "Interaction")
 	FText GetDisabledText() const { return DisabledText; }
 

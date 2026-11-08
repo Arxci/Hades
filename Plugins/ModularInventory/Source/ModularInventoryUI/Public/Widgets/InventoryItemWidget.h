@@ -72,7 +72,7 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Item")
 	void OnHoveredChanged(bool bIsHovered);
 
-	/** Right click. Open a menu here for game actions like Use or Drop. */
+	/** Right click, after the Inventory UI Subsystem's On Context Requested. Open an item menu from either, for game actions like Use or Drop. */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Item")
 	void OnContextRequested();
 

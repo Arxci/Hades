@@ -5,6 +5,7 @@
 #include "Misc/AutomationTest.h"
 
 #include "Crafting/InventoryRecipe.h"
+#include "Data/InventoryContainerLayout.h"
 #include "Data/InventoryItemDefinition.h"
 #include "Loot/InventoryLootTable.h"
 
@@ -85,6 +86,72 @@ void FInventoryFeatureSpec::Define()
 
 			const EInventoryError KnifeBlocked = Registry->EquipItem(Knife, Hands, Slot_OffHand);
 			TestTrue(*DescribeErrors(TEXT("Knife beside the rifle"), KnifeBlocked, EInventoryError::NotEquippable), KnifeBlocked == EInventoryError::NotEquippable);
+		});
+
+		It("moves what blocks a two-handed item to storage", [this]()
+		{
+			const FInventoryItemHandle Knife = AddTestItem(*Registry, Data->Knife, Grid);
+			const FInventoryItemHandle Rifle = AddTestItem(*Registry, Data->Rifle, Grid);
+			Registry->EquipItem(Knife, Hands, Slot_OffHand);
+
+			const EInventoryError Error = Registry->EquipItem(Rifle, Hands, Slot_MainHand, MakeArrayView(&Grid, 1));
+			TestTrue(*DescribeErrors(TEXT("Equipping the rifle"), Error, EInventoryError::None), Error == EInventoryError::None);
+			TestTrue(TEXT("Rifle in the main hand"), Registry->GetItemAt(Hands, FInventoryPlacement::AtIndex(0)) == Rifle);
+			TestTrue(TEXT("Knife back in the grid"), Registry->FindItem(Knife)->Container == Grid);
+		});
+
+		It("lets what makes way use the space the item leaves", [this]()
+		{
+			UInventoryContainerLayout* RifleSized = Data->Make<UInventoryContainerLayout>();
+			RifleSized->GridSize = FIntPoint(1, 3);
+			const FInventoryContainerHandle Full = Registry->CreateContainer(RifleSized, FGameplayTag(), nullptr);
+			const FInventoryItemHandle Rifle = AddTestItem(*Registry, Data->Rifle, Full);
+			const FInventoryItemHandle Knife = AddTestItem(*Registry, Data->Knife, Grid);
+			Registry->EquipItem(Knife, Hands, Slot_MainHand);
+
+			const EInventoryError Error = Registry->EquipItem(Rifle, Hands, Slot_MainHand, MakeArrayView(&Full, 1));
+			TestTrue(*DescribeErrors(TEXT("Swapping into a full grid"), Error, EInventoryError::None), Error == EInventoryError::None);
+			TestTrue(TEXT("Knife where the rifle was"), Registry->FindItem(Knife)->Container == Full);
+		});
+	});
+
+	Describe("Containers", [this]()
+	{
+		It("keep their items when given a bigger layout", [this]()
+		{
+			const FInventoryItemHandle Knife = AddTestItem(*Registry, Data->Knife, Grid, 1, FInventoryPlacement::AtCell(FIntPoint(3, 2)));
+
+			UInventoryContainerLayout* Bigger = Data->Make<UInventoryContainerLayout>();
+			Bigger->GridSize = FIntPoint(6, 6);
+			TestTrue(TEXT("Grown"), Registry->SetContainerLayout(Grid, Bigger) == EInventoryError::None);
+			TestTrue(TEXT("Knife in place"), Registry->GetItemPlacement(Knife).Cell == FIntPoint(3, 2));
+			TestTrue(TEXT("New cells usable"), Registry->CanPlace(Knife, Grid, FInventoryPlacement::AtCell(FIntPoint(5, 4))) == EInventoryError::None);
+		});
+
+		It("refuse a layout that would cut an item off", [this]()
+		{
+			AddTestItem(*Registry, Data->Knife, Grid, 1, FInventoryPlacement::AtCell(FIntPoint(3, 2)));
+
+			const EInventoryError Error = Registry->SetContainerLayout(Grid, Data->Grid2x2);
+			TestTrue(*DescribeErrors(TEXT("Shrinking under the knife"), Error, EInventoryError::OutOfBounds), Error == EInventoryError::OutOfBounds);
+			TestTrue(TEXT("Old layout kept"), Registry->FindContainer(Grid)->Layout.Get() == Data->Grid4x4);
+		});
+
+		It("sort biggest first and merge partial stacks", [this]()
+		{
+			const FInventoryItemHandle Knife = AddTestItem(*Registry, Data->Knife, Grid, 1, FInventoryPlacement::AtCell(FIntPoint(3, 2)));
+			AddTestItem(*Registry, Data->Ammo, Grid, 10, FInventoryPlacement::AtCell(FIntPoint(0, 3)));
+			AddTestItem(*Registry, Data->Ammo, Grid, 5, FInventoryPlacement::AtCell(FIntPoint(2, 3)));
+
+			TestTrue(TEXT("Sorted"), Registry->SortContainer(Grid) == EInventoryError::None);
+			TestTrue(TEXT("Knife in the corner"), Registry->GetItemPlacement(Knife).Cell == FIntPoint(0, 0));
+
+			FInventoryItemQuery AmmoQuery;
+			AmmoQuery.Definitions.Add(Data->Ammo);
+			TArray<FInventoryItemHandle> AmmoStacks;
+			Registry->FindItems(MakeArrayView(&Grid, 1), AmmoQuery, false, AmmoStacks);
+			TestEqual(TEXT("One ammo stack"), AmmoStacks.Num(), 1);
+			TestEqual(TEXT("All the ammo"), Count(Data->Ammo), 15);
 		});
 	});
 

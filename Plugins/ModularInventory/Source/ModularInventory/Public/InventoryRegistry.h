@@ -176,6 +176,13 @@ public:
 	FInventoryContainerHandle CreateContainer(const UInventoryContainerLayout* Layout, const FGameplayTag& Tag, UObject* Owner);
 	/** Root containers only, along with everything inside them. Item containers live and die with their item. */
 	EInventoryError DestroyContainer(FInventoryContainerHandle Container);
+	/**
+	 * Gives the container another layout of the same type, such as a bigger grid for an upgraded backpack. Items keep their places.
+	 * Fails without changing anything when an item no longer fits or the new filter refuses it.
+	 */
+	EInventoryError SetContainerLayout(FInventoryContainerHandle Container, const UInventoryContainerLayout* Layout);
+	/** Repacks a grid, biggest items first, each on the first spot that fits, and merges partial stacks. All or nothing. */
+	EInventoryError SortContainer(FInventoryContainerHandle Container);
 
 	// Operations. An unset Placement means "find a free spot".
 	/** Fills compatible stacks first, then free spots. With an explicit placement, adds a single stack there or onto the stack already there. */
@@ -198,8 +205,12 @@ public:
 	/** Moves as much as fits from Source onto Target. Count 0 tries the whole stack. */
 	EInventoryError MergeStacks(FInventoryItemHandle Source, FInventoryItemHandle Target, int32 Count = 0, int32* OutMoved = nullptr);
 	EInventoryError RotateItem(FInventoryItemHandle Item);
-	/** Moves the item into a slot of an equipment container. */
-	EInventoryError EquipItem(FInventoryItemHandle Item, FInventoryContainerHandle EquipmentContainer, const FGameplayTag& Slot);
+	/**
+	 * Moves the item into a slot of an equipment container. With DisplaceTo, whatever keeps it out first makes way: the item in the slot,
+	 * and items the equip rules keep apart from it, like an off-hand item for a two-handed weapon. Each tries the spot the item left,
+	 * then the first free spot in DisplaceTo. All or nothing.
+	 */
+	EInventoryError EquipItem(FInventoryItemHandle Item, FInventoryContainerHandle EquipmentContainer, const FGameplayTag& Slot, TConstArrayView<FInventoryContainerHandle> DisplaceTo = {});
 	/** Moves an item out of its equipment slot. */
 	EInventoryError UnequipItem(FInventoryItemHandle Item, FInventoryContainerHandle Container, const TOptional<FInventoryPlacement>& Placement = {});
 
@@ -284,12 +295,16 @@ private:
 	EInventoryError PlaceWholeStack(int32 ItemIndex, FInventoryContainerHandle Container, const TOptional<FInventoryPlacement>& Placement);
 	/** Pours the stack into compatible stacks in the container. Returns true once nothing is left of it. */
 	bool TopUpStacks(int32 ItemIndex, FInventoryContainerHandle Container);
+	/** For an item that had to make way: Spot if it fits there in its own rotation, else the first free spot in Targets. */
+	EInventoryError PlaceDisplaced(int32 ItemIndex, FInventoryContainerHandle SpotContainer, FInventoryPlacement Spot, TConstArrayView<FInventoryContainerHandle> Targets);
 
 	// Checks take a record so items that don't exist yet can be tested; ItemIndex is INDEX_NONE for those.
 	// CanEnter covers the container as a whole, CanOccupy one spot in it.
 	EInventoryError CanEnter(int32 ItemIndex, const FInventoryItemRecord& Item, FInventoryContainerHandle Container) const;
 	EInventoryError CanOccupy(int32 ItemIndex, const FInventoryItemRecord& Item, FInventoryContainerHandle Container, const FInventoryPlacement& Placement) const;
 	EInventoryError CanEquipInSlot(int32 ItemIndex, const FInventoryItemRecord& Item, const FInventoryContainerRecord& Container, int32 SlotIndex) const;
+	/** Items that keep Item out of the slot: the one in it, and those whose equip rules or Item's keep them apart. */
+	TArray<int32> FindEquipConflicts(int32 ItemIndex, const FInventoryItemRecord& Item, const FInventoryContainerRecord& Container, int32 SlotIndex) const;
 	bool FindPlacementFor(int32 ItemIndex, const FInventoryItemRecord& Item, FInventoryContainerHandle Container, FInventoryPlacement& OutPlacement) const;
 	int32 FindOccupant(const FInventoryContainerRecord& Container, const FInventoryPlacement& Placement) const;
 
