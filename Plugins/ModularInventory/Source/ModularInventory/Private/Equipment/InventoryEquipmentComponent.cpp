@@ -116,8 +116,45 @@ bool UInventoryEquipmentComponent::EquipItem(FInventoryItemHandle Item, FGamepla
 	return OutError == EInventoryError::None;
 }
 
+bool UInventoryEquipmentComponent::EquipInPlace(FInventoryItemHandle Item, FGameplayTag Slot, EInventoryError& OutError)
+{
+	const UInventorySubsystem* InventorySubsystem = Subsystem.Get();
+	const UInventoryItemDefinition* Definition = InventorySubsystem ? InventorySubsystem->GetItemDefinition(Item) : nullptr;
+	if (!Definition || !Inventory || !Inventory->OwnsItem(Item) || InventorySubsystem->IsItemEquipped(Item))
+	{
+		OutError = EInventoryError::InvalidItem;
+		return false;
+	}
+	if (!Definition->EquipRules || !Definition->EquipRules->AllowsSlot(Slot))
+	{
+		OutError = EInventoryError::NotEquippable;
+		return false;
+	}
+
+	for (auto It = InPlaceItems.CreateIterator(); It; ++It)
+	{
+		if (It.Value() == Item)
+		{
+			It.RemoveCurrent();
+		}
+	}
+	InPlaceItems.Add(Slot, Item);
+	RefreshEquipment();
+	OutError = EInventoryError::None;
+	return true;
+}
+
 bool UInventoryEquipmentComponent::UnequipItem(FInventoryItemHandle Item, EInventoryError& OutError)
 {
+	if (const FGameplayTag* Found = InPlaceItems.FindKey(Item))
+	{
+		const FGameplayTag InPlaceSlot = *Found;
+		InPlaceItems.Remove(InPlaceSlot);
+		RefreshEquipment();
+		OutError = EInventoryError::None;
+		return true;
+	}
+
 	UInventorySubsystem* InventorySubsystem = Subsystem.Get();
 	if (!InventorySubsystem || !Inventory || !InventorySubsystem->IsItemEquipped(Item))
 	{
@@ -233,6 +270,23 @@ void UInventoryEquipmentComponent::Reconcile()
 	for (const FInventoryContainerHandle& Container : Inventory->GetEquipmentContainers())
 	{
 		GatherWantedItems(Container, FInventoryItemHandle(), Wanted);
+	}
+
+	const FInventoryRegistry& Registry = Subsystem->GetRegistry();
+	for (auto It = InPlaceItems.CreateIterator(); It; ++It)
+	{
+		const FInventoryItemRecord* ItemRecord = Inventory->OwnsItem(It.Value()) ? Registry.FindItem(It.Value()) : nullptr;
+		if (!ItemRecord)
+		{
+			It.RemoveCurrent();
+			continue;
+		}
+
+		Wanted.Add({ It.Value(), It.Key(), FInventoryItemHandle() });
+		for (const FInventoryContainerHandle& Nested : ItemRecord->Containers)
+		{
+			GatherWantedItems(Nested, It.Value(), Wanted);
+		}
 	}
 
 	// Entries are in parent-first order, so a removed parent is known before its attachments are checked.

@@ -173,7 +173,6 @@ public:
 	* Returns whether an Actor is currently considered loaded.
 	*
 	* True one frame after the 'Actor Loaded' event.
-	* Also true directly after saving to avoid redundant reloads.
 	* Can be manually overridden using 'Set Actor Save Properties'.
 	*
 	* @param Actor - The Actor to evaluate. Defaults to self.
@@ -187,14 +186,16 @@ public:
 public:
 
 	/**
-	* Saves either all Custom Save Objects or a specific one, based on the input.
-	* If no SaveGame object is provided, all registered Custom Save Objects will be saved automatically.
-	* If UseSaveSlot is enabled, only the Objects in the current Save Slot will be saved.
-	*
-	* @param SaveGame - (Optional) The specific save object to store. You can connect a 'Get Custom Save Object' node here.
-	* @return - True if the save process completed successfully.
-	*/
-	UFUNCTION(BlueprintCallable, Category = "Easy Multi Save | Custom", meta = (WorldContext = "WorldContextObject", DisplayName = "Save Custom Object(s)", AdvancedDisplay="SaveGame"))
+	 * Saves Custom Save Object data.
+	 * If SaveGame is not provided, all registered Custom Save Objects are saved.
+	 * Custom Save Objects with UseSaveSlot enabled are saved only for the current Save Slot.
+	 *
+	 * If SaveGame is provided, only that specific Custom Save Object is saved.
+	 *
+	 * @param SaveGame - Optional Custom Save Object to save. Leave empty to save all registered Custom Save Objects.
+	 * @return - True if the save completed successfully.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Easy Multi Save | Custom", meta = (WorldContext = "WorldContextObject", DisplayName = "Save Custom Object(s)", AdvancedDisplay = "SaveGame"))
 	static bool SaveCustom(UObject* WorldContextObject, UEMSCustomSaveGame* SaveGame);
 
 	/**
@@ -210,7 +211,7 @@ public:
 
 	/**
 	 * Permanently deletes the specified Custom Save object and removes its associated data.
-	 * Use with caution — this operation cannot be undone.
+	 * Use with caution - this operation cannot be undone.
 	 *
 	 * @param SaveGame - The Custom Save object to delete.
 	 */
@@ -219,7 +220,7 @@ public:
 
 	/**
 	 * Resets the specified Custom Save object according to the selected type.
-	 * Use with caution — performing a reset before saving may result in data loss.
+	 * Use with caution - performing a reset before saving may result in data loss.
 	 *
 	 * @param SaveGame - The Custom Save object to reset.
 	 * @param Type - The type of reset operation to perform.
@@ -334,7 +335,7 @@ public:
 	static bool DeleteCustomPlayerFile(UObject* WorldContextObject, const FString& FileName);
 
 
-	/** Backup */
+	/** Backup and Versioning */
 public:
 
 	/**
@@ -346,9 +347,16 @@ public:
 	 * @param - BaseName The original name (e.g., of a save slot or file) to derive the backup name from.
 	 * @return - A generated backup name string based on the given base name.
 	 */
-	UFUNCTION(BlueprintPure, Category = "Easy Multi Save | Backup", meta = (WorldContext = "WorldContextObject", DisplayName = "Get Backup Name"))
+	UFUNCTION(BlueprintPure, Category = "Easy Multi Save | Files", meta = (WorldContext = "WorldContextObject", DisplayName = "Get Backup Name"))
 	static FString GetBackupName(UObject* WorldContextObject, const FString& BaseName);
 
+	/**
+	 * Retrieves the game version numbers from both the save files and the current plugin settings.
+	 *
+	 * @param SaveFileVersion - The game version that was stored in the save files when it was last written.
+	 * @param SettingsVersion - The game version currently configured in the Easy Multi Save plugin settings.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Easy Multi Save | Files", meta = (WorldContext = "WorldContextObject", DisplayName = "Get Save Game Version"))
+	static void GetGameVersion(UObject* WorldContextObject, int32& SaveFileVersion, int32& SettingsVersion);
 };
-
 

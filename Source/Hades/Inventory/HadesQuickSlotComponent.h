@@ -3,6 +3,8 @@
 #include "CoreMinimal.h"
 
 #include "Components/ActorComponent.h"
+#include "Engine/DataTable.h"
+#include "GameplayTagContainer.h"
 
 #include "InventoryTypes.h"
 
@@ -10,9 +12,11 @@
 
 class UHadesInventoryComponent;
 class UInventoryComponent;
+class UInventoryEquipmentComponent;
 
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FHadesQuickSlotsChangedSignature);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FHadesQuickSlotActivatedSignature, int32, SlotIndex);
 
 
 /**
@@ -44,6 +48,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Quick Slots")
 	FInventoryItemHandle GetSlotItem(int32 SlotIndex) const;
 
+	/** The slot the item is in, or -1. */
+	UFUNCTION(BlueprintPure, Category = "Quick Slots")
+	int32 FindSlot(FInventoryItemHandle Item) const;
+
+	/** The UI input action row whose key icon stands for the slot. */
+	UFUNCTION(BlueprintPure, Category = "Quick Slots")
+	FDataTableRowHandle GetSlotKey(int32 SlotIndex) const;
+
 	UFUNCTION(BlueprintPure, Category = "Quick Slots")
 	int32 GetNumSlots() const { return NumSlots; }
 
@@ -55,6 +67,10 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Quick Slots")
 	FHadesQuickSlotsChangedSignature OnChanged;
 
+	/** The player pressed a slot's key, even with nothing on it, such as to show the slots for a moment. */
+	UPROPERTY(BlueprintAssignable, Category = "Quick Slots")
+	FHadesQuickSlotActivatedSignature OnSlotActivated;
+
 protected:
 	//~ Begin UActorComponent Interface
 	virtual void BeginPlay() override;
@@ -65,12 +81,22 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Quick Slots", meta = (ClampMin = "1"))
 	int32 NumSlots = 4;
 
+	/** Rows of the UI input action table, slot 1 first, whose key icons show each slot in the UI. Only for show: the hero binds the keys. */
+	UPROPERTY(EditAnywhere, Category = "Quick Slots", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
+	TArray<FDataTableRowHandle> SlotKeys;
+
 private:
 	UFUNCTION()
 	void HandleInventoryChanged(UInventoryComponent* ChangedInventory);
 
+	UFUNCTION()
+	void HandleEquipmentChanged(FInventoryItemHandle Item, FGameplayTag Slot);
+
 	UPROPERTY(Transient)
 	TObjectPtr<UHadesInventoryComponent> Inventory;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInventoryEquipmentComponent> Equipment;
 
 	TArray<FInventoryItemHandle> Slots;
 };

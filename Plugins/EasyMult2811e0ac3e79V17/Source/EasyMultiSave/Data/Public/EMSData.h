@@ -7,7 +7,6 @@
 #include "UObject/Object.h"
 #include "Engine/EngineTypes.h"
 #include "Serialization/BufferArchive.h"
-#include "Serialization/ObjectAndNameAsStringProxyArchive.h"
 #include "Hash/xxhash.h"
 #include "EMSData.generated.h"
 
@@ -23,6 +22,8 @@ USTRUCT(BlueprintType)
 struct FSaveSlotInfo
 {
 	GENERATED_BODY()
+
+public:
 
 	//The name of the save slot, used to identify the save file.
 	UPROPERTY(SaveGame, BlueprintReadOnly, Category = "SaveSlotInfo")
@@ -40,9 +41,25 @@ struct FSaveSlotInfo
 	UPROPERTY(SaveGame, BlueprintReadOnly, Category = "SaveSlotInfo")
 	TArray<FName> Levels;
 
+	//Optional custom level name that you can set individually, empty by default. 
+	UPROPERTY(SaveGame, EditAnywhere, BlueprintReadWrite, Category = "SaveSlotInfo")
+	FName CustomLevel;
+
 	//List of player names associated with this save slot.
 	UPROPERTY(SaveGame, BlueprintReadOnly, Category = "SaveSlotInfo")
 	TArray<FString> Players;
+};
+
+/**
+Save Archive Version
+**/
+
+class EASYMULTISAVE_API FArchiveVersion
+{
+
+public:
+
+	static void Apply(FArchive& Ar, uint32 ExpectedTag, uint32 LatestVersion, uint32& OutTag, uint32& OutVersion);
 };
 
 /**
@@ -81,6 +98,11 @@ struct FGameObjectSaveData
 		Ar << GameObjectData.Components;
 		return Ar;
 	}
+
+	inline bool HasData() const
+	{
+		return !Data.IsEmpty();
+	}
 };
 
 USTRUCT()
@@ -108,12 +130,12 @@ struct FActorSaveData
 	{
 		return A.Name == Name;
 	}
-};
 
-inline uint32 GetTypeHash(const FActorSaveData& Data)
-{
-	return GetTypeHash(Data.Name);
-}
+	friend uint32 GetTypeHash(const FActorSaveData& Data)
+	{
+		return GetTypeHash(Data.Name);
+	}
+};
 
 /**
 Level Save Archives
@@ -183,7 +205,7 @@ struct FLevelArchive
 
 /**
 Actor Byte Key
-Now used to find Actors by ID
+Used to find Actors by ID
 **/
 
 USTRUCT()
@@ -201,14 +223,9 @@ public:
 	explicit FActorByteKey(const TArray<uint8>& InBytes)
 		: Bytes(InBytes)
 	{
-		//Overload for L-Values and R-Values
 	}
 
-	explicit FActorByteKey(TArray<uint8>&& InBytes)
-		: Bytes(MoveTemp(InBytes))
-	{
-		//Make sure to not construct with 'const FActorByteKey Key', to prevent a copy
-	}
+	explicit FActorByteKey(const FString& InString);
 
 	bool operator==(const FActorByteKey& Other) const
 	{
@@ -262,21 +279,22 @@ public:
 
 	void CopyTo(const FLevelArchive& A);
 	void CopyFrom(FLevelArchive& A);
+	void AddScript(const FLevelScriptSaveData& ScriptData);
 
 	inline bool HasData() const
 	{
-		return !EMS::ArrayEmpty(ActorArray) || !EMS::ArrayEmpty(ScriptArray);
+		return !ActorArray.IsEmpty() || !ScriptArray.IsEmpty();
 	}
 
 	inline bool HasLevelActors() const
 	{
-		return !EMS::ArrayEmpty(ActorArray);
+		return !ActorArray.IsEmpty();
 	}
 
 private:
 
 	template <typename TSaveData, typename TSaveDataArray>
-	void ReplaceOrAddToArray(const TSaveData& Data, TSaveDataArray& OuputArray);
+	void ReplaceOrAddToArray(const TSaveData& Data, TSaveDataArray& OutputArray);
 
 	void CopyActors(const TArray<FActorSaveData>& InData);
 };
@@ -356,7 +374,7 @@ public:
 
 	inline bool HasPlayerState() const
 	{
-		return !EMS::ArrayEmpty(State.Data);
+		return !State.Data.IsEmpty();
 	}
 
 	inline TArray<FComponentSaveData> GetControllerComps() const
@@ -439,7 +457,7 @@ public:
 
 	inline bool IsEmpty() const
 	{
-		return EMS::ArrayEmpty(LevelPositions);
+		return LevelPositions.IsEmpty();
 	}
 
 	inline bool HasZeroPositions() const
@@ -459,7 +477,7 @@ struct FCustomSaveInfo
 	FString CustomSaveName;
 	FString SlotName;
 	FString SaveFile;
-	FString CachedRefName;
+	FName CachedRefName;
 };
 
 USTRUCT(BlueprintType)
@@ -479,7 +497,7 @@ public:
 
 	FRawObjectSaveData() = default;
 
-	FRawObjectSaveData(TObjectPtr<UObject> InObj, const FString& InId)
+	explicit FRawObjectSaveData(TObjectPtr<UObject> InObj, const FString& InId)
 	{
 		Object = InObj;
 		Id = InId;
@@ -505,7 +523,7 @@ public:
 
 	FSaveObjects() = default;
 
-	FSaveObjects(TObjectPtr<UObject> Obj, const FString& Id = FString())
+	explicit FSaveObjects(UObject* Obj, const FString& Id = FString())
 	{
 		if (Obj)
 		{
@@ -513,7 +531,7 @@ public:
 		}
 	}
 
-	FSaveObjects(const TArray<FRawObjectSaveData>& InData)
+	explicit FSaveObjects(const TArray<FRawObjectSaveData>& InData)
 	{
 		Data = InData;
 	}
@@ -584,7 +602,7 @@ private:
 
 public:
 
-	FLoadArchiveContext(const FString& InPath, const EDataLoadType InLoadType, const FSaveObjects& InObjects, const bool bInReadVersion = false)
+	explicit FLoadArchiveContext(const FString& InPath, const EDataLoadType InLoadType, const FSaveObjects& InObjects, const bool bInReadVersion = false)
 		: LoadType(InLoadType)
 		, bReadVersion(bInReadVersion)
 		, SavePath(InPath)
@@ -592,7 +610,7 @@ public:
 	{
 	}
 
-	FLoadArchiveContext(const FString& InPath, const EDataLoadType InLoadType)
+	explicit FLoadArchiveContext(const FString& InPath, const EDataLoadType InLoadType)
 		: LoadType(InLoadType)
 		, bReadVersion(false)
 		, SavePath(InPath)
@@ -613,16 +631,12 @@ public:
 	}
 };
 
-
-USTRUCT()
 struct FActorInitContext
 {
-	GENERATED_BODY()
 
 public:
 
-	UPROPERTY()
-	TObjectPtr<AActor> Actor = nullptr;
+	AActor* Actor = nullptr;
 
 	bool bIsLoading = false;
 	bool bFullReload = false;
@@ -656,9 +670,98 @@ public:
 
 public:
 
-	void ApplyLoadStateTag() const;
+	void RemoveLoadedTag() const;
 };
 
+struct FSerializeMeta
+{
+
+public:
+
+	ESaveObjectType Type = ESaveObjectType::SaveGameOnly;
+	bool bSkipDebug = false;
+
+public:
+
+	FSerializeMeta() = default;
+
+	explicit FSerializeMeta(ESaveObjectType InType, bool bInSkipDebug)
+		: Type(InType)
+		, bSkipDebug(bInSkipDebug)
+	{
+	}
+
+	//For Collections
+	static FSerializeMeta Collection()
+	{
+		return FSerializeMeta(ESaveObjectType::SaveGameOnly, true);
+	}
+
+	//For CompleteObjects
+	static FSerializeMeta CompleteObject()
+	{
+		return FSerializeMeta(ESaveObjectType::CompleteObject, false);
+	}
+};
+
+struct FLevelSnapshot
+{
+	/*
+	Level Actor Snapshot. Game-thread snapshot of all actor data a level save needs.
+	Captured on the game thread to avoid racing the StreamingActors/DestroyedActors sets.
+	*/
+
+	FLevelSnapshot() = default;
+
+	TArray<TWeakObjectPtr<AActor>> LevelActors;
+	TArray<FActorSaveData> StreamingActors;
+	TArray<FActorSaveData> DestroyedActors;
+
+	TWeakObjectPtr<AActor>         GameMode;
+	TWeakObjectPtr<AActor>         GameState;
+};
+
+/**
+Cloud Specific
+**/
+
+USTRUCT()
+struct FCloudArchiveEntry
+{
+	GENERATED_BODY()
+
+	//File name key.
+	FString FileKey;
+
+	//Raw bytes for this file.
+	TArray<uint8> Data;
+
+	friend FArchive& operator<<(FArchive& Ar, FCloudArchiveEntry& Entry)
+	{
+		Ar << Entry.FileKey;
+		Ar << Entry.Data;
+		return Ar;
+	}
+};
+
+struct FCloudFilePath
+{
+
+public:
+
+	ECloudFileType Type = ECloudFileType::Custom;
+	FString FileName;
+
+public:
+
+	FCloudFilePath() = default;
+
+	explicit FCloudFilePath(ECloudFileType InType, const FString& InFileName)
+		: Type(InType)
+		, FileName(InFileName)
+	{
+	}
+};
 
 /**
 Save Data Helpers
@@ -670,11 +773,10 @@ class EASYMULTISAVE_API FSaveHelpers
 public:
 
 	static FString GetRawObjectID(const FRawObjectSaveData& Data);
-
 	static TArray<uint8> BytesFromString(const FString& String);
 	static FString StringFromBytes(const TArray<uint8>& Bytes);
-
 	static bool CompareIdentifiers(const TArray<uint8>& ArrayId, const FString& StringId);
+
 	static bool HasSaveArchiveError(const FBufferArchive& CheckArchive, const ESaveErrorType ErrorType);
 	static void ExtractPlayerNames(const UWorld* InWorld, TArray<FString>& OutPlayerNames);
 
@@ -692,34 +794,3 @@ public:
 	static void SerializeMap(const FMapProperty* MapProp);
 };
 
-/**
-Save Game Archive
-**/
-
-struct FSaveGameArchive : public FObjectAndNameAsStringProxyArchive
-{
-
-private:
-	uint32 ObjectVersion = 0;
-
-public:
-
-	FSaveGameArchive(FArchive& InArchive, const ESaveObjectType InType, const uint32 InVersion) : FObjectAndNameAsStringProxyArchive(InArchive, true)
-	{
-		ObjectVersion = InVersion;
-
-		//Consider only 'Save Game' variables.
-		ArIsSaveGame = (InType == ESaveObjectType::SaveGameOnly);
-
-		//Allow to save default values.
-		ArNoDelta = true;
-	}
-
-	FArchive& operator<<(UObject*& Obj) override;
-	FArchive& operator<<(FSoftObjectPtr& Value) override;
-	FArchive& operator<<(FSoftObjectPath& Value) override;
-
-private:
-	FArchive& CleanSoftObjectPath(FSoftObjectPath& Path);
-	void FixupForPIE(FSoftObjectPath& Path);
-};

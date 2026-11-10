@@ -12,6 +12,7 @@
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "EMSObjectBase.generated.h"
 
+struct FSaveReportContext;
 struct FImage;
 class UTextureRenderTarget2D;
 class UTexture2D;
@@ -40,6 +41,7 @@ protected:
 private:
 
 	mutable FFileVersionInfo LastFileVersion;
+	mutable FGameVersionInfo LastGameVersion;
 
 private:
 
@@ -50,13 +52,10 @@ private:
 	FString CurrentSaveUserName;
 
 	UPROPERTY(Transient)
-	double LastSlotSaveTime = 0.0;
+	TMap<FName, TObjectPtr<UEMSInfoSaveGame>> CachedSaveSlots;
 
 	UPROPERTY(Transient)
-	TMap<FString, TObjectPtr<UEMSInfoSaveGame>> CachedSaveSlots;
-
-	UPROPERTY(Transient)
-	TMap<FString, TObjectPtr<UEMSCustomSaveGame>> CachedCustomSaves;
+	TMap<FName, TObjectPtr<UEMSCustomSaveGame>> CachedCustomSaves;
 
 	UPROPERTY(Transient)
 	TArray<FName> MultiSaveLevels;
@@ -70,6 +69,7 @@ public:
 protected:
 
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
+	virtual void Deinitialize() override;
 
 	//Implemented in EMSObject
 	virtual bool UnpackActorArchive(FMemoryReader& FromBinary, const EDataLoadType LoadType) { return false; }
@@ -89,8 +89,10 @@ private:
 
 public:
 
-	UEMSCustomSaveGame* GetCustomSave(const TSubclassOf<UEMSCustomSaveGame>& SaveGameClass, const FString& InSlotName, const FString& InFileName);
+	UEMSCustomSaveGame* GetCustomSave(const TSubclassOf<UEMSCustomSaveGame>& SaveGameClass, const FString& InSlotName,
+		const FString& InFileName, bool bCacheResult = true);
 	bool SaveCustom(UEMSCustomSaveGame* SaveGame);
+	bool TransferCustom(UEMSCustomSaveGame* SaveGame, const FString& InTargetSlot);
 	bool SaveAllCustomObjects();
 
 	FCustomSaveInfo GetCustomSaveInfo(const UEMSCustomSaveGame* SaveGame) const;
@@ -98,10 +100,11 @@ public:
 	void ResetCustomSave(UEMSCustomSaveGame* SaveGame, const EResetCustomSaveType Type);
 
 	bool DoesCustomSaveExist(const FString& InSlotName, const FString& InFileName) const;
+	void ClearCachedCustomSave(const FString& InSlotName, const FString& InFileName);
 
 private:
 
-	void ClearCustomSaveByRef(const FString& CachedRefName);
+	void ClearCustomSaveByRef(const FName& CachedRefName);
 	void ClearCachedCustomSaves();
 	void ClearCustomSavesDesktop(const FString& SaveGameName);
 	void ClearCustomSavesConsole(const FString& SaveGameName, const bool bAddFiles, TArray<FString>& OutFiles);
@@ -110,7 +113,7 @@ private:
 
 public:
 
-	FString GetCurrentSaveGameName() const;
+	virtual FString GetCurrentSaveGameName() const;
 	void SetCurrentSaveGameName(const FString& SaveGameName);
 	TArray<FString> GetSortedSaveSlots() const;
 
@@ -121,14 +124,19 @@ public:
 	bool WasCurrentLevelSaved();
 	void ClearMultiSaveLevels();
 
-	bool HasSlotSaveTimePassed(const double InTime) const;
+	bool HasSlotSaveTimePassed(const FString& SaveGameName, const double InTime) const;
 	bool DoesSaveSlotExist(const FString& SaveGameName) const;
 	bool DoesFullSaveGameExist(const FString& SaveGameName) const;
-	void DeleteAllSaveDataForSlot(const FString& SaveGameName);
-	void DeleteDataFromSlot(const FString& SaveGameName, const EDeleteSlotType InData);
-	void SaveSlotInfoObject(const FString& SaveGameName);
+	void ClearCachedSaveSlot(const FString& SlotName);
+	void DeleteAllSaveDataForSlot(const FString& InSaveGameName);
+	void DeleteDataFromSlot(const FString& InSaveGameName, const EDeleteSlotType InData);
+	void SaveSlotInfoObject(const FString& InSaveGameName, const bool bOverrideLevelData = false);
 
-	FString GetCurrentSaveUserName() const;
+	//Shared by Custom Save transfer, Save Slot Copy and Cloud import
+	bool StampSlotInfo(const FString& TargetSlot, const TCHAR* Operation);
+	bool RemoveStaleBackup(const FString& TargetPath, const TCHAR* Operation) const;
+
+	virtual FString GetCurrentSaveUserName() const;
 	void SetCurrentSaveUserName(const FString& UserName);
 	void DeleteAllSaveDataForUser(const FString& UserName);
 	TArray<FString> GetAllSaveUsers() const;
@@ -146,7 +154,6 @@ protected:
 
 	bool LoadBinaryData(const FString& FullSavePath, TArray<uint8>& OutData, EFileValidity& OutResult) const;
 	bool SaveBinaryData(const FString& FullSavePath, TArray<uint8> InData) const;
-	bool SaveBinaryDataAtomic(const FString& FullSavePath, const TArray<uint8>& FinalData) const;
 	bool SaveBinaryArchive(const FString& FullSavePath, FBufferArchive& BinaryData) const;
 
 	bool ParseArchiveData(const FLoadArchiveContext& Context, const TArray<uint8>& InData);
@@ -161,25 +168,33 @@ protected:
 
 /** Base Game-Object Serialize Functions  */
 
+public:
+
+	void SerializeToBinary(const UObject* Object, TArray<uint8>& OutData, const FSerializeMeta& Meta = FSerializeMeta()) const;
+	void SerializeFromBinary(UObject* Object, const TArray<uint8>& InData, const FSerializeMeta& Meta = FSerializeMeta()) const;
+
 protected:
 
-	void SerializeToBinary(const UObject* Object, TArray<uint8>& OutData) const;
-	void SerializeFromBinary(UObject* Object, const TArray<uint8>& InData) const;
+	static void SerializeObjectWithVersion(UObject* Object, FMemoryWriter& Writer, const ESaveObjectType Type);
+	void DeserializeObjectWithVersion(UObject* Object, FMemoryReader& Reader, const ESaveObjectType Type) const;
 
-/**
-Core Serialize Helpers
-**/
-
-private:
-
-	void SerializeObjectWithVersion(UObject* Object, FMemoryWriter& Writer, ESaveObjectType SaveType) const;
-	void DeserializeObjectWithVersion(UObject* Object, FMemoryReader& Reader, ESaveObjectType SaveType) const;
+/** Debug   */
+#if EMS_BUILD_DEVELOPER
+protected:
+	void WriteSaveReport(const FSaveReportContext& Context) const;
+	void CommitSaveReportOnShutdown() const;
+	void ClearReportCache(const bool bFullClear = true) const;
+#else
+	void WriteSaveReport(const FSaveReportContext& Context) const {}
+	void CommitSaveReportOnShutdown() const {}
+	void ClearReportCache(const bool bFullClear = true) const {}
+#endif
 
 /** File I/O functions   */
 
 protected:
 
-	EFileValidity CheckAndLoadFile(const FString& FullSavePath, TArray<uint8>& OutData) const;
+	EFileValidity CheckAndLoadFile(const FString& FullSavePath, TArray<uint8>& OutData, FSaveHeader& OutHeader) const;
 	bool CheckAndSaveFile(const FString& FullSavePath, const TArray<uint8>& InData) const;
 	bool DeleteSaveFile(const FString& FullSavePath) const;
 	bool DoesFileExist(const FString& FullSavePath) const;
@@ -188,23 +203,25 @@ protected:
 
 public:
 
-	EIntegrityCheckResult CheckSaveGameIntegrity(const FString& FullSavePath, const bool bCheckVersion) const;
+	EIntegrityCheckResult CheckSaveGameIntegrity(const FString& FullSavePath) const;
 	void ApplyLastFileVersion(FMemoryReader& MemoryReader, const bool bHandleLegacy = false) const;
+	void GetGameVersion(int32& SaveFileVersion, int32& SettingsVersion) const;
 
 /** File System and Path Names  */
 
 public:
 
 	FString SlotInfoSaveFile(const FString& SaveGameName = FString()) const;
-	FString CustomSaveFile(const FString& CustomSaveName, const FString& SlotName) const;
+	FString CustomSaveFile(const FString& InCustomSaveName, const FString& SlotName) const;
 	FString ActorSaveFile(const FString& SaveGameName = FString()) const;
 	FString PlayerSaveFile(const FString& SaveGameName = FString())  const;
 
 protected:
 
-	bool VerifyOrCreateDirectory(const FString& NewDir) const;
+	FString ValidateSaveName(const FString& SaveGameName) const;
 
 	FString SaveUserDir() const;
+	FString ValidatedUserName() const;
 	FString UserSubDir() const;
 	FString BaseSaveDir() const;
 	FString BaseSavePath(const FString& FullSavePath) const;
@@ -218,13 +235,15 @@ protected:
 
 	FName GetSavedSlotLevelName() const;
 
+	bool IsFileNameReserved(const FString& SaveGameName, const bool bValidate = false) const;
+
 /** Thumbnails  */
 
 public:
 
 	UTexture2D* ImportSaveThumbnail(const FString& SaveGameName) const;
 	void ExportSaveThumbnail(UTextureRenderTarget2D* TextureRenderTarget, const FString& SaveGameName) const;
-	void ExecuteSaveThumbnail(const FString& InSaveName, FImage& ImageToCompress) const;
+	void ExecuteSaveThumbnail(const FString& ThumbnailPath, FImage& ImageToCompress) const;
 
 /** Settings Helpers  */
 
@@ -289,13 +308,18 @@ public:
 		return FSaveHelpers::CompareIdentifiers(ArrayId, StringId);
 	}
 
-	inline bool IsAsyncSaveOrLoadTaskActive(const ESaveGameMode Mode = ESaveGameMode::MODE_All, const EAsyncCheckType CheckType = EAsyncCheckType::CT_Both, const bool bLog = true) const
+	inline bool IsAsyncTaskActiveWithPause(const ESaveGameMode Mode = ESaveGameMode::MODE_All, const bool bLog = true) const
 	{
-		return FAsyncSaveHelpers::IsAsyncSaveOrLoadTaskActive(GetWorld(), Mode, CheckType, bLog);
+		return FAsyncSaveHelpers::IsAsyncTaskActiveWithPause(GetWorld(), Mode, bLog);
+	}
+
+	inline bool IsAsyncTaskActive(const bool bLog = true) const
+	{
+		return FAsyncSaveHelpers::IsAsyncTaskActive(ESaveGameMode::MODE_All, bLog);
 	}
 
 	inline bool IsPaused() const
 	{
-		return GetWorld()->IsPaused();
+		return GetWorld() && GetWorld()->IsPaused();
 	}
 };

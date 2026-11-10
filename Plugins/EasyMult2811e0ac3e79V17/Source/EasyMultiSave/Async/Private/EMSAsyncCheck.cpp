@@ -2,25 +2,25 @@
 
 #include "EMSAsyncCheck.h"
 #include "EMSObject.h"
+#include "UObject/Package.h"
 #include "TimerManager.h"
 
 UEMSAsyncCheck::UEMSAsyncCheck()
 {
 	Type = ESaveFileCheckType::CheckForGame;
 	CheckResult = EIntegrityCheckResult::Success;
-	bCheckGameVersion = false;
 }
 
-UEMSAsyncCheck* UEMSAsyncCheck::CheckSaveFiles(UObject* WorldContextObject, ESaveFileCheckType CheckType, FString CustomSaveName, bool bComplexCheck)
+UEMSAsyncCheck* UEMSAsyncCheck::CheckSaveFiles(UObject* WorldContextObject, ESaveFileCheckType CheckType, FString CustomSaveName)
 {
 	if (UEMSObject* EMSObject = UEMSObject::Get(WorldContextObject))
 	{
-		if (!EMSObject->IsAsyncSaveOrLoadTaskActive())
+		//File checks are read-only and valid while paused, so only check the task objects
+		if (!FAsyncSaveHelpers::IsAsyncTaskActive(ESaveGameMode::MODE_All, true))
 		{
 			UEMSAsyncCheck* CheckTask = NewObject<UEMSAsyncCheck>(GetTransientPackage());
 			CheckTask->EMS = EMSObject;
 			CheckTask->Type = CheckType;
-			CheckTask->bCheckGameVersion = bComplexCheck;
 			CheckTask->SaveFileName = CustomSaveName;
 			return CheckTask;
 		}
@@ -54,8 +54,18 @@ void UEMSAsyncCheck::StartCheck()
 		CheckCustomSlot();
 		break;
 
+	case ESaveFileCheckType::CheckForPlayerOnly:
+		CheckResult = EMS->CheckSaveGameIntegrity(EMS->PlayerSaveFile());
+		EMS->GetTimerManager().SetTimerForNextTick(this, &UEMSAsyncCheck::CompleteCheck);
+		break;
+
+	case ESaveFileCheckType::CheckForLevelOnly:
+		CheckResult = EMS->CheckSaveGameIntegrity(EMS->ActorSaveFile());
+		EMS->GetTimerManager().SetTimerForNextTick(this, &UEMSAsyncCheck::CompleteCheck);
+		break;
+
 	default:
-		CheckResult = EMS->CheckSaveGameIntegrity(EMS->SlotInfoSaveFile(), bCheckGameVersion);
+		CheckResult = EMS->CheckSaveGameIntegrity(EMS->SlotInfoSaveFile());
 
 		if (Type == ESaveFileCheckType::CheckForSlotOnly)
 		{
@@ -63,6 +73,7 @@ void UEMSAsyncCheck::StartCheck()
 		}
 		else
 		{
+			//Continue chaining Slot > Player > Level 
 			EMS->GetTimerManager().SetTimerForNextTick(this, &UEMSAsyncCheck::CheckPlayer);
 		}
 		break;
@@ -71,42 +82,55 @@ void UEMSAsyncCheck::StartCheck()
 
 void UEMSAsyncCheck::CheckPlayer()
 {
-	CheckResult = EMS->CheckSaveGameIntegrity(EMS->PlayerSaveFile(), bCheckGameVersion);
+	const EIntegrityCheckResult PlayerResult = EMS->CheckSaveGameIntegrity(EMS->PlayerSaveFile());
+
+	//Only update CheckResult if it's better than the file result 
+	if (CheckResult == EIntegrityCheckResult::Success)
+	{
+		CheckResult = PlayerResult;
+	}
+
 	EMS->GetTimerManager().SetTimerForNextTick(this, &UEMSAsyncCheck::CheckLevel);
 }
 
 void UEMSAsyncCheck::CheckLevel()
 {
-	CheckResult = EMS->CheckSaveGameIntegrity(EMS->ActorSaveFile(), bCheckGameVersion);
+	const EIntegrityCheckResult LevelResult = EMS->CheckSaveGameIntegrity(EMS->ActorSaveFile());
+
+	if (CheckResult == EIntegrityCheckResult::Success)
+	{
+		CheckResult = LevelResult;
+	}
+
 	EMS->GetTimerManager().SetTimerForNextTick(this, &UEMSAsyncCheck::CompleteCheck);
 }
 
 void UEMSAsyncCheck::CheckCustom()
 {
-	CheckResult = EMS->CheckSaveGameIntegrity(EMS->CustomSaveFile(SaveFileName, FString()), bCheckGameVersion);
+	CheckResult = EMS->CheckSaveGameIntegrity(EMS->CustomSaveFile(SaveFileName, FString()));
 	EMS->GetTimerManager().SetTimerForNextTick(this, &UEMSAsyncCheck::CompleteCheck);
 }
 
 void UEMSAsyncCheck::CheckCustomSlot()
 {
-	CheckResult = EMS->CheckSaveGameIntegrity(EMS->CustomSaveFile(SaveFileName, EMS->GetCurrentSaveGameName()), bCheckGameVersion);
+	CheckResult = EMS->CheckSaveGameIntegrity(EMS->CustomSaveFile(SaveFileName, EMS->GetCurrentSaveGameName()));
 	EMS->GetTimerManager().SetTimerForNextTick(this, &UEMSAsyncCheck::CompleteCheck);
 }
 
 void UEMSAsyncCheck::CompleteCheck()
 {
-	SetReadyToDestroy();
-
 	if (CheckResult == EIntegrityCheckResult::Success)
 	{
 		OnCompleted.Broadcast();
-		return;
 	}
 	else if (CheckResult == EIntegrityCheckResult::VersionMismatch)
 	{
 		OnVersionMismatch.Broadcast();
-		return;
+	}
+	else
+	{
+		OnFailed.Broadcast();
 	}
 
-	OnFailed.Broadcast();
+	SetReadyToDestroy();
 }

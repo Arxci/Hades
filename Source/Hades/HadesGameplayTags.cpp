@@ -24,10 +24,6 @@ namespace HadesGameplayTags
 
 	UE_DEFINE_GAMEPLAY_TAG(UI_Action_Escape, "UI.Action.Escape");
 	UE_DEFINE_GAMEPLAY_TAG(UI_Action_Inventory, "UI.Action.Inventory");
-	UE_DEFINE_GAMEPLAY_TAG(UI_Action_RotateItem, "UI.Action.RotateItem");
-	UE_DEFINE_GAMEPLAY_TAG(UI_Action_SplitStack, "UI.Action.SplitStack");
-	UE_DEFINE_GAMEPLAY_TAG(UI_Action_ItemMenu, "UI.Action.ItemMenu");
-	UE_DEFINE_GAMEPLAY_TAG(UI_Action_Organize, "UI.Action.Organize");
 
 	UE_DEFINE_GAMEPLAY_TAG(Input_Move,   "Input.Move");
 	UE_DEFINE_GAMEPLAY_TAG(Input_Look,   "Input.Look");
@@ -42,7 +38,6 @@ namespace HadesGameplayTags
 
 	UE_DEFINE_GAMEPLAY_TAG(Container_Pockets,  "Container.Pockets");
 	UE_DEFINE_GAMEPLAY_TAG(Container_KeyItems, "Container.KeyItems");
-	UE_DEFINE_GAMEPLAY_TAG(Container_Hands,    "Container.Hands");
 	UE_DEFINE_GAMEPLAY_TAG(Container_ItemBox,  "Container.ItemBox");
 	UE_DEFINE_GAMEPLAY_TAG(Container_Pickup,   "Container.Pickup");
 
@@ -52,4 +47,5 @@ namespace HadesGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Item_Type_KeyItem, "Item.Type.KeyItem");
 	UE_DEFINE_GAMEPLAY_TAG(Item_Type_Pouch,   "Item.Type.Pouch");
 	UE_DEFINE_GAMEPLAY_TAG(Item_Stat_Uses,    "Item.Stat.Uses");
+	UE_DEFINE_GAMEPLAY_TAG(Item_Stat_Rounds,  "Item.Stat.Rounds");
 }

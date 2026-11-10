@@ -11,9 +11,9 @@ class FMemoryWriter;
 
 /*
 Legacy Version History:
-- EMS 100: No header present. Raw data only.
-- EMS 150: Intermediate header format inside Bulk data.
-- EMS 177: Modern file format.
+- EMS 100:  No header present. Raw data only.
+- EMS 150:  Intermediate header format inside Bulk data.
+- EMS 177+: Future proof file format.
 
 New File Layout:
 [ SECTION: HEADER ]	- Variable Size (determined by FSaveHeader serialization)
@@ -36,13 +36,13 @@ public:
 	//The legacy version passed through this 
 	const FPackageFileVersion LegacyFileVersion;
 
-	FFileContext(const uint32 InPlayer, const FString& InPath)
+	explicit FFileContext(const uint32 InPlayer, const FString& InPath)
 		: Player(InPlayer)
 		, Path(InPath)
 	{
 	}
 
-	FFileContext(const uint32 InPlayer, const FString& InPath, const FPackageFileVersion& InLegacyVersion)
+	explicit FFileContext(const uint32 InPlayer, const FString& InPath, const FPackageFileVersion& InLegacyVersion)
 		: Player(InPlayer)
 		, Path(InPath)
 		, LegacyFileVersion(InLegacyVersion)
@@ -55,13 +55,13 @@ struct FGameVersionInfo
 
 private:
 
-	uint32 Plugin;
-	uint32 Game;
+	uint32 Plugin = 0;
+	uint32 Game = 0;
 
 public:
 
 	FGameVersionInfo() = default;
-	FGameVersionInfo(const uint32& InPlugin, const uint32& InGame)
+	explicit FGameVersionInfo(const uint32& InPlugin, const uint32& InGame)
 	{
 		Plugin = InPlugin;
 		Game = InGame;
@@ -102,11 +102,11 @@ struct FFileVersionInfo
 private:
 
 	/*
-	Legacy version handling is deeply entwined 
-	bLegacyFile is only true on first read with an old file
-	LegacyPackageVersion is stored in the header when saving again
-	It is used for versioning unloaded data after saving again 
-	with a new header and version to ensure backward compat
+	Legacy version handling is tightly coupled to the load/save pipeline:
+	- bLegacyFile is only true during the initial load of an old file.
+	- When the file is re-saved, the original LegacyPackageVersion is preserved in the new header.
+	- Stored version is used to correctly interpret data that has not yet been reloaded.
+	- Ensures backward compatibility after upgrade to newer PackageVersion format.
 	*/
 
 	FPackageFileVersion PackageVersion;
@@ -118,7 +118,7 @@ private:
 public:
 
 	FFileVersionInfo() = default;
-	FFileVersionInfo(const FPackageFileVersion& InPack, const FEngineVersion& InEngine)
+	explicit FFileVersionInfo(const FPackageFileVersion& InPack, const FEngineVersion& InEngine)
 	{
 		PackageVersion = InPack;
 		EngineVersion = InEngine;
@@ -205,8 +205,11 @@ public:
 		Ar << In.GameVersion;
 
 		Ar << In.UnixTimeStamp;
+
+		//Used for booleans
 		Ar << In.Flags;
 
+		//Used for enums
 		Ar << In.MultiLevel;
 		Ar << In.Reserved1;
 		Ar << In.Reserved2;
@@ -217,10 +220,11 @@ public:
 
 	void Build(const FFileContext& Context);
 
-	inline void InitVersionInfo(FFileVersionInfo& OutFileVersionInfo)
+	inline void InitVersionInfo(FFileVersionInfo& OutFileVersionInfo, FGameVersionInfo& OutGameVersionInfo)
 	{
 		OutFileVersionInfo = FileVersion;
 		OutFileVersionInfo.bLegacyFile = bLoadedLegacyFile;
+		OutGameVersionInfo = GameVersion;
 	}
 
 	inline FPackageFileVersion GetPackageVer() const
@@ -241,6 +245,11 @@ public:
 	inline bool IsLegacy() const
 	{
 		return bLoadedLegacyFile;
+	}
+
+	inline bool IsDataCompressed() const
+	{
+		return Flags & EMS::FLAG_COMPRESSED;
 	}
 
 	inline EMultiLevelSaveMethod GetLoadedMultiLevelMode() const
@@ -296,15 +305,19 @@ class EASYMULTISAVE_API FSaveVersion
 public:
 
 	static FString GetEngineString(const FEngineVersion& InEngine);
+	static uint32 GetSettingsGameVersionAsInt();
 	static FString GetSettingsGameVersion();
+	static FString GetStaticPluginVersion();
 	static bool IsSaveGameVersionEqual(const FGameVersionInfo& SaveVersion);
 	static bool IsPluginVersionEqual(const FGameVersionInfo& SaveVersion);
 	static FGameVersionInfo MakeSaveGameVersion();
 
-	static FPackageFileVersion GetStaticOldPackageVersion();
 	static void HandleLegacyFileVersion(FMemoryReader& MemoryReader, FFileVersionInfo& LastFileVersion);
-
 	static void ApplyFileVersionInfo(const FFileVersionInfo& InFileVersion, FMemoryReader& OutMemoryReader);
+
+private:
+
+	static FPackageFileVersion GetStaticOldPackageVersion();
 };
 
 class EASYMULTISAVE_API FSaveFileIntegrity
@@ -315,16 +328,29 @@ public:
 	static bool CheckAndSaveFile(const FFileContext& Context, const TArray<uint8>& InData);
 	static EFileValidity CheckAndLoadFile(const FFileContext& Context, TArray<uint8>& OutData, FSaveHeader& OutHeader);
 
-	static bool HasFileHeaderTag(const TArray<uint8>& RawData); 
-	static EFileValidity IsFileValidFast(const FFileContext& Context, FSaveHeader& OutHeader);
-	static bool IsFileHashValid(const TArray<uint8>& RawData, FSaveHeader& OutHeader);
-
 	static bool SaveToFile(const FFileContext& Context, const TArray<uint8>& InData);
-	static EFileValidity LoadRawSaveData(const FFileContext& Context, TArray<uint8>& OutRawData);
+	static bool SaveThumbnailToFile(const FFileContext& Context, const TArray<uint8>& InData);
+
+	static EFileValidity LoadFromFile(const FFileContext& Context, TArray<uint8>& OutRawData);
 	static bool DeleteSaveFile(const FFileContext& Context);
 	static bool DoesSaveExist(const FFileContext& Context);
 
-	static EIntegrityCheckResult CheckSaveGameIntegrity(const FFileContext& Context, const bool bCheckVersion);
+	static EIntegrityCheckResult CheckSaveGameIntegrity(const FFileContext& Context);
 	static bool HasMultiLevelCompatibility(const FFileContext& Context, const FSaveHeader& InHeader);
 	static void PerformAutoBackup(const FFileContext& Context);
+
+	static bool VerifyCloudFile(const FString& InSavePath, const TArray<uint8>& InRawData);
+
+	/** Local variant. Legacy files predate the header, but are accepted as valid data everywhere else. */
+	static bool VerifyLocalFile(const FString& InSavePath, const TArray<uint8>& InRawData);
+
+private:
+
+	static bool SaveToFileDirect(const FFileContext& Context, const TArray<uint8>& InData);
+	static bool SaveToFileProtected(const FFileContext& Context, const TArray<uint8>& InData);
+
+	static bool HasFileHeaderTag(const TArray<uint8>& RawData);
+	static EFileValidity IsFileValidFast(const FFileContext& Context, FSaveHeader& OutHeader);	
+	static bool IsZeroData(const FString& InSavePath, const TArray<uint8>& InRawData);
+	static bool IsFileHashValid(const TArray<uint8>& RawData, FSaveHeader& OutHeader);
 };

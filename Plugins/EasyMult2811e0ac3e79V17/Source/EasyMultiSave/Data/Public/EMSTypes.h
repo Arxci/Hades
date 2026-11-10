@@ -6,13 +6,16 @@
 #include "Engine/EngineTypes.h"
 #include "Runtime/Launch/Resources/Version.h"
 #include "Hash/xxhash.h"
+#include "EMSTypes.generated.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogEasyMultiSave, Log, All);
 
-#define EMS_VERSION_NUMBER 179
+#define EMS_VERSION_NUMBER 185
 #define EMS_ENGINE_MIN_UE55 (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 5)
+#define EMS_ENGINE_MIN_UE57 (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 7)
 
 #define EMS_PLATFORM_DESKTOP (PLATFORM_WINDOWS || PLATFORM_MAC || PLATFORM_LINUX)
+#define EMS_BUILD_DEVELOPER (!UE_BUILD_SHIPPING && EMS_PLATFORM_DESKTOP)
 
 #define TOFLAG(Enum) (static_cast<uint32>(Enum)) 
 
@@ -31,14 +34,15 @@ namespace EMS
 	static const FName SkipSaveTag(TEXT("EMS_SkipSave"));
 	static const FName PersistentTag(TEXT("EMS_Persistent"));
 	static const FName SkipTransformTag(TEXT("EMS_SkipTransform"));
-	static const FName SaveEventsGameThreadTag(TEXT("EMS_SaveEventsGameThread"));
 
 	/*
 	File Name definitions
 	*/
 
-	//Used for filenames only. Playstation requires an alphanumeric character like "x" 
-	//Set bAllowConfidentialPlatformDefines = true; in the plugin build.cs file.
+	/*
+	Used for filenames only. Playstation requires an alphanumeric character like "x"
+	Set bAllowConfidentialPlatformDefines = true; in the plugin build.cs file.
+	*/
 	static const FString UnderscoreFile(
 #if defined(PLATFORM_PS5) && PLATFORM_PS5
 		TEXT("x")
@@ -62,8 +66,10 @@ namespace EMS
 	static const FString UserDir(TEXT("Users"));
 
 	static const FString RawObjectTag(TEXT("@raw"));
+	static const FString CustomSaveTag(TEXT("@cso@"));
 
 	static const FString BackupTag(TEXT("bak0"));
+	static const FString FallbackName(TEXT("emssave"));
 
 	static const FString SaveGamesFolder(TEXT("SaveGames/"));
 	static const FString SaveType(TEXT(".sav"));
@@ -93,8 +99,9 @@ namespace EMS
 
 	static constexpr int32 BigNumber = 100000;
 	static constexpr double ShortDelay = 0.1;
-	static constexpr uint32 MinAsyncWaitFrames = 10;
 	static constexpr uint32 SaveEventTimeout = 2000;
+	static constexpr uint32 MinAsyncWaitFrames = 10; 
+	static constexpr float FallbackWaitTime = 5.f;
 
 	/*
 	Internal Versioning - Legacy
@@ -103,29 +110,49 @@ namespace EMS
 	static constexpr int LEGACY_SAVEGAME_FILE_TYPE_TAG = 0x53415647; // "SAVG"
 
 	/*
-	Internal Versioning - New Header and Footer
+	Internal Versioning 
 	*/
 
-	static constexpr uint32 HEADER_TAG = 0x48534D45; // "EMSH" 
-	static constexpr uint32 HEADER_VERSION = 1;
+	static constexpr uint32 HEADER_TAG = 0x48534D45;		// "EMSH" 
+	static constexpr uint32 HEADER_VERSION_1 = 1;			// Initial
+	static constexpr uint32 HEADER_VERSION_2 = 2;			// Future
+	static constexpr uint32 HEADER_VERSION_LATEST = HEADER_VERSION_1;
 
-	static constexpr uint32 FOOTER_TAG = 0x46534D45; // "EMSF"
+	static constexpr uint32 OBJECT_INST_TAG = 0x4F424A54;	// "OBJT"
+	static constexpr uint32 OBJECT_INST_VERSION_1 = 1;		// Initial
+	static constexpr uint32 OBJECT_INST_VERSION_2 = 2;		// v178+
+	static constexpr uint32 OBJECT_INST_VERSION_LATEST = OBJECT_INST_VERSION_2; 
 
-	static constexpr uint32 OBJECT_DATA_TAG = 0x4F424A54; // "OBJT"
-	static constexpr uint32 OBJECT_DATA_VERSION = 2; //+1
+	/* Not used yet
+	static constexpr uint32 ACTOR_DATA_TAG = 0x41434454;	// "ACDT" 
+	static constexpr uint32 ACTOR_DATA_VERSION_1 = 1;		// Initial
+	static constexpr uint32 ACTOR_DATA_VERSION_2 = 2;		// Future
+	static constexpr uint32 ACTOR_DATA_VERSION_LATEST = ACTOR_DATA_VERSION_1; 
 
-	/* OBJECT_DATA_VERSION
-	* v177  : 1
-	* v178+ : 2
+	static constexpr uint32 LEVEL_DATA_TAG = 0x4C564454;    // "LVDT" 
+	static constexpr uint32 LEVEL_DATA_VERSION_1 = 1;		// Initial
+	static constexpr uint32 LEVEL_DATA_VERSION_2 = 2;		// Future
+	static constexpr uint32 LEVEL_DATA_VERSION_LATEST = LEVEL_DATA_VERSION_1;
 	*/
+
+	static constexpr uint32 FOOTER_TAG = 0x46534D45;		// "EMSF"
+
+	/*
+	Header Flags
+	*/
+	constexpr uint32 FLAG_COMPRESSED = 1 << 0;
 
 	/*
 	Helpers
 	*/
 
-	template <typename TArrayType>
-	inline static bool ArrayEmpty(const TArrayType& InArray) { return InArray.Num() <= 0; }
-	inline static bool EqualString(const FString& A, const FString& B) { return A.Equals(B, ESearchCase::IgnoreCase); }
+	inline static bool StringEmpty(const FString& InString) { return InString.TrimStartAndEnd().IsEmpty(); }
+
+	static FName ToCanonicalFName(const FString& InName) 
+	{
+		//ToLower ensures consistency, FName stores it as a case-insensitive hash
+		return FName(*InName.ToLower());
+	}
 
 	inline static const uint32 GetHash(const void* Data, const uint64 Length)
 	{
@@ -139,7 +166,7 @@ namespace EMS
 }
 
 /**
-Enums
+Enums - Internal
 **/
 
 //Serialized values, never change order or add entries in the middle.
@@ -162,32 +189,17 @@ enum class EDataLoadType : uint8
 	DATA_Level,
 	DATA_Player,
 	DATA_Object,
-	DATA_Collection,  
+	DATA_Collection,
+	DATA_PlayerCustom,
 };
 
 UENUM()
-enum class ESaveGameMode : uint8
-{
-	MODE_Player,
-	MODE_Level,
-	MODE_All,
-};
-
-UENUM()
-enum class EAsyncCheckType : uint8
-{
-	CT_Both UMETA(DisplayName = "Both"),
-	CT_Save UMETA(DisplayName = "Save Only"),
-	CT_Load UMETA(DisplayName = "Load Only"),
-};
-
-UENUM(BlueprintType)
 enum class ESaveErrorType : uint8
 {
-	ER_Player		UMETA(DisplayName = "Player Actors"),
-	ER_Level		UMETA(DisplayName = "Level Actors"),
-	ER_Object		UMETA(DisplayName = "Object"),
-	ER_Collection	UMETA(DisplayName = "Collection"),
+	ER_Player,
+	ER_Level,
+	ER_Object,
+	ER_Collection,
 };
 
 UENUM()
@@ -236,6 +248,18 @@ enum class ESaveEventType : uint8
 	PostSave,
 };
 
+UENUM(BlueprintType)
+enum class EAsyncCheckType : uint8
+{
+	CT_Both,
+	CT_Save,
+	CT_Load,
+};
+
+/**
+Enums - Settings
+**/
+
 UENUM()
 enum class ELoadMethod : uint8
 {
@@ -252,31 +276,12 @@ enum class ELoadMethod : uint8
 UENUM()
 enum class EFileSaveMethod : uint8
 {
-	/** Each slot has it's own folder. */
+	/** Each slot has it's own folder. Files are compressed. */
 	FM_Desktop  UMETA(DisplayName = "Desktop"),
 
-	/** No folders. No Compression. Each slot has it's own files with '_SlotName' suffix. */
+	/** No folders. Files are compressed. Each slot has it's own files with '_SlotName' suffix.*/
 	FM_Console   UMETA(DisplayName = "Console"),
 };
-
-UENUM(BlueprintType, meta = (Bitflags, UseEnumValuesAsMaskValuesInEditor = "true"))
-enum class ESaveTypeFlags : uint8
-{
-	None = 0 UMETA(Hidden),
-
-	/** Player Controller, Pawn and Player State. */
-	SF_Player = 1 << 0 UMETA(DisplayName = "Player Actors"),
-
-	/** Level Actors and Level Blueprints. */
-	SF_Level = 1 << 1 UMETA(DisplayName = "Level Actors"),
-};
-ENUM_CLASS_FLAGS(ESaveTypeFlags);
-
-namespace EMSFLAG
-{
-	inline static bool IsPlayer(const int32 Data) { return (Data & TOFLAG(ESaveTypeFlags::SF_Player)) != 0; }
-	inline static bool IsLevel(const int32 Data) { return (Data & TOFLAG(ESaveTypeFlags::SF_Level)) != 0; }
-}
 
 UENUM()
 enum class EMultiLevelSaveMethod : uint8
@@ -305,22 +310,6 @@ enum class EThumbnailImageFormat : uint8
 	Jpeg,
 };
 
-UENUM(BlueprintType)
-enum class ESaveFileCheckType : uint8
-{
-	/** Check Current Slot, Player and Level Files.*/
-	CheckForGame UMETA(DisplayName = "Default"),
-
-	/** Check Custom Save File without considering Slots.*/
-	CheckForCustom UMETA(DisplayName = "Custom Save"),
-
-	/** Check Custom Save File or Custom Player within the Current Save Slot.*/
-	CheckForCustomSlot UMETA(DisplayName = "Custom Save in Slot"),
-
-	/** Will Check only for the Slot Info of the Current Save Slot.*/
-	CheckForSlotOnly UMETA(DisplayName = "Slot Only"),
-};
-
 UENUM()
 enum class EOldPackageEngine : uint8
 {
@@ -335,21 +324,18 @@ enum class EOldPackageEngine : uint8
 };
 
 UENUM()
-enum class EWorldPartitionMethod : uint8
+enum class EAutoSaveStreamMethod : uint8
 {
-	/** Automatic World Partition saving/loading is enabled. */
+	/**
+	Automatically saves and loads Streaming Level and World Partition data to memory.
+	Changes must be manually saved to disk using 'Save Game Actors' as usual.
+	*/
 	Enabled,
 
-	/**
-	Automatic World Partition loading is enabled. Data persists in memory during the session.
-	Improves stability and performance, but saving to disk must be done manually.
-	*/
-	MemoryOnly,
+	/** @DEPRECATED - Same as Enabled. Kept for existing configs. */
+	MemoryOnly UMETA(Hidden),
 
-	/** Automatic World Partition loading is enabled. All saving must be done manually. */
-	LoadOnly,
-
-	/** Automatic World Partition saving/loading is disabled. */
+	/** Disables all automatic loading and saving for Streaming Levels and World Partition. */
 	Disabled,
 };
 
@@ -364,6 +350,82 @@ enum class EWorldPartitionInit : uint8
 };
 
 UENUM()
+enum class ESaveReportSetting : uint8
+{
+	/** Advanced Save Report is disabled. */
+	Disabled UMETA(DisplayName = "Disabled"),
+
+	/** Advanced Save Report is written when saving data. */
+	OnSave UMETA(DisplayName = "On Save"),
+
+	/** Advanced Save Report is written when loading data. */
+	OnLoad UMETA(DisplayName = "On Load"),
+};
+
+/**
+Enums - Blueprint
+**/
+
+UENUM(BlueprintType, meta = (Bitflags, UseEnumValuesAsMaskValuesInEditor = "true"))
+enum class ESaveTypeFlags : uint8
+{
+	None = 0 UMETA(Hidden),
+
+	/** Player Controller, Pawn and Player State. */
+	SF_Player = 1 << 0 UMETA(DisplayName = "Player Actors"),
+
+	/** Level Actors and Level Blueprints. */
+	SF_Level = 1 << 1 UMETA(DisplayName = "Level Actors"),
+};
+ENUM_CLASS_FLAGS(ESaveTypeFlags);
+
+namespace EMSFLAG
+{
+	inline static bool IsPlayer(const int32 Data) { return (Data & TOFLAG(ESaveTypeFlags::SF_Player)) != 0; }
+	inline static bool IsLevel(const int32 Data) { return (Data & TOFLAG(ESaveTypeFlags::SF_Level)) != 0; }
+}
+
+UENUM(BlueprintType)
+enum class ECopySaveSlotType : uint8
+{
+	/** Copies the complete core Save Slot and optionally selected Custom files. */
+	FullSlot UMETA(DisplayName = "Complete Slot"),
+
+	/** Copies only selected Slot-bound Custom files. Core Slot data remains unchanged. */
+	CustomFiles UMETA(DisplayName = "Custom Files Only"),
+};
+
+UENUM(BlueprintType)
+enum class ESaveFileCheckType : uint8
+{
+	/** Check Current Slot, Player and Level Files.*/
+	CheckForGame UMETA(DisplayName = "Complete Slot"),
+
+	/** Check Custom Save File without considering Slots.*/
+	CheckForCustom UMETA(DisplayName = "Custom Save"),
+
+	/** Check Custom Save File or Custom Player within the Current Save Slot.*/
+	CheckForCustomSlot UMETA(DisplayName = "Custom Save in Slot"),
+
+	/** Will Check only for the Slot Info of the Current Save Slot.*/
+	CheckForSlotOnly UMETA(DisplayName = "Slot Only"),
+
+	/** Check only the Player save file of the Current Save Slot. */
+	CheckForPlayerOnly  UMETA(DisplayName = "Player Only"),
+
+	/** Check only the Level/Actor save file of the Current Save Slot. */
+	CheckForLevelOnly   UMETA(DisplayName = "Level Only"),
+};
+
+UENUM(BlueprintType)
+enum class ESaveGameMode : uint8
+{
+	MODE_Player UMETA(DisplayName = "Player"),
+	MODE_Level UMETA(DisplayName = "Level"),
+	MODE_All UMETA(DisplayName = "Both"),
+};
+
+UENUM(BlueprintType)
 enum class ELoadedStateMod : uint8
 {
 	/** The loaded state of the Actor is not changed. */
@@ -376,7 +438,7 @@ enum class ELoadedStateMod : uint8
 	Loaded UMETA(DisplayName = "Loaded"),
 };
 
-UENUM()
+UENUM(BlueprintType)
 enum class EResetCustomSaveType : uint8
 {
 	/** Reset property values and clears memory data. The Custom Save will be reloaded from disk. */
@@ -389,7 +451,7 @@ enum class EResetCustomSaveType : uint8
 	ResetDefault UMETA(DisplayName = "Defaults Only"),
 };
 
-UENUM()
+UENUM(BlueprintType)
 enum class EDeleteSlotType : uint8
 {
 	/** Deletes the Complete Slot including Custom Save Objects. */
@@ -400,4 +462,23 @@ enum class EDeleteSlotType : uint8
 
 	/** Deletes only the Level save data from Slot. */
 	Level UMETA(DisplayName = "Level Only"),
+};
+
+//Identifies a single save file for cloud byte-array conversion.
+UENUM(BlueprintType)
+enum class ECloudFileType : uint8
+{
+	/** Resolved Slot with Player, Level, and Info files. Can also include Custom files inside the Slot. The Thumbnail is not included. */
+	FullSlot	UMETA(DisplayName = "Complete Slot"),
+
+	/** Any specific save file, such as Custom Objects/Players or Object Collections. */
+	Custom		UMETA(DisplayName = "Custom Save"),
+
+	/** Any specific save file inside the resolved Slot, such as Custom Objects/Players or Object Collections.*/
+	CustomSlot	UMETA(DisplayName = "Custom Save in Slot"),
+
+	/** Not exposed to Blueprints. */
+	Player		UMETA(Hidden),
+	Level		UMETA(Hidden),
+	SlotInfo	UMETA(Hidden),
 };

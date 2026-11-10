@@ -10,6 +10,7 @@
 #include "InventorySlotWidget.generated.h"
 
 class UInventoryItemWidget;
+class UTextBlock;
 struct FInventoryChangeSet;
 
 
@@ -55,9 +56,13 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Inventory|Slot")
 	FGameplayTag SlotTag;
 
-	/** Collapsed while the slot is empty. */
+	/** Hidden while the slot is empty. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Slot", meta = (BindWidgetOptional))
 	TObjectPtr<UInventoryItemWidget> ItemWidget;
+
+	/** The item's name, for rows of a list such as a storage box. Empty while the slot is. */
+	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Slot", meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> NameText;
 
 private:
 	UFUNCTION()

@@ -1,5 +1,6 @@
 ﻿#include "HadesQuickSlotWidget.h"
 
+#include "CommonActionWidget.h"
 #include "Components/TextBlock.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
@@ -35,6 +36,7 @@ void UHadesQuickSlotWidget::NativeConstruct()
 		Player->OnPossessedPawnChanged.AddUniqueDynamic(this, &ThisClass::HandlePawnChanged);
 	}
 	HandlePawnChanged(nullptr, GetOwningPlayerPawn());
+	RegistryListener.Bind(this, FOnInventoryRegistryChanged::FDelegate::CreateWeakLambda(this, [this](const FInventoryChangeSet&) { Refresh(); }));
 }
 
 void UHadesQuickSlotWidget::NativeDestruct()
@@ -48,6 +50,7 @@ void UHadesQuickSlotWidget::NativeDestruct()
 		Component->OnChanged.RemoveDynamic(this, &ThisClass::Refresh);
 	}
 	QuickSlots.Reset();
+	RegistryListener.Unbind();
 
 	Super::NativeDestruct();
 }
@@ -71,13 +74,39 @@ void UHadesQuickSlotWidget::Refresh()
 {
 	const UHadesQuickSlotComponent* Component = QuickSlots.Get();
 	const FInventoryItemHandle Item = Component ? Component->GetSlotItem(SlotIndex) : FInventoryItemHandle();
+	if (KeyIcon && Component)
+	{
+		KeyIcon->SetInputAction(Component->GetSlotKey(SlotIndex));
+	}
 	if (ItemWidget)
 	{
+		// Hidden, not collapsed, so a Size Box around it keeps its size while the slot is empty.
 		ItemWidget->SetItem(Item);
-		ItemWidget->SetVisibility(Item.IsSet() ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		ItemWidget->SetVisibility(Item.IsSet() ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
 	}
 
 	const UHadesInventoryComponent* Inventory = Component ? Cast<UHadesInventoryComponent>(UInventoryComponent::FindInventoryComponent(Component->GetOwner())) : nullptr;
+	const int32 Capacity = Inventory ? Inventory->GetCapacity(Item) : 0;
+	const ESlateVisibility AmmoVisibility = Capacity > 0 ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed;
+	if (AmmoText)
+	{
+		AmmoText->SetVisibility(AmmoVisibility);
+		if (Capacity > 0)
+		{
+			const int32 Rounds = Inventory->GetLoadedRounds(Item);
+			AmmoText->SetText(FText::AsNumber(Rounds));
+			AmmoText->SetColorAndOpacity(AmmoColors.Pick(Rounds, Capacity));
+		}
+	}
+	if (SpareAmmoText)
+	{
+		SpareAmmoText->SetVisibility(AmmoVisibility);
+		if (Capacity > 0)
+		{
+			SpareAmmoText->SetText(FText::Format(LOCTEXT("SpareRounds", "/{0}"), Inventory->GetSpareRounds(Item)));
+		}
+	}
+
 	const bool bNowInHand = Inventory && Inventory->IsInHand(Item);
 	if (bNowInHand != bInHand)
 	{

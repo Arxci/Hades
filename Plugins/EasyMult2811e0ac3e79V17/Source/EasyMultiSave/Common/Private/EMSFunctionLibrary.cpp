@@ -52,7 +52,7 @@ UEMSInfoSaveGame* UEMSFunctionLibrary::GetNamedSlotInfo(UObject* WorldContextObj
 
 bool UEMSFunctionLibrary::DoesSaveSlotExist(UObject* WorldContextObject, const FString& SaveGameName, bool bComplete)
 {
-	if (SaveGameName.IsEmpty())
+	if (EMS::StringEmpty(SaveGameName))
 	{
 		return false;
 	}
@@ -209,7 +209,7 @@ void UEMSFunctionLibrary::SetActorSaveProperties(AActor* SaveActor, bool bSkipSa
 		}
 		else if (LoadedState == ELoadedStateMod::Loaded)
 		{
-			SaveActor->Tags.Add(EMS::HasLoadedTag);
+			SaveActor->Tags.AddUnique(EMS::HasLoadedTag);
 		}
 	}
 }
@@ -218,12 +218,8 @@ bool UEMSFunctionLibrary::IsSavingOrLoading(UObject* WorldContextObject)
 {
 	if (UEMSObject* EMS = UEMSObject::Get(WorldContextObject))
 	{
-		if (EMS->IsPaused())
-		{
-			return false;
-		}
-
-		return EMS->IsAsyncSaveOrLoadTaskActive(ESaveGameMode::MODE_All, EAsyncCheckType::CT_Both, false);
+		//Checks the task objects directly, so an active save is also reported while the game is paused
+		return EMS->IsAsyncTaskActive(false);
 	}
 
 	return false;
@@ -296,7 +292,7 @@ void UEMSFunctionLibrary::ResetCustomSave(UObject* WorldContextObject, UEMSCusto
 
 bool UEMSFunctionLibrary::DoesCustomSaveFileExist(UObject* WorldContextObject, FString SaveSlot, FString FileName)
 {
-	if (FileName.IsEmpty())
+	if (EMS::StringEmpty(FileName))
 	{
 		return false;
 	}
@@ -418,7 +414,7 @@ bool UEMSFunctionLibrary::IsLevelStreamingActive(UObject* WorldContextObject)
 {
 	if (UEMSObject* EMS = UEMSObject::Get(WorldContextObject))
 	{
-		if (IsWorldPartition(WorldContextObject))
+		if (EMS->AutoSaveLoadWorldPartition())
 		{
 			return !EMS->WorldPartitionLoadComplete();
 		}
@@ -435,7 +431,7 @@ Custom Player
 
 bool UEMSFunctionLibrary::SavePlayerActorsCustom(AController* Controller, const FString& FileName)
 {
-	if (FileName.IsEmpty())
+	if (EMS::StringEmpty(FileName))
 	{
 		return false;
 	}
@@ -455,7 +451,7 @@ bool UEMSFunctionLibrary::SavePlayerActorsCustom(AController* Controller, const 
 
 bool UEMSFunctionLibrary::LoadPlayerActorsCustom(AController* Controller, const FString& FileName)
 {
-	if (FileName.IsEmpty())
+	if (EMS::StringEmpty(FileName))
 	{
 		return false;
 	}
@@ -475,7 +471,7 @@ bool UEMSFunctionLibrary::LoadPlayerActorsCustom(AController* Controller, const 
 
 bool UEMSFunctionLibrary::DeleteCustomPlayerFile(UObject* WorldContextObject, const FString& FileName)
 {
-	if (FileName.IsEmpty())
+	if (EMS::StringEmpty(FileName))
 	{
 		return false;
 	}
@@ -489,7 +485,7 @@ bool UEMSFunctionLibrary::DeleteCustomPlayerFile(UObject* WorldContextObject, co
 }
 
 /**
-Backup
+Files
 **/
 
 FString UEMSFunctionLibrary::GetBackupName(UObject* WorldContextObject, const FString& BaseName)
@@ -497,5 +493,13 @@ FString UEMSFunctionLibrary::GetBackupName(UObject* WorldContextObject, const FS
 	return FSavePaths::GetBackupFileName(BaseName);
 }
 
+void UEMSFunctionLibrary::GetGameVersion(UObject* WorldContextObject, int32& SaveFileVersion, int32& SettingsVersion)
+{
+	if (UEMSObject* EMS = UEMSObject::Get(WorldContextObject))
+	{
+		EMS->GetSlotInfoObject(EMS->GetCurrentSaveGameName());
+		EMS->GetGameVersion(SaveFileVersion, SettingsVersion);
+	}
+}
 
 

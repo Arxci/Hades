@@ -21,6 +21,7 @@ struct FInventoryChangeSet;
 /**
  * Shows a grid container: a focusable cell widget per cell, the items over them, and where the held item would land.
  * Mouse drops land with the dragged item centered on the cursor; gamepad drops put its top-left corner on the focused cell.
+ * With the Inventory UI Subsystem's Snap Held Item on, it also draws the held item on those cells, using Item Class.
  */
 UCLASS(Abstract)
 class MODULARINVENTORYUI_API UInventoryGridWidget : public UUserWidget
@@ -41,11 +42,17 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory|Grid")
 	UInventoryCellWidget* GetCellWidget(FIntPoint Cell) const;
 
+	/** The widget showing the item, such as to open a menu beside it. Null when the item isn't in this grid. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Grid")
+	UInventoryItemWidget* GetItemWidget(FInventoryItemHandle Item) const;
+
 protected:
 	//~ Begin UUserWidget Interface
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
 	virtual void ReleaseSlateResources(bool bReleaseChildren) override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
+	virtual FReply NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	virtual bool NativeOnDragOver(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation) override;
 	virtual void NativeOnDragLeave(const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation) override;
 	virtual bool NativeOnDrop(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation) override;
@@ -73,11 +80,15 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Inventory|Grid")
 	TSubclassOf<UInventoryItemWidget> ItemClass;
 
+	/** How fast the preview, and a snapped held item, glide to new cells. Higher is snappier; 0 jumps. */
+	UPROPERTY(EditAnywhere, Category = "Inventory|Grid", meta = (ClampMin = "0"))
+	float PreviewGlideSpeed = 0.0f;
+
 	/** Holds the cells, the items and the preview, and sizes itself to them. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Grid", meta = (BindWidget))
 	TObjectPtr<UCanvasPanel> GridCanvas;
 
-	/** Covers the cells the held item would take. Place it inside Grid Canvas. */
+	/** Covers the cells the held item would take, under the held item when it's drawn. Place it inside Grid Canvas. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Grid", meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> PlacementPreview;
 
@@ -98,16 +109,24 @@ private:
 	void RebuildCells(FIntPoint GridSize);
 	void RefreshItems();
 	void RefreshPreview();
+	void PlacePreview(const FVector2D& Position);
 
 	FInventoryContainerHandle Container;
 	FIntPoint BuiltGridSize = FIntPoint::ZeroValue;
 	EInventoryDropAction PreviewAction = EInventoryDropAction::None;
+
+	/** Where the preview is drawn, and where it's gliding to, in grid space. Unset while it's hidden. */
+	TOptional<FVector2D> PreviewPosition;
+	FVector2D PreviewTargetPosition = FVector2D::ZeroVector;
 
 	/** Where the mouse last dragged over this grid, to re-aim when the held item turns without the mouse moving. */
 	TOptional<FVector2D> DragScreenPosition;
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UInventoryCellWidget>> Cells;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInventoryItemWidget> HeldVisual;
 
 	TMap<FInventoryItemHandle, TWeakObjectPtr<UInventoryItemWidget>> ItemWidgets;
 

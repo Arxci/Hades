@@ -19,17 +19,25 @@ public:
 
 	static FString GetBackupSavePath(const FString& FullSavePath);
 	static FString GetBackupFileName(const FString& BaseName);
+	static FString GetBaseSavePath(const FString& FullSavePath);
 
 	static TArray<FString> GetSortedSaveSlots(TArray<FSaveSlotInfo>& SaveSlots);
+
+	static bool IsFileNameReserved(const FString& SaveGameName);
+
+	/** Slot names that would collide with internal EMS paths. Expects an already validated name. */
+	static bool IsSlotNameReserved(const FString& SlotName);
 
 	static FString ValidateSaveName(const FString& SaveGameName);
 
 	static FString GetThumbnailFormat();
-	static FString GetThumbnailFileExtension();
 
 	static void CheckForReadOnly(const FString& FullSavePath);
 
 	static TArray<FString> GetConsoleSlotFiles(const TArray<FString>& SaveGameNames);
+
+	static bool IsSafeToDelete(const FString& AbsoluteBaseDir, const FString& InputFolder);
+	static bool DeleteSaveDirectory(const FString& BaseDir, const FString& InputName, const FString& Context);
 };
 
 class EASYMULTISAVE_API FSaveThumbnails
@@ -37,7 +45,6 @@ class EASYMULTISAVE_API FSaveThumbnails
 
 public:
 
-	static bool HasRenderTargetResource(UTextureRenderTarget2D* TextureRenderTarget);
 	static bool CompressImage(const FImage& Image, FArchive& Ar);
 };
 
@@ -69,3 +76,4 @@ public:
 	static FSoftObjectPath ResolveActorClassPath(const FSoftObjectPath& Path);
 	static FSoftObjectPath ResolveLevelPath(const FSoftObjectPath& Path);
 };
+

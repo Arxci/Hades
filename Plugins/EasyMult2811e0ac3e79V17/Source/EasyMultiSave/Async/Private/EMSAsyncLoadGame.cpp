@@ -2,6 +2,7 @@
 
 #include "EMSAsyncLoadGame.h"
 #include "EMSObject.h"
+#include "UObject/Package.h"
 #include "Engine/Engine.h"
 #include "Modules/ModuleManager.h"
 #include "Async/Async.h"
@@ -20,6 +21,7 @@ UEMSAsyncLoadGame::UEMSAsyncLoadGame()
 	bLoadFailed = true;
 	bFullReload = false;
 	bAutoLoadLevel = false;
+	bCompleted = false;  
 }
 
 UEMSAsyncLoadGame* UEMSAsyncLoadGame::AsyncLoadActors(UObject* WorldContextObject, int32 Data, bool bFullReload)
@@ -28,7 +30,7 @@ UEMSAsyncLoadGame* UEMSAsyncLoadGame::AsyncLoadActors(UObject* WorldContextObjec
 	{
 		const ESaveGameMode Mode = FAsyncSaveHelpers::GetMode(Data);
 
-		if (EMSObject->IsAsyncSaveOrLoadTaskActive(Mode))
+		if (EMSObject->IsAsyncTaskActiveWithPause(Mode))
 		{
 			return nullptr;
 		}
@@ -103,15 +105,15 @@ Load Actors
 
 void UEMSAsyncLoadGame::PreLoading()
 {
-	if (!EMS)
+	if (!EMS || bCompleted)
 	{
 		return;
 	}
 
 	//Timeout (start once)
-	const float WaitTime = UEMSPluginSettings::Get()->AsyncWaitDelay;
+	const float WaitTime = FMath::Max(EMS::FallbackWaitTime, UEMSPluginSettings::Get()->AsyncWaitDelay);
 	const bool bTimeoutActive = EMS->GetTimerManager().IsTimerActive(FailedTimerHandle);
-	if (WaitTime > 0.f && !bTimeoutActive)
+	if (!bTimeoutActive)
 	{
 		EMS->GetTimerManager().SetTimer(
 			FailedTimerHandle,
@@ -280,6 +282,12 @@ Finish
 
 void UEMSAsyncLoadGame::FinishLoading()
 {
+	//Only the first call drives the terminal step
+	if (!bIsActive) 
+	{
+		return;
+	}
+
 	//Has to be a tick before broadcast.
 	bIsActive = false;
 	ClearFailTimer();
@@ -307,18 +315,58 @@ void UEMSAsyncLoadGame::FinishLoading()
 
 void UEMSAsyncLoadGame::ForceDestroy()
 {
+	//Block any pending timers so no work runs on a torn-down task, also no broadcast
 	bIsActive = false;
+	bCompleted = true;
+
+	if (Loader)
+	{
+		Loader->Destroy();
+	}
+
+	if (EMS)
+	{
+		EMS->GetTimerManager().ClearAllTimersForObject(this);
+	}
+
 	SetReadyToDestroy();
 }
 
 void UEMSAsyncLoadGame::CompleteLoadingTask()
 {
-	OnCompleted.Broadcast();
-	SetReadyToDestroy();
+	FinalizeAndBroadcast(true);
 }
 
 void UEMSAsyncLoadGame::FailLoadingTask()
 {
-	OnFailed.Broadcast();
+	FinalizeAndBroadcast(false);
+}
+
+void UEMSAsyncLoadGame::FinalizeAndBroadcast(const bool bSuccess)
+{
+	//Multiple paths reach here. Only the first call wins
+	if (bCompleted)
+	{
+		return;
+	}
+
+	bCompleted = true;
+	bIsActive = false;
+
+	//Cancel any pending timers
+	if (EMS)
+	{
+		EMS->GetTimerManager().ClearAllTimersForObject(this);
+	}
+
+	if (bSuccess)
+	{
+		OnCompleted.Broadcast();
+	}
+	else
+	{
+		OnFailed.Broadcast();
+	}
+
 	SetReadyToDestroy();
 }

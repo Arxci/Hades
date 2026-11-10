@@ -17,7 +17,8 @@ void UInventoryItemDetailsWidget::NativeConstruct()
 	if (bFollowHoveredItem && Interaction)
 	{
 		Interaction->OnHoveredItemChanged.AddUniqueDynamic(this, &ThisClass::HandleHoveredItemChanged);
-		Item = Interaction->GetHoveredItem();
+		Interaction->OnHeldItemChanged.AddUniqueDynamic(this, &ThisClass::FollowInteraction);
+		FollowInteraction();
 	}
 	Refresh();
 }
@@ -28,6 +29,7 @@ void UInventoryItemDetailsWidget::NativeDestruct()
 	if (UInventoryUISubsystem* Interaction = UInventoryUISubsystem::Get(GetOwningLocalPlayer()))
 	{
 		Interaction->OnHoveredItemChanged.RemoveDynamic(this, &ThisClass::HandleHoveredItemChanged);
+		Interaction->OnHeldItemChanged.RemoveDynamic(this, &ThisClass::FollowInteraction);
 	}
 	InventoryWidgets::CancelLoad(IconHandle);
 
@@ -42,7 +44,17 @@ void UInventoryItemDetailsWidget::SetItem(FInventoryItemHandle InItem)
 
 void UInventoryItemDetailsWidget::HandleHoveredItemChanged(FInventoryItemHandle HoveredItem)
 {
-	SetItem(HoveredItem);
+	FollowInteraction();
+}
+
+void UInventoryItemDetailsWidget::FollowInteraction()
+{
+	const UInventoryUISubsystem* Interaction = UInventoryUISubsystem::Get(GetOwningLocalPlayer());
+	const FInventoryItemHandle Followed = !Interaction ? FInventoryItemHandle() : Interaction->IsHolding() ? Interaction->GetHeldItem() : Interaction->GetHoveredItem();
+	if (Followed.IsSet() || !bKeepLastItem)
+	{
+		SetItem(Followed);
+	}
 }
 
 void UInventoryItemDetailsWidget::HandleRegistryChanged(const FInventoryChangeSet& Changes)
@@ -77,9 +89,9 @@ void UInventoryItemDetailsWidget::Refresh()
 		CountText->SetText(FText::AsNumber(Count));
 		CountText->SetVisibility(Count > 1 ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
-	if (bCollapseWithoutItem)
+	if (bHideWithoutItem)
 	{
-		SetVisibility(Definition ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+		SetVisibility(Definition ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Hidden);
 	}
 
 	OnItemChanged();

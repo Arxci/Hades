@@ -22,7 +22,7 @@ protected:
 public:
 
 	UPROPERTY()
-	TObjectPtr<ULevel> StreamingLevel = nullptr;
+	TObjectPtr<const ULevel> StreamingLevel = nullptr;
 
 	ESaveGameMode Mode;
 
@@ -36,14 +36,18 @@ private:
 	UPROPERTY(Transient)
 	TMap<FActorByteKey, TWeakObjectPtr<AActor>> StreamActorsMap;
 
+	UPROPERTY(Transient)
+	TArray<FActorSaveData> PrunedActorData;
+
 	uint8 bIsActive : 1;
+	uint8 bCompleted : 1;
 
 	int32 TotalActors;
 
 public:
 
 	UFUNCTION()
-	static bool InitStreamingLoadTask(UEMSObject* EMSObject, ULevel* InLevel);
+	static bool InitStreamingLoadTask(UEMSObject* EMSObject, const ULevel* InLevel);
 
 	void Activate() override;
     inline bool IsActive() const { return bIsActive; }
@@ -53,9 +57,11 @@ public:
 private:
 
 	void StartLoad();
+	bool LoadLevelScript();
 	bool SetupLevelActors();
 
 	void FinishLoadingStreamLevel();
+	void FinishLoadingLevelScript();
 
 	void EndTask(const bool bBroadcastFinish);
 	void Deactivate();

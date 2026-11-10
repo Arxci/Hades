@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 
-#include "Hades/UI/Foundation/HadesActivatableWidget.h"
+#include "Hades/UI/Foundation/HadesPopupMenu.h"
 #include "Hades/UI/Inventory/HadesInventoryScreen.h"
 
 #include "InventoryTypes.h"
@@ -14,18 +14,19 @@ class UTextBlock;
 
 
 /**
- * What can be done with one item, pushed onto the Modal layer by an inventory screen. Each button only shows when its action can run.
- * Give the root a full-screen border that blocks clicks, so the screen behind can't be clicked while the menu is open.
+ * What can be done with one item, opened beside it by an inventory screen. Each button only shows when its action can run,
+ * and the screen's action hint says what the highlighted one does.
  */
 UCLASS(Abstract, Blueprintable)
-class HADES_API UHadesItemMenu : public UHadesActivatableWidget
+class HADES_API UHadesItemMenu : public UHadesPopupMenu
 {
 	GENERATED_BODY()
 
 public:
 	UHadesItemMenu(const FObjectInitializer& ObjectInitializer);
 
-	void SetItem(UHadesInventoryScreen* InScreen, FInventoryItemHandle InItem);
+	/** InAnchor is where the item is on screen, in absolute coordinates. */
+	void SetItem(UHadesInventoryScreen* InScreen, FInventoryItemHandle InItem, const FBox2D& InAnchor);
 
 protected:
 	//~ Begin UUserWidget Interface
@@ -36,8 +37,15 @@ protected:
 	virtual UWidget* NativeGetDesiredFocusTarget() const override;
 	//~ End UCommonActivatableWidget Interface
 
+	/** What each action does, shown for the highlighted button. */
+	UPROPERTY(EditDefaultsOnly, Category = "Item Menu")
+	TMap<EHadesItemAction, FText> Descriptions;
+
 	UPROPERTY(BlueprintReadOnly, Category = "Item Menu", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> ItemNameText;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Item Menu", meta = (BindWidgetOptional))
+	TObjectPtr<UCommonButtonBase> ShortcutButton;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Item Menu", meta = (BindWidgetOptional))
 	TObjectPtr<UCommonButtonBase> UseButton;
@@ -63,6 +71,7 @@ protected:
 private:
 	UCommonButtonBase* GetButton(EHadesItemAction Action) const;
 	void HandleButtonClicked(EHadesItemAction Action);
+	void ShowDescription(EHadesItemAction Action);
 
 	TWeakObjectPtr<UHadesInventoryScreen> Screen;
 	FInventoryItemHandle Item;

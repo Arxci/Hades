@@ -33,6 +33,7 @@ public:
 	static bool AutoSaveLoadWorldPartition(const UWorld* InWorld);
 	static bool HasStreamingLevels(const UWorld* InWorld);
 	static bool IsLevelStillStreaming(const UWorld* InWorld);
+	static bool CanProcessStreaming(const UWorld* InWorld);
 	static bool IsWorldPartitionInit(const UWorld* InWorld);
 	static bool CanProcessWorldPartition(const UWorld* InWorld);
 };

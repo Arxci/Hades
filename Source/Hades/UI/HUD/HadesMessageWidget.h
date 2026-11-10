@@ -10,7 +10,7 @@ class UTextBlock;
 class UWidgetAnimation;
 
 
-/** Shows the messages the player controller sends, such as "It's locked." Put one in the HUD and one in each inventory screen. */
+/** Shows the messages the player controller sends, such as "It's locked." Put one in the root layout, above the layer stacks, so it shows over the HUD and every menu. */
 UCLASS(Abstract)
 class HADES_API UHadesMessageWidget : public UUserWidget
 {

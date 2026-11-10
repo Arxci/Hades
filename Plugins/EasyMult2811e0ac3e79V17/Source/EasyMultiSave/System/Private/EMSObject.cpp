@@ -2,6 +2,7 @@
 
 #include "EMSObject.h"
 #include "EMSActors.h"
+#include "EMSDebug.h"
 #include "EMSAsyncStream.h"
 #include "EMSCustomSaveGame.h"
 #include "EMSInfoSaveGame.h"
@@ -41,10 +42,11 @@ UEMSObject::UEMSObject() : UEMSObjectBase()
 { 
 	CachedPersistentLevelName.Empty();
 	WorldPartitionInitTimer = 0.f;
+	StreamingSaveRequestTime = 0.f;
 	bLoadFromMemory = false;
-	bInitWorldPartitionLoad = false;
-	bLoadPartition = false;
-	bSavePartition = false;
+	bInitWorldPartitionLoadComplete = false;
+	bTryInitWorldPartitionLoad = false;
+	bSaveStreaming = false;
 	bCachedIsWorldPartition = false;
 	bCachedHasStreamingLevels = false;
 }
@@ -61,13 +63,20 @@ void UEMSObject::Initialize(FSubsystemCollectionBase& Collection)
 
 void UEMSObject::Deinitialize()
 {
-	RemoveWorldPartitionStreamDelegates();
+	Super::Deinitialize();
+
+	RemoveWorldStreamDelegates();
 	FWorldDelegates::OnPreWorldInitialization.RemoveAll(this);
 	FWorldDelegates::OnWorldCleanup.RemoveAll(this);
 }
 
 UEMSObject* UEMSObject::Get(const UObject* WorldContextObject)
 {
+	if (!GEngine || !WorldContextObject)
+	{
+		return nullptr;
+	}
+
 	const UWorld* World = GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::LogAndReturnNull);
 	if (World)
 	{
@@ -107,10 +116,17 @@ bool UEMSObject::TryLoadLevelFile()
 	const FLoadArchiveContext Context = FLoadArchiveContext(ActorSaveFile(), EDataLoadType::DATA_Level);
 	const bool bDiskLoadSuccess = LoadBinaryArchive(Context);
 
+	//Disk Level data is now authoritative. Discard streamed Actor snapshots captured before this load.
+	if (bDiskLoadSuccess)
+	{
+		bSaveStreaming = false;
+		ClearStreamingActors();
+	}
+
 	//We don't have data yet, but want to allow auto-saving
 	if (!bDiskLoadSuccess && AutoSaveLoadWorldPartition())
 	{
-		bInitWorldPartitionLoad = true;
+		bInitWorldPartitionLoadComplete = true;
 	}
 
 	//Allow loading from memory
@@ -133,9 +149,9 @@ bool UEMSObject::UnpackActorArchive(FMemoryReader& FromBinary, const EDataLoadTy
 
 		return UnpackLevelArchive(FromBinary);
 	}
-	else if (LoadType == EDataLoadType::DATA_Player)
+	else if (LoadType == EDataLoadType::DATA_Player || LoadType == EDataLoadType::DATA_PlayerCustom)
 	{
-		return UnpackPlayerArchive(FromBinary);
+		return UnpackPlayerArchive(FromBinary, LoadType == EDataLoadType::DATA_PlayerCustom);
 	}
 
 	return false;
@@ -152,7 +168,7 @@ bool UEMSObject::UnpackLevelArchive(FMemoryReader& FromBinary)
 		FromBinary << LevelStack;
 
 		//Copy from disk to memory.
-		if (EMS::ArrayEmpty(LevelArchiveList))
+		if (LevelArchiveList.IsEmpty())
 		{
 			LevelArchiveList = LevelStack.Archives;
 		}
@@ -237,11 +253,32 @@ bool UEMSObject::UnpackLevel(const FLevelArchive& LevelArchive)
 	return bLevelLoadSuccess;
 }
 
-bool UEMSObject::UnpackPlayerArchive(FMemoryReader& FromBinary)
+bool UEMSObject::UnpackPlayerArchive(FMemoryReader& FromBinary, const bool bCustomFile)
 {
 	//Check for multi level saving.
 	if (IsStackBasedMultiLevelSave())
 	{
+		/*
+		Custom player files are self-contained and never touch the shared PlayerStackData.
+		Old custom files were written as a full stack, new ones as a plain archive.
+		Both start with FPlayerArchive, so this read is backward compatible.
+		*/
+		if (bCustomFile)
+		{
+			FPlayerArchive PlayerArchive;
+			FromBinary << PlayerArchive;
+
+			UnpackPlayer(PlayerArchive);
+
+			//Match the stack behavior: only keep the transform when saved in this level
+			if (!MatchesLevelName(PlayerArchive.Level))
+			{
+				ClearPlayerPosition();
+			}
+
+			return true;
+		}
+
 		FPlayerStackArchive PlayerStack;
 		FromBinary << PlayerStack;
 
@@ -296,9 +333,9 @@ Prepare Actors for Load and Save
 void UEMSObject::PrepareLoadAndSaveActors(const uint32 Data, const EAsyncCheckType FunctionType, const EPrepareType PrepareType)
 {
 	const bool bIsLoading = (FunctionType == EAsyncCheckType::CT_Load);
-	const bool bFullReload = (PrepareType == EPrepareType::PT_FullReload);
+	const bool bFullReload = bIsLoading && (PrepareType == EPrepareType::PT_FullReload);
 
-	if (bIsLoading && bFullReload)
+	if (bFullReload)
 	{
 		ClearLoadFromMemory();
 		ClearRawObjectLevelActors();
@@ -346,22 +383,22 @@ void UEMSObject::PreparePlayerActors(const FActorInitContext& Init)
 			continue;
 		}
 
-		InitListActor(FActorInitContext(Actor, Init));
+		InitGameActor(FActorInitContext(Actor, Init));
 	}
 }
 
 void UEMSObject::PrepareLevelActors(const FActorInitContext& Init)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("UEMSObject::PrepareLevelActors"));
-
 	ClearActorList();
 
-	const UWorld* World = GetWorld();
+	UWorld* World = GetWorld();
 	if (!World)
 	{
 		return;
 	}
 
+	//Initial pass 
 	for (FActorIterator It(World); It; ++It)
 	{
 		AActor* Actor = *It;
@@ -382,14 +419,16 @@ void UEMSObject::AddActorToList(const FActorInitContext& Init)
 		return;
 	}
 
-	//Don't consider loaded placed Actors at all. Runtime Actors require another check, otherwise they would duplicate
-	if (!Init.bFullReload)
+	const EActorType Type = GetActorType(Actor);
+
+	//Skip loaded non-runtime Actors
+	if (FActorHelpers::ShouldSkipLoadForActorList(Init, Type))
 	{
-		if (Init.bIsLoading && IsPlaced(Actor) && IsLoaded(Actor))
-		{
-			return;
-		}
+		return;
 	}
+
+	//@DEBUG
+	//UE_LOG(LogEasyMultiSave, Warning, TEXT("AddActorToList - %s"), *Actor->GetName());
 
 	/*
 	bIsLevelPlayerPawn load the default pawn again with data from the level file,
@@ -398,55 +437,48 @@ void UEMSObject::AddActorToList(const FActorInitContext& Init)
 	EMS will respawn the saved Pawn as runtime Actor, keeping any soft-refs available.
 	*/
 
-	const EActorType Type = GetActorType(Actor);
-	const bool bIsLevelPlayerPawn =  Init.bIsLoading  && IsPlaced(Actor) && Type == EActorType::AT_PlayerPawn;
-	const bool bIsLevelActor = IsLevelActor(Type, true);
+	const bool bIsLevelPlayerPawn = Init.bIsLoading && IsPlaced(Actor) && Type == EActorType::AT_PlayerPawn;
 	const bool bIsGameMode = (Type == EActorType::AT_GameObject);
 
-	if (!bIsLevelActor && !bIsLevelPlayerPawn && !bIsGameMode)
+	if (!IsLevelActor(Type, true) && !bIsLevelPlayerPawn && !bIsGameMode)
 	{
 		return;
 	}
 
-	InitListActor(Init);
+	InitGameActor(Init);
 
-	//Not relevant for game mode anymore
+	//Game Mode/State are serialized directly and do not need to be added to the Level Actor list.
 	if (bIsGameMode)
 	{
-		return;
+		return; 
 	}
 
 	if (Init.bIsLoading)
 	{
-		//Map for load
 		const FString FullName = IsLevelScript(Type) ? GetActorLevelName(Actor) : GetFullActorName(Actor);
-		ActorMap.Add(FActorByteKey(BytesFromString(FullName)), Actor);
+		ActorMap.Add(FActorByteKey(FullName), Actor);
 	}
 	else
 	{
-		//List for save
 		ActorList.Add(Actor);
 	}
 }
 
-void UEMSObject::InitListActor(const FActorInitContext& Init)
+void UEMSObject::InitGameActor(const FActorInitContext& Init)
 {
-	AActor* Actor = Init.Actor;
-	if (!Actor)
+	if (Init.Actor)
 	{
-		return;
+		//Structs and tags
+		SerializeActorStructProperties(Init.Actor);
+		Init.RemoveLoadedTag();
 	}
-
-	//Structs and tags
-	SerializeActorStructProperties(Init.Actor);
-	Init.ApplyLoadStateTag();
 }
 
 /**
 Saving Level Actors
 **/
 
-bool UEMSObject::SaveLevelActors(const bool bMemoryOnly)
+bool UEMSObject::SaveLevelActors(const bool bMemoryOnly, const FLevelSnapshot& Snapshot)
 {
 	TArray<FActorSaveData> InActors;
 	TArray<FActorSaveData> InPersistentActors;
@@ -456,11 +488,9 @@ bool UEMSObject::SaveLevelActors(const bool bMemoryOnly)
 
 	TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("UEMSObject::SaveLevelActors"));
 
-	FScopeLock Lock(&SaveActorsScope);
-
 	bool bCancelSave = false;
 
-	for (const TWeakObjectPtr<AActor>& ActorWeakPtr : ActorList)
+	for (const TWeakObjectPtr<AActor>& ActorWeakPtr : Snapshot.LevelActors)
 	{
 		//Check if we are being interrupted(Engine shutdown etc.)
 		if(FAsyncSaveHelpers::ShouldCancelSaveTask(this))
@@ -519,31 +549,22 @@ bool UEMSObject::SaveLevelActors(const bool bMemoryOnly)
 		return false;
 	}
 
-	//World Partition Actors
-	if (!EMS::ArrayEmpty(WorldPartitionActors))
+	//Streaming Actors
+	if (!Snapshot.StreamingActors.IsEmpty())
 	{
-		InActors.Append(WorldPartitionActors.Array());
-		ClearWorldPartitionActors();
+		InActors.Append(Snapshot.StreamingActors);
 	}
 
 	//Destroyed Actors
-	if (!EMS::ArrayEmpty(DestroyedActors))
+	if (!Snapshot.DestroyedActors.IsEmpty())
 	{
-		InActors.Append(DestroyedActors.Array());
-
-		//Only clear this with when the data is carried over to the streaming archive
-		if (IsContainingStreamMultiLevelSave())
-		{
-			ClearDestroyedActors(); 
-		}
+		FSaveLogDebug::LogSavedDestroyedActors(Snapshot.DestroyedActors);
+		InActors.Append(Snapshot.DestroyedActors);
 	}
 
 	//Game Mode/State Actors
-	if (const UWorld* World = GetWorld())
-	{
-		InGameMode = ParseGameModeObjectForSaving(World->GetAuthGameMode());
-		InGameState = ParseGameModeObjectForSaving(World->GetGameState());
-	}
+	InGameMode = ParseGameModeObjectForSaving(Snapshot.GameMode.Get());
+	InGameState = ParseGameModeObjectForSaving(Snapshot.GameState.Get());
 
 	FLevelArchive LevelArchive;
 	{
@@ -573,27 +594,31 @@ bool UEMSObject::SaveLevelActors(const bool bMemoryOnly)
 	}
 
 	FBufferArchive LevelData;
+	{
+		//Lock only the shared Multi-Level structure access 
+		FScopeLock Lock(&SaveActorsScope);
 
-	//Check for multi level saving.
-	if (IsNormalMultiLevelSave())
-	{
-		FLevelStackArchive LevelStack = AddMultiLevelStackData(LevelArchive, PersistentArchive, InGameMode, InGameState);
-		LevelData << LevelStack;
-	}
-	else if (IsStreamMultiLevelSave())
-	{
-		FLevelArchive StreamArchive = AddMultiLevelStreamData(LevelArchive);
-		LevelData << StreamArchive;
-	}
-	else if (IsFullMultiLevelSave())
-	{
-		const FLevelArchive StreamArchive = AddMultiLevelStreamData(LevelArchive);
-		FLevelStackArchive MultiLevelStack = AddMultiLevelStackData(StreamArchive, PersistentArchive, InGameMode, InGameState);
-		LevelData << MultiLevelStack;
-	}
-	else
-	{
-		LevelData << LevelArchive;
+		//Check for multi level saving.
+		if (IsNormalMultiLevelSave())
+		{
+			FLevelStackArchive LevelStack = AddMultiLevelStackData(LevelArchive, PersistentArchive, InGameMode, InGameState);
+			LevelData << LevelStack;
+		}
+		else if (IsStreamMultiLevelSave())
+		{
+			FLevelArchive StreamArchive = AddMultiLevelStreamData(LevelArchive);
+			LevelData << StreamArchive;
+		}
+		else if (IsFullMultiLevelSave())
+		{
+			const FLevelArchive StreamArchive = AddMultiLevelStreamData(LevelArchive);
+			FLevelStackArchive MultiLevelStack = AddMultiLevelStackData(StreamArchive, PersistentArchive, InGameMode, InGameState);
+			LevelData << MultiLevelStack;
+		}
+		else
+		{
+			LevelData << LevelArchive;
+		}
 	}
 
 	//Fail logging level
@@ -608,7 +633,7 @@ bool UEMSObject::SaveLevelActors(const bool bMemoryOnly)
 		return false;
 	}
 
-	//Memory only automatic saving for World Partition cells. Much faster as it skips compression etc. 
+	//Memory only automatic saving. Much faster as it skips compression etc. 
 	if (bMemoryOnly)
 	{
 		bLoadFromMemory = true;
@@ -626,6 +651,10 @@ bool UEMSObject::SaveLevelActors(const bool bMemoryOnly)
 
 	return false;
 }
+
+/**
+Actor Save Parsing 
+**/
 
 FGameObjectSaveData UEMSObject::ParseGameModeObjectForSaving(const AActor* Actor) const
 {
@@ -656,7 +685,7 @@ FActorSaveData UEMSObject::ParseLevelActorForSaving(const AActor* Actor, const E
 	ActorArray.Name = BytesFromString(GetFullActorName(Actor));
 	
 	//Class is saved for runtime and persistent Actors
-	if (FActorHelpers::IsRuntime(Type))
+	if (IsRuntimeActor(Type))
 	{
 		ActorArray.Class = BytesFromString(Actor->GetClass()->GetPathName());
 	}
@@ -672,6 +701,7 @@ FActorSaveData UEMSObject::ParseLevelActorForSaving(const AActor* Actor, const E
 	}
 
 	SaveActorToBinary(Actor, ActorArray.SaveData);
+	FSaveLogDebug::LogActorOperation(ActorArray, false);
 
 	return ActorArray;
 }
@@ -683,7 +713,7 @@ Loading Level Actors
 void UEMSObject::LoadGameMode()
 {
 	//Game Mode Actor
-	if (!EMS::ArrayEmpty(SavedGameMode.Data))
+	if (SavedGameMode.HasData())
 	{
 		AGameModeBase* GameMode = GetWorld()->GetAuthGameMode();
 		if (GameMode && IsValidForLoading(GameMode))
@@ -694,7 +724,7 @@ void UEMSObject::LoadGameMode()
 	}
 
 	//Game State Actor
-	if (!EMS::ArrayEmpty(SavedGameState.Data))
+	if (SavedGameState.HasData())
 	{
 		AGameStateBase* GameState = GetWorld()->GetGameState();
 		if (GameState && IsValidForLoading(GameState))
@@ -715,7 +745,7 @@ void UEMSObject::LoadLevelScripts()
 	for (const FLevelScriptSaveData& ScriptData : SavedScripts)
 	{
 		const FString ActorName = ScriptData.Name.ToString();
-		const FActorByteKey Key(BytesFromString(ActorName)); 
+		const FActorByteKey Key(ActorName); 
 
 		if (const TWeakObjectPtr<AActor>* ActorWeakPtr = ActorMap.Find(Key))
 		{
@@ -742,6 +772,27 @@ void UEMSObject::LoadLevelScripts()
 	}
 }
 
+bool UEMSObject::GetStreamingLevelScriptData(const FName ScriptName, FLevelScriptSaveData& OutData) const
+{
+	/*
+	Must stay a plain copy under the lock. Nothing in here may call out,
+	otherwise SaveActorsScope could nest with another lock or block on the game thread.
+	*/
+
+	FScopeLock Lock(&SaveActorsScope);
+
+	for (const FLevelScriptSaveData& ScriptData : MultiLevelStreamData.ScriptArray)
+	{
+		if (ScriptData.Name == ScriptName)
+		{
+			OutData = ScriptData;
+			return true;
+		}
+	}
+
+	return false;
+}
+
 void UEMSObject::LoadLevelActors(UEMSAsyncLoadGame* LoadTask)
 {
 	if (!LoadTask)
@@ -749,7 +800,7 @@ void UEMSObject::LoadLevelActors(UEMSAsyncLoadGame* LoadTask)
 		return;
 	}
 
-	if (EMS::ArrayEmpty(SavedActorsPruned))
+	if (SavedActorsPruned.IsEmpty())
 	{
 		LoadTask->FinishLoading();
 		return;
@@ -762,13 +813,11 @@ void UEMSObject::LoadLevelActors(UEMSAsyncLoadGame* LoadTask)
 
 void UEMSObject::PruneLevelActors()
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("UEMSObject::PruneLevelActors"));
-
 	//Global copy of only pruned Actors, SaveActors is holding all unpacked Actors during session/level
 	SavedActorsPruned = SavedActors;
 
 	//Make sure we only parse Actor data for Actors that are alive
-	if (HasStreamingLevels() || IsContainingStreamMultiLevelSave())
+	if (HasAnyLevelStreaming() || IsContainingStreamMultiLevelSave())
 	{
 		FActorHelpers::PruneSavedActors(ActorMap, SavedActorsPruned);
 	}
@@ -778,7 +827,7 @@ void UEMSObject::PruneLevelActors()
 
 void UEMSObject::SpawnLevelActor(const FActorSaveData & ActorArray)
 {
-	if (EMS::ArrayEmpty(ActorArray.Class))
+	if (ActorArray.Class.IsEmpty())
 	{
 		UE_LOG(LogEasyMultiSave, Warning, TEXT("Trying to respawn Level Actor with invalid Class"));
 		FailSpawnLevelActor(ActorArray);
@@ -792,7 +841,7 @@ void UEMSObject::SpawnLevelActor(const FActorSaveData & ActorArray)
 	}
 
 	const EActorType Type = EActorType(ActorArray.Type);
-	if (!FActorHelpers::IsRuntime(Type))
+	if (!IsRuntimeActor(Type))
 	{
 		UE_LOG(LogEasyMultiSave, Warning, TEXT("Trying to respawn non-runtime Level Actor from save data"));
 		FailSpawnLevelActor(ActorArray);
@@ -804,14 +853,16 @@ void UEMSObject::SpawnLevelActor(const FActorSaveData & ActorArray)
 
 	if (!SpawnClass)
 	{
-		const FString ActorName = StringFromBytes(ActorArray.Name);
-		UE_LOG(LogEasyMultiSave, Warning, TEXT("Spawn Class '%s' could not be loaded for Actor: %s"), *Class, *ActorName);
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("Spawn Class '%s' could not be loaded"), *Class);
+		FailSpawnLevelActor(ActorArray);
 		return;
 	}
 
 	const FActorSpawnParameters SpawnParams = FSpawnHelpers::GetSpawnParams(this, ActorArray);
 	if (SpawnParams.Name.IsNone() || !SpawnClass->ImplementsInterface(UEMSActorSaveInterface::StaticClass()))
 	{
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("Spawn Class '%s' has no Actor Save Interface or an unusable Actor name"), *Class);
+		FailSpawnLevelActor(ActorArray);
 		return;
 	}
 
@@ -827,20 +878,40 @@ void UEMSObject::CreateLevelActor(UClass* SpawnClass, const FActorSaveData& Acto
 		return;
 	}
 
-	//Advanced Spawn checking
-	if (AdvancedSpawnCheck())
+	//Check to see if the Actor already exists and proceed
+	if (AActor* ExistingActor = FSpawnHelpers::CheckForExistingActor(World, SpawnParams.Name))
 	{
-		if (AActor* Actor = FSpawnHelpers::CheckForExistingActor(World, ActorArray))
-		{
-			ProcessLevelActor(Actor, ActorArray);
-			return;
-		}
+		UE_LOG(LogEasyMultiSave, Verbose, TEXT("Existing Level Actor found for '%s', skipping respawn"), *ExistingActor->GetName());
+		ProcessLevelActor(ExistingActor, ActorArray, true);
+		return;
 	}
 
-	AActor* NewActor = World->SpawnActor(SpawnClass, &ActorArray.Transform, SpawnParams);
-	if (NewActor)
+	//Defer construction, so Pre Load can run before the Construction Script and Begin Play
+	FActorSpawnParameters DeferredParams = SpawnParams;
+	DeferredParams.bDeferConstruction = true;
+
+	if (AActor* NewActor = World->SpawnActor(SpawnClass, &ActorArray.Transform, DeferredParams))
 	{
-		ProcessLevelActor(NewActor, ActorArray);
+		//Pre Load runs user code, which may have destroyed the Actor before construction finished
+		ExecuteActorPreLoad(NewActor);
+		if (!IsValid(NewActor))
+		{
+			FailSpawnLevelActor(ActorArray);
+			return;
+		}
+
+		//Same transform we spawned with, but its not default, so no override by templates
+		NewActor->FinishSpawning(ActorArray.Transform, false);
+
+		//A non-deferred spawn returns null in this case, so keep the same outcome
+		if (!IsValid(NewActor))
+		{
+			FailSpawnLevelActor(ActorArray);
+			return;
+		}
+
+		//Pre Load has already been executed for the deferred Actor
+		ProcessLevelActor(NewActor, ActorArray, true, true);
 	}
 	else
 	{
@@ -848,25 +919,27 @@ void UEMSObject::CreateLevelActor(UClass* SpawnClass, const FActorSaveData& Acto
 	}
 }
 
-void UEMSObject::ProcessLevelActor(AActor* Actor, const FActorSaveData& ActorArray, const bool bSetupStructs)
+void UEMSObject::ProcessLevelActor(AActor* Actor, const FActorSaveData& ActorArray, const bool bSetupStructs, const bool bDeferredSpawn)
 {
 	//Destroy
 	if (AutoDestroyActors())
 	{
 		if (ActorArray.Type == uint8(EActorType::AT_Destroyed))
 		{
-			Actor->Destroy(false, false);
+			RemoveActor(Actor);
 			return;
 		}
 	}
 
-	//Used for runtime and WP Actors, can be skipped for placed Actors
+	//Used for Runtime and Streaming Actors, can be skipped for placed Actors in the persistent level
 	if (bSetupStructs)
 	{
 		SerializeActorStructProperties(Actor);
 	}
 
-	if (FActorHelpers::CanProcessActorTransform(Actor) && FActorHelpers::HasValidTransform(ActorArray.Transform))
+	//Apply transform
+	if ( FActorHelpers::CanProcessActorTransform(Actor) 
+		&& FActorHelpers::HasValidTransform(ActorArray.Transform))
 	{
 		Actor->SetActorTransform(ActorArray.Transform, false, nullptr, ETeleportType::TeleportPhysics);
 	}
@@ -874,7 +947,7 @@ void UEMSObject::ProcessLevelActor(AActor* Actor, const FActorSaveData& ActorArr
 	RealLoadedActors.Add(Actor);
 	RawObjectLevelActors.Add(FActorByteKey(ActorArray.Name), ActorArray);
 
-	LoadActorFromBinary(Actor, ActorArray.SaveData);
+	LoadActorFromBinary(Actor, ActorArray.SaveData, bDeferredSpawn);
 }
 
 void UEMSObject::FailSpawnLevelActor(const FActorSaveData& ActorArray) const
@@ -898,11 +971,11 @@ void UEMSObject::FinishLoadingLevel(const bool bHasLoadedFile)
 	//Always fire the event, to make it consistent with the OnCompleted output of the Load node.
 	BroadcastOnLevelLoaded();
 
-	if (!bInitWorldPartitionLoad && AutoSaveLoadWorldPartition())
+	if (!bInitWorldPartitionLoadComplete && AutoSaveLoadWorldPartition())
 	{
 		//Not relevant for automatic loading of World Partition cells
 		ClearSavedLevelActors();
-		bInitWorldPartitionLoad = true;
+		bInitWorldPartitionLoadComplete = true;
 	}
 
 	//Free some memory
@@ -946,13 +1019,16 @@ FLevelStackArchive UEMSObject::AddMultiLevelStackData(const FLevelArchive& Level
 		}
 	}
 
-	//Add LevelArchive to the list if it was not found.
+	//Add if not found
 	if (!bFoundInList)
 	{
 		LevelArchiveList.Add(LevelArchive);
 	}
 
-	//Persistent does not need anything in memory. So LevelArchiveList is not updated.
+	/*
+	Persistent actors are rebuilt from the current world state
+	They must be loaded before saving after level travel
+	*/
 	LevelStack.AddTo(PersistentArchive);
 
 	return LevelStack;
@@ -960,7 +1036,7 @@ FLevelStackArchive UEMSObject::AddMultiLevelStackData(const FLevelArchive& Level
 
 FLevelArchive UEMSObject::AddMultiLevelStreamData(const FLevelArchive& LevelArchive)
 {
-	if (!HasStreamingLevels())
+	if (!HasAnyLevelStreaming())
 	{
 		return LevelArchive;
 	}
@@ -991,7 +1067,7 @@ FLevelArchive UEMSObject::AddMultiLevelStreamData(const FLevelArchive& LevelArch
 
 void UEMSObject::UpdateMultiLevelStreamData(const FLevelArchive& LevelArchive)
 {
-	if (!HasStreamingLevels())
+	if (!HasAnyLevelStreaming())
 	{
 		return;
 	}
@@ -1006,7 +1082,7 @@ void UEMSObject::UpdateMultiLevelStreamData(const FLevelArchive& LevelArchive)
 Saving and Loading Player
 **/
 
-bool UEMSObject::SavePlayerActors(const APlayerController* Controller, const FString& FileName)
+bool UEMSObject::SavePlayerActors(const APlayerController* Controller, const FString& FileName, const bool bCustomFile)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("UEMSObject::SavePlayerActors"));
 
@@ -1027,7 +1103,9 @@ bool UEMSObject::SavePlayerActors(const APlayerController* Controller, const FSt
 
 	//Controller
 	FControllerSaveData InController;
-	if (IsValidForSaving(Controller))
+	const bool bValidController = IsValidForSaving(Controller);
+	FSaveLogDebug::LogPlayerOperation(Controller, TEXT("Controller"), false, bValidController);
+	if (bValidController)
 	{
 		if (!IsSkipTransform(Controller))
 		{
@@ -1041,7 +1119,9 @@ bool UEMSObject::SavePlayerActors(const APlayerController* Controller, const FSt
 	//Pawn
 	FPawnSaveData InPawn;
 	const APawn* Pawn = GetPlayerPawn(Controller);
-	if (Pawn && IsValidForSaving(Pawn))
+	const bool bValidPawn = Pawn && IsValidForSaving(Pawn);
+	FSaveLogDebug::LogPlayerOperation(Pawn, TEXT("Pawn"), false, bValidPawn);
+	if (bValidPawn)
 	{
 		if (!IsSkipTransform(Pawn))
 		{
@@ -1056,7 +1136,9 @@ bool UEMSObject::SavePlayerActors(const APlayerController* Controller, const FSt
 	//Player State
 	FGameObjectSaveData InPlayerState;
 	const APlayerState* PlayerState = Controller->PlayerState;
-	if (PlayerState && IsValidForSaving(PlayerState))
+	const bool bValidPlayerState = PlayerState && IsValidForSaving(PlayerState);
+	FSaveLogDebug::LogPlayerOperation(PlayerState, TEXT("Player State"), false, bValidPlayerState);
+	if (bValidPlayerState)
 	{
 		SaveActorToBinary(PlayerState, InPlayerState);
 		bHasPlayerSaveData = true;
@@ -1078,9 +1160,12 @@ bool UEMSObject::SavePlayerActors(const APlayerController* Controller, const FSt
 
 	FBufferArchive PlayerData;
 
-	//Check for multi level saving.
-	if (IsStackBasedMultiLevelSave())
+	//Check for multi level saving. Custom player files are self-contained and skip the shared stack.
+	if (IsStackBasedMultiLevelSave() && !bCustomFile)
 	{
+		//Lock only the shared PlayerStackData access
+		FScopeLock Lock(&SaveActorsScope);
+
 		PlayerStackData.ReplaceOrAdd(PlayerArchive);
 		FPlayerStackArchive PlayerStack = PlayerStackData;
 		PlayerData << PlayerStack;
@@ -1126,7 +1211,9 @@ void UEMSObject::LoadPlayerActors(APlayerController* Controller)
 	bool bLoadSuccess = false;
 
 	//Controller
-	if (IsValidForLoading(Controller))
+	const bool bValidController = IsValidForLoading(Controller);
+	FSaveLogDebug::LogPlayerOperation(Controller, TEXT("Controller"), true, bValidController);
+	if (bValidController)
 	{
 		const FControllerSaveData ControllerData = SavedPlayer.Controller;
 
@@ -1143,7 +1230,9 @@ void UEMSObject::LoadPlayerActors(APlayerController* Controller)
 
 	//Pawn
 	APawn* Pawn = GetPlayerPawn(Controller);
-	if (Pawn && IsValidForLoading(Pawn))
+	const bool bValidPawn = Pawn && IsValidForLoading(Pawn);
+	FSaveLogDebug::LogPlayerOperation(Pawn, TEXT("Pawn"), true, bValidPawn);
+	if (bValidPawn)
 	{
 		const FPawnSaveData PawnData = SavedPlayer.Pawn;
 
@@ -1162,11 +1251,13 @@ void UEMSObject::LoadPlayerActors(APlayerController* Controller)
 	if (SavedPlayer.HasPlayerState())
 	{
 		APlayerState* PlayerState = Controller->PlayerState;
-		if (PlayerState && IsValidForLoading(PlayerState))
+		const bool bValidPlayerState = PlayerState && IsValidForLoading(PlayerState);
+		FSaveLogDebug::LogPlayerOperation(PlayerState, TEXT("Player State"), true, bValidPlayerState);
+		if (bValidPlayerState)
 		{
 			LoadActorFromBinary(PlayerState, SavedPlayer.State);
 
-			UE_LOG(LogEasyMultiSave, Log, TEXT("Player State loaded"))
+			UE_LOG(LogEasyMultiSave, Log, TEXT("Player State loaded"));
 			bLoadSuccess = true;
 		}
 	}
@@ -1185,7 +1276,7 @@ bool UEMSObject::SavePlayerActorsCustom(AController* Controller, const FString& 
 
 		const FString SlotName = GetCurrentSaveGameName();
 		const FString CustomFileName = CustomSaveFile(FileName, SlotName);
-		const bool bSavePlayer = SavePlayerActors(PlayerController, CustomFileName);
+		const bool bSavePlayer = SavePlayerActors(PlayerController, CustomFileName, true);
 
 		if (bSavePlayer)
 		{
@@ -1197,29 +1288,34 @@ bool UEMSObject::SavePlayerActorsCustom(AController* Controller, const FString& 
 		return bSavePlayer;
 	}
 
+	UE_LOG(LogEasyMultiSave, Warning, TEXT("Custom Player save with invalid Player Controller"));
 	return false;
 }
 
 bool UEMSObject::LoadPlayerActorsCustom(AController* Controller, const FString& FileName)
 {
-	if (APlayerController* PlayerController = Cast<APlayerController>(Controller))
+	APlayerController* PlayerController = Cast<APlayerController>(Controller);
+	if (!PlayerController)
 	{
-		PreparePlayerActors(FActorInitContext(PlayerController, true, true));
-
-		const FString SlotFileName = CustomSaveFile(FileName, GetCurrentSaveGameName());
-		const FLoadArchiveContext Context = FLoadArchiveContext(SlotFileName, EDataLoadType::DATA_Player);
-		const bool bLoadFile = LoadBinaryArchive(Context);
-
-		//Processing must be synchronous, as the data is stored globally.
-		if (bLoadFile)
-		{
-			UE_LOG(LogEasyMultiSave, Log, TEXT("Custom Player file was loaded with name: %s"), *FileName);
-			LoadPlayerActors(PlayerController);
-			return true;
-		}
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("Custom Player load with invalid Player Controller"));
+		return false;
 	}
 
-	return false;
+	PreparePlayerActors(FActorInitContext(PlayerController, true, true));
+
+	const FString SlotFileName = CustomSaveFile(FileName, GetCurrentSaveGameName());
+	const FLoadArchiveContext Context = FLoadArchiveContext(SlotFileName, EDataLoadType::DATA_PlayerCustom);
+
+	//Processing must be synchronous, as the data is stored globally.
+	if (!LoadBinaryArchive(Context))
+	{
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("Custom Player file could not be loaded: %s"), *FileName);
+		return false;
+	}
+
+	UE_LOG(LogEasyMultiSave, Log, TEXT("Custom Player file was loaded with name: %s"), *FileName);
+	LoadPlayerActors(PlayerController);
+	return true;
 }
 
 bool UEMSObject::DeleteCustomPlayerFile(const FString& FileName)
@@ -1269,7 +1365,7 @@ void UEMSObject::SaveActorComponents(const AActor* Actor, TArray<FComponentSaveD
 	TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("UEMSObject::SaveActorComponents"));
 
 	const TArray<UActorComponent*> SourceComps = GetSaveComponents(Actor);
-	if (EMS::ArrayEmpty(SourceComps))
+	if (SourceComps.IsEmpty())
 	{
 		return;
 	}
@@ -1331,62 +1427,70 @@ void UEMSObject::LoadActorComponents(const AActor* Actor, const TArray<FComponen
 	TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("UEMSObject::LoadActorComponents"));
 
 	const TArray<UActorComponent*> SourceComps = GetSaveComponents(Actor);
-	if (EMS::ArrayEmpty(SourceComps))
+	if (SourceComps.IsEmpty())
 	{
 		return;
+	}
+
+	//Index saved data by name once
+	TMap<FActorByteKey, const FComponentSaveData*> DataByName;
+	DataByName.Reserve(InComponents.Num());
+	for (const FComponentSaveData& Comp : InComponents)
+	{
+		DataByName.Add(FActorByteKey(Comp.Name), &Comp);
 	}
 
 	for (UActorComponent* Component : SourceComps)
 	{
 		if (!Component || !Component->IsRegistered())
 		{
-			continue; 
+			continue;
 		}
 
-		for (const FComponentSaveData& ComponentArray : InComponents)
+		//Using O(N) instead of nested O(N2)
+		const FString CompName = FActorHelpers::GetComponentName(Actor, Component);
+		const FComponentSaveData* const* CompData = DataByName.Find(FActorByteKey(CompName));
+		if (!CompData)
 		{
-			const FString CompName = FActorHelpers::GetComponentName(Actor, Component);
-
-			if (!CompareIdentifiers(ComponentArray.Name, CompName))
-			{
-				continue; 
-			}
-			
-			if (USceneComponent* SceneComp = Cast<USceneComponent>(Component))
-			{
-				if (FActorHelpers::IsMovable(SceneComp))
-				{
-					SceneComp->SetRelativeTransform(ComponentArray.Transform, false, nullptr, ETeleportType::TeleportPhysics);
-				}
-			}
-
-			if (UChildActorComponent* ChildActorComp = Cast<UChildActorComponent>(Component))
-			{
-				if (AActor* ChildActor = ChildActorComp->GetChildActor())
-				{
-					if (!HasSaveInterface(ChildActor))
-					{
-						SerializeFromBinary(ChildActor, ComponentArray.Data);
-					}
-				}
-			}
-			else
-			{
-				const bool bInterface = HasComponentSaveInterface(Component);
-
-				if (bInterface)
-				{
-					IEMSCompSaveInterface::Execute_ComponentPreLoad(Component);
-				}
-
-				SerializeFromBinary(Component, ComponentArray.Data);
-
-				if (bInterface)
-				{
-					IEMSCompSaveInterface::Execute_ComponentLoaded(Component);
-				}
-			}	
+			continue;
 		}
+
+		const FComponentSaveData& ComponentArray = **CompData;
+
+		if (USceneComponent* SceneComp = Cast<USceneComponent>(Component))
+		{
+			if (FActorHelpers::IsMovable(SceneComp))
+			{
+				SceneComp->SetRelativeTransform(ComponentArray.Transform, false, nullptr, ETeleportType::TeleportPhysics);
+			}
+		}
+
+		if (UChildActorComponent* ChildActorComp = Cast<UChildActorComponent>(Component))
+		{
+			if (AActor* ChildActor = ChildActorComp->GetChildActor())
+			{
+				if (!HasSaveInterface(ChildActor))
+				{
+					SerializeFromBinary(ChildActor, ComponentArray.Data);
+				}
+			}
+		}
+		else
+		{
+			const bool bInterface = HasComponentSaveInterface(Component);
+
+			if (bInterface)
+			{
+				IEMSCompSaveInterface::Execute_ComponentPreLoad(Component);
+			}
+
+			SerializeFromBinary(Component, ComponentArray.Data);
+
+			if (bInterface)
+			{
+				IEMSCompSaveInterface::Execute_ComponentLoaded(Component);
+			}
+		}	
 	}
 }
 
@@ -1396,6 +1500,8 @@ Loading and Saving Raw Objects
 
 UObject* UEMSObject::LoadRawObject(const AActor* Actor, const FRawObjectSaveData& Data)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("UEMSObject::LoadRawObject"));
+
 	if (!IsValidActor(Actor) || !Data.IsValidData())
 	{
 		return nullptr;
@@ -1409,7 +1515,7 @@ UObject* UEMSObject::LoadRawObject(const AActor* Actor, const FRawObjectSaveData
 	{
 		//Get from real Actor array, which also does not get cleared post load
 		const FString FullName = GetFullActorName(Actor);
-		const FActorByteKey Key(BytesFromString(FullName));
+		const FActorByteKey Key(FullName);
 		if (const FActorSaveData* ActorData = RawObjectLevelActors.Find(Key))
 		{
 			if (CompareIdentifiers(ActorData->Name, FullName))
@@ -1425,9 +1531,19 @@ UObject* UEMSObject::LoadRawObject(const AActor* Actor, const FRawObjectSaveData
 	//Level Scripts
 	if (IsLevelScript(Type))
 	{
+		const FName ScriptName = LevelScriptSaveName(Actor);
+
+		//Streamed levels keep the newest data here, SavedScripts only refreshes on save
+		FLevelScriptSaveData StreamScript;
+		if (GetStreamingLevelScriptData(ScriptName, StreamScript))
+		{
+			ObjectArray.Append(StreamScript.SaveData.Components);
+			return SerializeFromRawObject(Actor, Data, ObjectArray);
+		}
+
 		for (const FLevelScriptSaveData& ScriptData : SavedScripts)
 		{
-			if (LevelScriptSaveName(Actor) == ScriptData.Name)
+			if (ScriptName == ScriptData.Name)
 			{
 				ObjectArray.Append(ScriptData.SaveData.Components);
 				return SerializeFromRawObject(Actor, Data, ObjectArray);
@@ -1463,7 +1579,7 @@ UObject* UEMSObject::LoadRawObject(const AActor* Actor, const FRawObjectSaveData
 
 UObject* UEMSObject::SerializeFromRawObject(const AActor* Actor, const FRawObjectSaveData& Data, const TArray<FComponentSaveData>& InputArray)
 {
-	if (!Actor || !Data.IsValidData() || EMS::ArrayEmpty(InputArray))
+	if (!Actor || !Data.IsValidData() || InputArray.IsEmpty())
 	{
 		return nullptr;
 	}
@@ -1487,6 +1603,8 @@ UObject* UEMSObject::SerializeFromRawObject(const AActor* Actor, const FRawObjec
 
 bool UEMSObject::SaveRawObject(const AActor* Actor, const FRawObjectSaveData& Data)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("UEMSObject::SaveRawObject"));
+
 	if (!Actor || !Data.IsValidData())
 	{
 		return false;
@@ -1507,7 +1625,14 @@ bool UEMSObject::SaveRawObject(const AActor* Actor, const FRawObjectSaveData& Da
 
 void UEMSObject::AppendRawObjectData(const AActor* Actor, TArray<FComponentSaveData>& OutComponents) const
 {
-	if (Actor && !RawObjectData.IsEmpty())
+	if (!Actor)
+	{
+		return;
+	}
+
+	FScopeLock Lock(&RawObjectScope);
+
+	if (!RawObjectData.IsEmpty())
 	{
 		const FObjectKey ActorKey(Actor);
 		if (const FGameObjectSaveData* GameObjectDataRef = RawObjectData.Find(ActorKey))
@@ -1523,6 +1648,8 @@ void UEMSObject::UpdateRawObjectData(const AActor* Actor, const FComponentSaveDa
 	{
 		return;
 	}
+
+	FScopeLock Lock(&RawObjectScope);
 
 	//Try to update global raw objects array
 	const FObjectKey ActorKey(Actor);
@@ -1703,13 +1830,22 @@ void UEMSObject::SaveActorToBinary(const AActor* Actor, FGameObjectSaveData& Out
 	ExecuteActorSaved(Actor);
 }
 
-void UEMSObject::LoadActorFromBinary(AActor* Actor, const FGameObjectSaveData& InData) const
+void UEMSObject::LoadActorFromBinary(AActor* Actor, const FGameObjectSaveData& InData, const bool bDeferredSpawn) const
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("UEMSObject::LoadActorFromBinary"));
 
-	ExecuteActorPreLoad(Actor);
+	//Deferred runtime Actors run this before they finish spawning
+	if (!bDeferredSpawn)
+	{
+		//Pre Load runs user code, which may have destroyed the Actor
+		ExecuteActorPreLoad(Actor);
+		if (!IsValid(Actor))
+		{
+			return;
+		}
+	}
 
-	Actor->Tags.Add(EMS::HasLoadedTag);
+	Actor->Tags.AddUnique(EMS::HasLoadedTag);
 
 	SerializeFromBinary(Actor, InData.Data);
 
@@ -1741,7 +1877,7 @@ void UEMSObject::SerializeActorStructProperties(const AActor* Actor) const
 
 	//Also for Components
 	const TArray<UActorComponent*> SourceComps = GetSaveComponents(Actor);
-	if (EMS::ArrayEmpty(SourceComps))
+	if (SourceComps.IsEmpty())
 	{
 		return;
 	}
@@ -1782,15 +1918,15 @@ bool UEMSObject::HasValidPlayer() const
 		return false;
 	}
 
+	if (!FActorHelpers::AreWorldActorsInitialized(World))
+	{
+		return false;
+	}
+
 	//Used by async check to wait for valid player pawn
 	if (const APlayerController* PC = GetPlayerController())
 	{
 		return IsValid(GetPlayerPawn(PC));
-	}
-
-	if (!FActorHelpers::AreWorldActorsInitialized(World))
-	{
-		return false;
 	}
 
 	return false;
@@ -1828,6 +1964,63 @@ FTimerManager& UEMSObject::GetTimerManager() const
 
 	static FTimerManager EmptyTimerManager;
 	return EmptyTimerManager;
+}
+
+/** 
+Clear Data Functions  
+**/
+
+void UEMSObject::ClearMultiLevelSave()
+{
+	if (IsAsyncTaskActive())
+	{
+		return;
+	}
+
+	ClearLoadFromMemory();
+	ClearStreamingActors();
+	ClearStreamingData();
+	ClearSavedLevelActors();
+	ClearMultiSaveLevels();
+
+	LevelArchiveList.Empty();
+	PlayerStackData = FPlayerStackArchive();
+}
+
+void UEMSObject::ClearWorldPartition()
+{
+	if (IsAsyncTaskActive())
+	{
+		return;
+	}
+
+	ClearLoadFromMemory();
+	ClearStreamingActors();
+
+	bInitWorldPartitionLoadComplete = false;
+	bTryInitWorldPartitionLoad = false;
+	WorldPartitionInitTimer = 0.f;
+}
+
+void UEMSObject::ClearUserData()
+{
+	//Checks the task objects directly, so this also works while the game is paused
+	if (IsAsyncTaskActive())
+	{
+		return;
+	}
+
+	Super::ClearUserData();
+
+	//Clear all save-user-specific world data, skip clear WP
+	ClearMultiLevelSave();
+	ClearRawObjectLevelActors();
+}
+
+void UEMSObject::ClearLoadFromMemory()
+{
+	bLoadFromMemory = false;
+	bSaveStreaming = false;
 }
 
 /**
@@ -1869,6 +2062,25 @@ void UEMSObject::AssignLevelName(const UWorld* InWorld)
 bool UEMSObject::MatchesLevelName(const FName& InLevelName)
 {
 	return InLevelName == GetLevelName();
+}
+
+bool UEMSObject::IsDifferentGameWorld(const UWorld* InWorld) const
+{
+	//Only relevant in PIE
+#if WITH_EDITOR
+	return InWorld && InWorld->GetGameInstance() != GetGameInstance();
+#else
+	return false;
+#endif
+
+}
+
+void UEMSObject::RemoveActor(AActor* Actor)
+{
+	if (IsValid(Actor))
+	{
+		Actor->Destroy(false, false);
+	}
 }
 
 FName UEMSObject::LevelScriptSaveName(const AActor* Actor)
@@ -1922,6 +2134,11 @@ bool UEMSObject::IsLevelActor(const EActorType Type, const bool bIncludeScripts)
 	return FActorHelpers::IsLevelActor(Type, bIncludeScripts);
 }
 
+bool UEMSObject::IsRuntimeActor(const EActorType Type)
+{
+	return FActorHelpers::IsRuntime(Type);
+}
+
 bool UEMSObject::HasSaveInterface(const AActor* Actor)
 {
 	return Actor && Actor->GetClass()->ImplementsInterface(UEMSActorSaveInterface::StaticClass());
@@ -1932,9 +2149,41 @@ bool UEMSObject::HasComponentSaveInterface(const UActorComponent* Comp)
 	return Comp && Comp->IsRegistered() && Comp->GetClass()->ImplementsInterface(UEMSCompSaveInterface::StaticClass());
 }
 
-void UEMSObject::ClearLoadFromMemory()
+FLevelSnapshot UEMSObject::CaptureActorSnapshot(const bool bStreamingActorsOnly)
 {
-	bLoadFromMemory = false;
+	FLevelSnapshot Snapshot;
+
+	/*
+	Auto stream saves only persist the streamed-in placed Actors. The general
+	ActorList is only populated by a manual Prepare pass, so capturing it here
+	during an auto-save would write a stale persistent-Actor set.
+	*/
+	if (!bStreamingActorsOnly)
+	{
+		Snapshot.LevelActors = ActorList.Array();
+	}
+
+	//Streaming data, copy then clear on the game thread
+	if (!StreamingActors.IsEmpty())
+	{
+		Snapshot.StreamingActors = StreamingActors.Array();
+		ClearStreamingActors(); //See RestoreStreamingActors for failed save
+	}
+
+	//Destroyed data persists across saves, copy only
+	if (!DestroyedActors.IsEmpty())
+	{
+		Snapshot.DestroyedActors = DestroyedActors.Array();
+	}
+
+	//Mode and State
+	if (const UWorld* World = GetWorld())
+	{
+		Snapshot.GameMode = World->GetAuthGameMode();
+		Snapshot.GameState = World->GetGameState();
+	}
+
+	return Snapshot;
 }
 
 /**
@@ -1949,14 +2198,14 @@ void UEMSObject::OnActorDestroyed(AActor* Actor)
 		return;
 	}
 
-	if (!HasSaveInterface(Actor))
+	if (!HasSaveInterface(Actor) || IsSkipSave(Actor))
 	{
 		return;
 	}
 
-	//Consider all level actors
+	//Consider placed level actors
 	const EActorType Type = GetActorType(Actor);
-	if (IsLevelActor(Type, false))
+	if (IsLevelActor(Type, false) && !IsRuntimeActor(Type))
 	{
 		FActorSaveData ActorArray;
 		ActorArray.Type = uint8(EActorType::AT_Destroyed);
@@ -1993,19 +2242,25 @@ void UEMSObject::OnPreWorldInit(UWorld* World, const UWorld::InitializationValue
 		return;
 	}
 
+	/*
+	WorldDelegates fire for every UWorld in the process(each PIE client/server world under "Run Under One Process"). 
+	Filter to the world owned by *our* GameInstance. So we dont clobber cached state belonging to another PIE instance.
+	*/
+	if (IsDifferentGameWorld(World))
+	{
+		return;
+	}
+
 	//Cache the current static level info, so we don't need to query UWorld each time
 	AssignLevelName(World);
+	bCachedHasStreamingLevels = FStreamHelpers::HasStreamingLevels(World);
 	bCachedIsWorldPartition = FStreamHelpers::AutoSaveLoadWorldPartition(World);
-	bCachedHasStreamingLevels = FStreamHelpers::HasStreamingLevels(World) || FSettingHelpers::IsDynamicLevelStreaming();
 
-	if (bCachedIsWorldPartition)
+	//This will work for Streaming and World Partition
+	if (HasAnyLevelStreaming())
 	{
 		FLevelStreamingDelegates::OnLevelStreamingStateChanged.AddUObject(this, &UEMSObject::OnLevelStreamingStateChanged);
-
-		if (UEMSPluginSettings::Get()->WorldPartitionSaving != EWorldPartitionMethod::LoadOnly)
-		{
-			FLevelStreamingDelegates::OnLevelBeginMakingInvisible.AddUObject(this, &UEMSObject::OnLevelBeginMakingInvisible);
-		}
+		FLevelStreamingDelegates::OnLevelBeginMakingInvisible.AddUObject(this, &UEMSObject::OnLevelBeginMakingInvisible);
 	}
 
 	if (AutoDestroyActors())
@@ -2017,6 +2272,11 @@ void UEMSObject::OnPreWorldInit(UWorld* World, const UWorld::InitializationValue
 
 void UEMSObject::OnWorldCleanup(UWorld* World, bool bSessionEnded, bool bCleanupResources)
 {
+	if (IsDifferentGameWorld(World))
+	{
+		return;
+	}
+
 	FAsyncSaveHelpers::DestroyAsyncLoadTask();
 	FAsyncSaveHelpers::DestroyStreamAutoLoadTask();
 	FAsyncSaveHelpers::DestroyAsyncSaveTask();
@@ -2031,58 +2291,262 @@ void UEMSObject::OnWorldCleanup(UWorld* World, bool bSessionEnded, bool bCleanup
 	bCachedHasStreamingLevels = false;
 
 	if(World) RemoveActorDelegates(World);
-	RemoveWorldPartitionStreamDelegates();
+	RemoveWorldStreamDelegates();
+
+	ClearReportCache(false);
+}
+
+void UEMSObject::OnLevelStreamingStateChanged(UWorld* InWorld, const ULevelStreaming* InStreamingLevel, ULevel* InLevelIfLoaded, 
+	ELevelStreamingState PreviousState, ELevelStreamingState NewState)
+{
+	if (NewState == ELevelStreamingState::LoadedVisible && PreviousState == ELevelStreamingState::MakingVisible)
+	{
+		HandleStreamingPersistence(InWorld, InLevelIfLoaded, true);
+	}
+}
+
+void UEMSObject::OnLevelBeginMakingInvisible(UWorld* InWorld, const ULevelStreaming* InStreamingLevel, ULevel* InLoadedLevel)
+{
+	HandleStreamingPersistence(InWorld, InLoadedLevel, false);
+}
+
+void UEMSObject::RemoveWorldStreamDelegates()
+{
+	FLevelStreamingDelegates::OnLevelStreamingStateChanged.RemoveAll(this);
+	FLevelStreamingDelegates::OnLevelBeginMakingInvisible.RemoveAll(this);
+}
+
+/**
+General Streaming Functions 
+Used for world partition and manual streaming
+**/
+
+void UEMSObject::HandleStreamingPersistence(const UWorld* InWorld, const ULevel* InLevel, const bool bIsLoading)
+{
+	if (!InWorld || !InLevel)
+	{
+		return;
+	}
+
+	//World/level persistence is server-only
+	if (InWorld->GetNetMode() == NM_Client)
+	{
+		return;
+	}
+
+	//Streaming delegates are global, in PIE multi-world they fire for every world
+	if (IsDifferentGameWorld(InWorld))
+	{
+		return;
+	}
+
+	//Make sure we dont commence this operation when the engine tears down
+	if (FAsyncSaveHelpers::ShouldCancelSaveTask(this))
+	{
+		return;
+	}
+
+	//World Partition Logic
+	if (AutoSaveLoadWorldPartition())
+	{
+		if (bIsLoading)
+		{
+			WorldPartitionLoadLevel(InLevel);
+		}
+		else
+		{
+			WorldPartitionSaveLevel(InWorld, InLevel);
+		}
+	}
+	//Manual Streaming Logic
+	else if (AutoSaveLoadStreamingLevels())
+	{
+		if (bIsLoading)
+		{
+			StartStreamingLoad(InLevel);
+		}
+		else
+		{
+			StartStreamingSave(InLevel);
+		}
+	}
+}
+
+bool UEMSObject::ProcessSaveStreamingActors(const ULevel* InLoadedLevel)
+{
+	if (!InLoadedLevel)
+	{
+		return false;
+	}
+
+	//Check when a auto-loading process is still ongoing, otherwise it might write the unloaded data
+	if (FAsyncSaveHelpers::IsStreamAutoLoadActive(InLoadedLevel))
+	{
+		FAsyncSaveHelpers::DestroyStreamAutoLoadTask(InLoadedLevel);
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("Skipped saving partially loaded streaming level to prevent invalid data."));
+		return false; 
+	}
+
+	TArray<FActorSaveData> InActors;
+	InActors.Reserve(InLoadedLevel->Actors.Num());
+
+	/*
+	Level Blueprints are stored by level name, not as placed Actors.
+	Captured here so their data stays as fresh as the Actor data of the same level.
+	*/
+	AActor* ScriptActor = InLoadedLevel->GetLevelScriptActor();
+	const bool bHasScript = IsValidForSaving(ScriptActor);
+	if (bHasScript)
+	{
+		SerializeActorStructProperties(ScriptActor);
+
+		//Parsing runs the normal save path including ActorPreSave, so keep it out of the lock
+		const FLevelScriptSaveData ScriptData = ParseLevelScriptForSaving(ScriptActor);
+
+		{
+			FScopeLock Lock(&SaveActorsScope);
+			MultiLevelStreamData.AddScript(ScriptData);
+		}
+
+		//Same as below, the tag would otherwise skip the script when the level is streamed back in
+		ScriptActor->Tags.Remove(EMS::HasLoadedTag);
+	}
+
+	//Collect placed Actors from level. They don't need to be valid anymore when saving, the data is parsed here
+	for (AActor* Actor : InLoadedLevel->Actors)
+	{
+		if (Actor != ScriptActor && IsValidForSaving(Actor) && IsPlaced(Actor))
+		{
+			SerializeActorStructProperties(Actor);
+
+			const FActorSaveData ActorArray = ParseLevelActorForSaving(Actor, EActorType::AT_Placed);
+			InActors.Add(ActorArray);
+
+			//This will prevent false pruning of Actors, for some reason Tags are kept when the Actor is streamed out
+			Actor->Tags.Remove(EMS::HasLoadedTag);
+		}
+	}
+
+	//We need to proceed, even if we only have Destroyed Actors
+	if (!InActors.IsEmpty() || bHasScript || !DestroyedActors.IsEmpty())
+	{
+		//Add to global array, that will be processed async in SaveLevelActors
+		StreamingActors.Append(MoveTemp(InActors));
+		return true;
+	}
+
+	return false;
+}
+
+void UEMSObject::TryAccumulatedStreamingSave()
+{
+	if (!GetWorld())
+	{
+		return;
+	}
+
+	GetTimerManager().SetTimerForNextTick([this]()
+	{
+		//Save-context invalidation can cancel a queued streaming save before this callback executes.
+		if (!bSaveStreaming)
+		{
+			return;
+		}
+
+		bool bCanProcess = false;
+
+		//World Partition
+		if (AutoSaveLoadWorldPartition())
+		{
+			//Init check, can't save at all before init  
+			if (!bInitWorldPartitionLoadComplete)
+			{
+				bSaveStreaming = false;
+				return;
+			}
+
+			bCanProcess = CanProcessWorldPartition();
+		}
+		//Manual Streaming
+		else
+		{
+			//Make sure we wait a bit for manual streaming
+			const float Elapsed = GetWorld()->GetTimeSeconds() - StreamingSaveRequestTime;
+			bCanProcess = CanProcessStreaming() && (Elapsed >= UEMSPluginSettings::Get()->StreamingSaveThreshold);
+		}
+
+		//Proceed with saving
+		if (bCanProcess)
+		{
+			UEMSAsyncSaveGame::AutoSaveLevelActors(this);
+			bSaveStreaming = false;
+		}
+		else
+		{
+			TryAccumulatedStreamingSave();
+		}
+	});
+}
+
+void UEMSObject::StartStreamingSave(const ULevel* InLoadedLevel)
+{
+	//Parse the streaming level and proceed with accumulated save
+	if (ProcessSaveStreamingActors(InLoadedLevel))
+	{
+		if (!bSaveStreaming)
+		{
+			TryAccumulatedStreamingSave();
+			bSaveStreaming = true;
+		}
+
+		StreamingSaveRequestTime = GetWorld()->GetTimeSeconds();
+	}
+}
+
+void UEMSObject::StartStreamingLoad(const ULevel* InLoadedLevel)
+{
+	//We loaded at least once
+	if (bLoadFromMemory)
+	{
+		UEMSAsyncStream::InitStreamingLoadTask(this, InLoadedLevel);
+	}
 }
 
 /**
 World Partition
 **/
 
-void UEMSObject::RemoveWorldPartitionStreamDelegates()
+void UEMSObject::WorldPartitionLoadLevel(const ULevel* InLoadedLevel)
 {
-	FLevelStreamingDelegates::OnLevelStreamingStateChanged.RemoveAll(this);
-	FLevelStreamingDelegates::OnLevelBeginMakingInvisible.RemoveAll(this);
-}
-
-void UEMSObject::OnLevelStreamingStateChanged(UWorld* InWorld, const ULevelStreaming* InStreamingLevel, ULevel* InLevelIfLoaded, ELevelStreamingState PreviousState, ELevelStreamingState NewState)
-{
-	if (!InWorld || !InLevelIfLoaded)
+	//Optimized loading of placed Actors only after full initialization
+	if (AlwaysAutoLoadWorldPartition())
 	{
+		StartStreamingLoad(InLoadedLevel);
 		return;
 	}
 
-	if (NewState == ELevelStreamingState::LoadedVisible && PreviousState == ELevelStreamingState::MakingVisible)
+	//Skip initial loading and wait until the game was manually loaded
+	if (!bInitWorldPartitionLoadComplete)
 	{
-		//Optimized loading of placed Actors only
-		if (AlwaysAutoLoadWorldPartition())
-		{	
-			UEMSAsyncStream::InitStreamingLoadTask(this, InLevelIfLoaded);
+		if (SkipInitialWorldPartitionLoad())
+		{
 			return;
 		}
-		
-		//Skip initial loading and wait until the game was manually loaded
-		if (!bInitWorldPartitionLoad)
-		{
-			if (SkipInitialWorldPartitionLoad())
-			{
-				return;
-			}
 
-			//New cell streamed in, unable to process all Actors. Edge case. 
-			if (IsInitialWorldPartitionLoading())
-			{
-				UE_LOG(LogEasyMultiSave, Warning, 
-					TEXT("Level streamed in during initial World Partition load. Unable to parse all Actors. You might lock Player movement."));
-				return;
-			}
-		}
-
-		//Initial load will happen in a conventional way
-		if (!bLoadPartition)
+		//New cell streamed in, unable to process all Actors. Edge case. 
+		if (IsInitialWorldPartitionLoading())
 		{
-			TryInitWorldPartition();
-			bLoadPartition = true;
+			UE_LOG(LogEasyMultiSave, Warning,
+				TEXT("Level streamed in during initial World Partition load. Unable to parse all Actors. You might lock Player movement."));
+			return;
 		}
+	}
+
+	//Initial load will happen in a conventional way
+	if (!bTryInitWorldPartitionLoad)
+	{
+		TryInitWorldPartition();
+		bTryInitWorldPartitionLoad = true;
 	}
 }
 
@@ -2111,7 +2575,7 @@ void UEMSObject::PollInitWorldPartition()
 		if (WorldPartitionInitTimer >= CheckTime)
 		{
 			UEMSAsyncLoadGame::AutoLoadLevelActors(this);
-			bLoadPartition = false;
+			bTryInitWorldPartitionLoad = false;
 			return;
 		}
 	}
@@ -2123,33 +2587,16 @@ void UEMSObject::PollInitWorldPartition()
 	TryInitWorldPartition();
 }
 
-void UEMSObject::LoadStreamingActor(AActor* Actor, const FActorSaveData& ActorData)
+void UEMSObject::WorldPartitionSaveLevel(const UWorld* InWorld, const ULevel* InLoadedLevel)
 {
-	FScopeLock Lock(&LoadActorScope);
-
-	if (!IsInGameThread())
+	//Block on init
+	if (FStreamHelpers::IsWorldPartitionInit(InWorld))
 	{
-		AsyncTask(ENamedThreads::GameThread, [this, Actor, ActorData]()
-		{
-			ProcessLevelActor(Actor, ActorData);
-		});
-	}
-	else
-	{
-		ProcessLevelActor(Actor, ActorData);
-	}
-}
-
-void UEMSObject::OnLevelBeginMakingInvisible(UWorld* InWorld, const ULevelStreaming* InStreamingLevel, ULevel* InLoadedLevel)
-{
-	if (!InWorld || !InLoadedLevel || FStreamHelpers::IsWorldPartitionInit(InWorld))
-	{
-		//Block on init
 		return;
 	}
 
 	//We need to load at least once before we can auto-save in any way
-	if (!bInitWorldPartitionLoad)
+	if (!bInitWorldPartitionLoadComplete)
 	{
 		//Destroy load task to prevent it getting stuck 
 		if (IsInitialWorldPartitionLoading())
@@ -2162,66 +2609,5 @@ void UEMSObject::OnLevelBeginMakingInvisible(UWorld* InWorld, const ULevelStream
 		return;
 	}
 
-	//Check when a auto-loading process is still ongoing, otherwise it might write the unloaded data
-	if (FAsyncSaveHelpers::IsStreamAutoLoadActive(InLoadedLevel))
-	{
-		FAsyncSaveHelpers::DestroyStreamAutoLoadTask(InLoadedLevel);
-		UE_LOG(LogEasyMultiSave, Warning, TEXT("Skipped saving partially loaded streaming level to prevent invalid data."));
-		return;
-	}
-
-	TArray<FActorSaveData> InActors;
-	InActors.Reserve(InLoadedLevel->Actors.Num());
-
-	//Collect placed Actors from level. They don't need to be valid anymore when saving, the data is parsed here
-	for (AActor* Actor : InLoadedLevel->Actors)
-	{
-		if (IsValidForSaving(Actor) && IsPlaced(Actor))
-		{
-			SerializeActorStructProperties(Actor);
-
-			const FActorSaveData ActorArray = ParseLevelActorForSaving(Actor, EActorType::AT_Placed);
-			InActors.Add(ActorArray);
-
-			//This will prevent false pruning of Actors, for some reason Tags are kept when the Actor is streamed out
-			Actor->Tags.Remove(EMS::HasLoadedTag);
-		}
-	}
-
-	//We need to proceed, even if we only have Destroyed Actors
-	if (!EMS::ArrayEmpty(InActors) || !EMS::ArrayEmpty(DestroyedActors))
-	{
-		WorldPartitionActors.Append(InActors);
-
-		if (!bSavePartition)
-		{
-			TrySaveWorldPartition();
-			bSavePartition = true;
-		}
-	}
-}
-
-void UEMSObject::TrySaveWorldPartition()
-{
-	GetTimerManager().SetTimerForNextTick(this, &UEMSObject::AccumulatedSaveWorldPartition);
-}
-
-void UEMSObject::AccumulatedSaveWorldPartition()
-{
-	//Otherwise this could lead to an infinite loop when switching levels
-	if (!bInitWorldPartitionLoad)
-	{
-		return;
-	}
-
-	//Wait for streaming and loading
-	if (CanProcessWorldPartition())
-	{
-		UEMSAsyncSaveGame::AutoSaveLevelActors(this);
-		bSavePartition = false;
-	}
-	else
-	{
-		TrySaveWorldPartition();
-	}
+	StartStreamingSave(InLoadedLevel);
 }

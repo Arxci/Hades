@@ -1,6 +1,9 @@
 #include "Widgets/InventoryItemWidget.h"
 
+#include "CommonInputSubsystem.h"
+#include "CommonInputTypeEnum.h"
 #include "Components/Image.h"
+#include "Components/OverlaySlot.h"
 #include "Components/TextBlock.h"
 #include "InputCoreTypes.h"
 
@@ -18,6 +21,7 @@ void UInventoryItemWidget::NativeConstruct()
 	{
 		Interaction->OnHeldItemChanged.AddUniqueDynamic(this, &ThisClass::HandleHeldItemChanged);
 		Interaction->OnHoveredItemChanged.AddUniqueDynamic(this, &ThisClass::HandleHoveredItemChanged);
+		Interaction->OnSelectedItemChanged.AddUniqueDynamic(this, &ThisClass::HandleSelectedItemChanged);
 	}
 	Refresh();
 	RefreshInteraction();
@@ -29,6 +33,7 @@ void UInventoryItemWidget::NativeDestruct()
 	{
 		Interaction->OnHeldItemChanged.RemoveDynamic(this, &ThisClass::HandleHeldItemChanged);
 		Interaction->OnHoveredItemChanged.RemoveDynamic(this, &ThisClass::HandleHoveredItemChanged);
+		Interaction->OnSelectedItemChanged.RemoveDynamic(this, &ThisClass::HandleSelectedItemChanged);
 	}
 	InventoryWidgets::CancelLoad(IconHandle);
 	ShownDefinition.Reset();
@@ -51,6 +56,15 @@ void UInventoryItemWidget::SetCellLayout(float InCellSize, bool bInRotated)
 	CellSize = InCellSize;
 	bRotated = bInRotated;
 	ApplyCellLayout();
+}
+
+void UInventoryItemWidget::ShowHeldItem(float InCellSize)
+{
+	const UInventoryUISubsystem* Interaction = GetInteraction();
+	bDragVisual = true;
+	SetVisibility(ESlateVisibility::HitTestInvisible);
+	SetCellLayout(InCellSize, Interaction && Interaction->IsHeldRotated());
+	SetItem(Interaction ? Interaction->GetHeldItem() : FInventoryItemHandle());
 }
 
 const UInventoryItemDefinition* UInventoryItemWidget::GetDefinition() const
@@ -92,6 +106,7 @@ void UInventoryItemWidget::Refresh()
 		DetailsTooltip->SetItem(Item);
 	}
 
+	NativeOnItemChanged();
 	OnItemChanged();
 }
 
@@ -104,8 +119,17 @@ void UInventoryItemWidget::ApplyCellLayout()
 	}
 
 	// Laid out unturned and turned around its center, so it covers the item's turned cells.
-	Icon->SetDesiredSizeOverride(FVector2D(Definition->Size) * CellSize);
+	const FVector2D Unturned = FVector2D(Definition->Size) * CellSize;
+	Icon->SetDesiredSizeOverride(Unturned);
 	Icon->SetRenderTransformAngle(bRotated ? 90.0f : 0.0f);
+
+	// The Overlay has the turned size and would squeeze the unturned icon into it, so the icon may hang over its edges.
+	if (UOverlaySlot* IconSlot = Cast<UOverlaySlot>(Icon->Slot))
+	{
+		const FVector2D Turned = bRotated ? FVector2D(Unturned.Y, Unturned.X) : Unturned;
+		const FVector2f Overhang = FVector2f(Turned - Unturned) * 0.5f;
+		IconSlot->SetPadding(FMargin(Overhang.X, Overhang.Y));
+	}
 }
 
 // Held and hovered
@@ -130,6 +154,11 @@ void UInventoryItemWidget::HandleHoveredItemChanged(FInventoryItemHandle Hovered
 	RefreshInteraction();
 }
 
+void UInventoryItemWidget::HandleSelectedItemChanged(FInventoryItemHandle SelectedItem)
+{
+	RefreshInteraction();
+}
+
 void UInventoryItemWidget::RefreshInteraction()
 {
 	// A drag visual stands in for the held item, so it is never held or hovered itself.
@@ -142,11 +171,19 @@ void UInventoryItemWidget::RefreshInteraction()
 		OnHeldChanged(bHeld);
 	}
 
-	const bool bNowHovered = Interaction && Interaction->GetHoveredItem() == Item;
+	// While something is held, its preview shows where it goes, and a drag sends no hover events to keep this up to date.
+	const bool bNowHovered = Interaction && !Interaction->IsHolding() && Interaction->GetHoveredItem() == Item;
 	if (bNowHovered != bHovered)
 	{
 		bHovered = bNowHovered;
 		OnHoveredChanged(bHovered);
+	}
+
+	const bool bNowSelected = Interaction && Interaction->GetSelectedItem() == Item;
+	if (bNowSelected != bSelected)
+	{
+		bSelected = bNowSelected;
+		OnSelectedChanged(bSelected);
 	}
 }
 
@@ -176,7 +213,8 @@ FReply UInventoryItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
 
 FReply UInventoryItemWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
-	// A press that turned into a drag ends on the drop target instead, so this is a click.
+	// A press that turned into a drag ends on the drop target instead, so this is a click. It counts even when the press was taken
+	// by a menu over the item and closed it, so a click on another item while a menu is open opens that item's menu.
 	if (!bDragVisual && InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
 	{
 		const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
@@ -218,8 +256,13 @@ void UInventoryItemWidget::NativeOnMouseLeave(const FPointerEvent& InMouseEvent)
 {
 	Super::NativeOnMouseLeave(InMouseEvent);
 
+	// Only the mouse moving off ends the hover. A menu opening over the item doesn't, and on a gamepad the focused cell decides,
+	// not the hidden cursor Common UI moves along with focus.
+	const bool bMovedOff = !GetCachedGeometry().IsUnderLocation(InMouseEvent.GetScreenSpacePosition());
+	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
+	const bool bGamepad = Input && Input->GetCurrentInputType() == ECommonInputType::Gamepad;
 	UInventoryUISubsystem* Interaction = GetInteraction();
-	if (!bDragVisual && Interaction && Interaction->GetHoveredItem() == Item)
+	if (!bDragVisual && bMovedOff && !bGamepad && Interaction && Interaction->GetHoveredItem() == Item)
 	{
 		Interaction->SetHoveredItem(FInventoryItemHandle());
 	}
@@ -228,27 +271,30 @@ void UInventoryItemWidget::NativeOnMouseLeave(const FPointerEvent& InMouseEvent)
 void UInventoryItemWidget::NativeOnDragDetected(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent, UDragDropOperation*& OutOperation)
 {
 	// Shift drags half the stack.
-	UInventoryUISubsystem* Interaction = GetInteraction();
-	const int32 Count = InMouseEvent.IsShiftDown() ? FMath::Max(1, GetCount() / 2) : 0;
-	if (!Interaction || !Interaction->BeginHold(Item, Count))
-	{
-		return;
-	}
+	OutOperation = BeginDrag(InMouseEvent.IsShiftDown() ? FMath::Max(1, GetCount() / 2) : 0);
+}
 
-	UInventoryItemWidget* Visual = CreateWidget<UInventoryItemWidget>(GetOwningPlayer(), DragVisualClass ? DragVisualClass.Get() : GetClass());
-	if (!Visual)
+UInventoryDragDropOperation* UInventoryItemWidget::BeginDrag(int32 Count)
+{
+	UInventoryUISubsystem* Interaction = GetInteraction();
+	if (bDragVisual || !Interaction || !Interaction->BeginHold(Item, Count))
 	{
-		Interaction->CancelHold();
-		return;
+		return nullptr;
 	}
-	Visual->bDragVisual = true;
-	Visual->SetVisibility(ESlateVisibility::HitTestInvisible);
-	Visual->SetCellLayout(CellSize > 0.0f ? CellSize : DragCellSize, Interaction->IsHeldRotated());
-	Visual->SetItem(Item);
 
 	UInventoryDragDropOperation* Operation = NewObject<UInventoryDragDropOperation>();
 	Operation->Interaction = Interaction;
-	Operation->DefaultDragVisual = Visual;
 	Operation->Pivot = EDragPivot::CenterCenter;
-	OutOperation = Operation;
+
+	// Grids draw a snapped held item themselves.
+	if (!Interaction->bSnapHeldItem)
+	{
+		UInventoryItemWidget* Visual = CreateWidget<UInventoryItemWidget>(GetOwningPlayer(), DragVisualClass ? DragVisualClass.Get() : GetClass());
+		if (Visual)
+		{
+			Visual->ShowHeldItem(CellSize > 0.0f ? CellSize : DragCellSize);
+			Operation->DefaultDragVisual = Visual;
+		}
+	}
+	return Operation;
 }

@@ -81,6 +81,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Rules")
 	FInventoryItemQuery Filter;
 
+	/** The inventory UI shows these items but can't pick them up or put anything here. Code still can, as with key items that come and go by themselves. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Rules", meta = (DisplayName = "Read Only In UI"))
+	bool bReadOnlyInUI = false;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Tags")
 	FGameplayTagContainer Tags;
 

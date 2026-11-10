@@ -11,8 +11,8 @@ public class EasyMultiSave : ModuleRules
         PrecompileForTargets = PrecompileTargetsType.Any;
 
         //Test noPCH
-        //PCHUsage = PCHUsageMode.NoPCHs; 
-        //UndefinedIdentifierWarningLevel = WarningLevel.Error;
+		//PCHUsage = PCHUsageMode.NoPCHs;
+        //CppCompileWarningSettings.UndefinedIdentifierWarningLevel = WarningLevel.Error;
 
         //bAllowConfidentialPlatformDefines = true;
 
@@ -22,12 +22,14 @@ public class EasyMultiSave : ModuleRules
             Path.Combine(ModuleDirectory, "../EasyMultiSave/Common/Public"),
             Path.Combine(ModuleDirectory, "../EasyMultiSave/Async/Public"),
             Path.Combine(ModuleDirectory, "../EasyMultiSave/Data/Public"),
+            Path.Combine(ModuleDirectory, "../EasyMultiSave/Debug/Public"),
             Path.Combine(ModuleDirectory, "../EasyMultiSave/Interface/Public"),
         });
 
         PublicDependencyModuleNames.AddRange(new string[]
 		{
 			"Core",
+            "DeveloperSettings",
 		});
 				
 		PrivateDependencyModuleNames.AddRange(new string[]

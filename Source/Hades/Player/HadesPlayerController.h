@@ -10,6 +10,7 @@ class UCommonActivatableWidget;
 class UInputMappingContext;
 class UInventoryComponent;
 class UHadesWorldMarkerManagerComponent;
+class UPostProcessComponent;
 
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FHadesMessageSignature, const FText&, Message);
@@ -32,7 +33,7 @@ public:
 	/** Show Message on the controller of a player's pawn. Does nothing for other actors. */
 	static void ShowMessageTo(const AActor* PlayerPawn, const FText& Message);
 
-	/** The game stays paused while anything has asked for it, such as an open inventory. */
+	/** The game stays paused, with the HUD hidden, while anything has asked for it, such as an open inventory. */
 	void AddPauseRequest(const UObject* Requester);
 	void RemovePauseRequest(const UObject* Requester);
 
@@ -54,6 +55,10 @@ protected:
 	/** Pushed onto the Game layer for the local player. Place a World Marker Layer in it to draw world markers. */
 	UPROPERTY(EditDefaultsOnly, Category = "UI")
 	TSoftClassPtr<UCommonActivatableWidget> HUDLayoutClass;
+
+	/** On while a menu stops the world, which it greys out as Requiem does. Change its settings for another look. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI")
+	TObjectPtr<UPostProcessComponent> PausedPostProcess;
 
 	/** What every item box in the game opens, so it is one storage. Give it a container tagged Container.ItemBox. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Inventory")

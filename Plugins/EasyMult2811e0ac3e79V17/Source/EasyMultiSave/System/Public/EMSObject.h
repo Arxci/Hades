@@ -21,6 +21,7 @@ class UWorld;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FEmsLoadPlayerComplete, const APlayerController*, LoadedPlayer);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FEmsLoadLevelComplete, const TArray<TSoftObjectPtr<AActor>>&, LoadedActors);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FEmsSaveActorsComplete, ESaveGameMode, Mode, bool, bSuccess);
 
 UCLASS(BlueprintType, meta = (DisplayName = "Easy Multi Save", Keywords = "Save, EMS, EasyMultiSave, EasySave"))
 class EASYMULTISAVE_API UEMSObject : public UEMSObjectBase
@@ -34,30 +35,39 @@ protected:
 
 public:
 
-	UPROPERTY(BlueprintAssignable, Category = "Easy Multi Save | Delegates")
+	UPROPERTY(BlueprintAssignable, Category = "Easy Multi Save | Delegates", meta = (DisplayName = "On Player Actors Loaded"))
 	FEmsLoadPlayerComplete OnPlayerLoaded;
 
-	UPROPERTY(BlueprintAssignable, Category = "Easy Multi Save | Delegates")
+	UPROPERTY(BlueprintAssignable, Category = "Easy Multi Save | Delegates", meta = (DisplayName = "On Persistent Level Loaded"))
 	FEmsLoadLevelComplete OnLevelLoaded;
 
-	UPROPERTY(BlueprintAssignable, Category = "Easy Multi Save | Delegates")
+	//Previously only covered world partition, now covering automatic streaming load as well
+	UPROPERTY(BlueprintAssignable, Category = "Easy Multi Save | Delegates", meta = (DisplayName = "On Streaming Level Loaded"))
 	FEmsLoadLevelComplete OnPartitionLoaded;
+
+	//Fires when a Save Game Actors node completes, successful or not. Automatic streaming saves are excluded.
+	UPROPERTY(BlueprintAssignable, Category = "Easy Multi Save | Delegates", meta = (DisplayName = "On Game Actors Saved"))
+	FEmsSaveActorsComplete OnActorsSaved;
 
 private:
 
-	FCriticalSection SaveActorsScope;
-	FCriticalSection LoadActorScope;
+	mutable FCriticalSection SaveActorsScope;
+	mutable FCriticalSection RawObjectScope;
 
 	FString CachedPersistentLevelName;
 
-	uint8 bLoadFromMemory : 1;
-	uint8 bInitWorldPartitionLoad : 1;
-	uint8 bLoadPartition : 1;
-	uint8 bSavePartition : 1;
+	std::atomic<bool> bLoadFromMemory = false;
+
+	uint8 bInitWorldPartitionLoadComplete = false;
+	uint8 bTryInitWorldPartitionLoad = false;
+
+	uint8 bSaveStreaming : 1;
+
 	uint8 bCachedIsWorldPartition : 1;
 	uint8 bCachedHasStreamingLevels : 1;
-
+	
 	float WorldPartitionInitTimer;
+	float StreamingSaveRequestTime;
 
 	FDelegateHandle ActorDestroyedHandle;
 
@@ -97,7 +107,7 @@ private:
 private:
 
 	UPROPERTY(Transient)
-	TSet<FActorSaveData> WorldPartitionActors;
+	TSet<FActorSaveData> StreamingActors;
 
 	UPROPERTY(Transient)
 	TSet<FActorSaveData> DestroyedActors;
@@ -137,13 +147,14 @@ public:
 
 	void PrepareLoadAndSaveActors(const uint32 Data, const EAsyncCheckType FunctionType, const EPrepareType PrepareType);
 
-	bool SavePlayerActors(const APlayerController* Controller, const FString& FileName);
+	bool SavePlayerActors(const APlayerController* Controller, const FString& FileName, const bool bCustomFile = false);
 	void LoadPlayerActors(APlayerController* Controller);
 
-	bool SaveLevelActors(const bool bMemoryOnly);
+	bool SaveLevelActors(const bool bMemoryOnly, const FLevelSnapshot& Snapshot);
 	void LoadLevelActors(UEMSAsyncLoadGame* LoadTask);
 	void LoadGameMode();
 	void LoadLevelScripts();
+	bool GetStreamingLevelScriptData(const FName ScriptName, FLevelScriptSaveData& OutData) const;
 
 	void FinishLoadingLevel(const bool bHasLoadedFile);
 
@@ -163,10 +174,10 @@ public:
 public:
 
 	void SaveActorToBinary(const AActor* Actor, FGameObjectSaveData& OutData) const;
-	void LoadActorFromBinary(AActor* Actor, const FGameObjectSaveData& InData) const;
+	void LoadActorFromBinary(AActor* Actor, const FGameObjectSaveData& InData, const bool bDeferredSpawn = false) const;
 
 	void SpawnLevelActor(const FActorSaveData& ActorArray);
-	void ProcessLevelActor(AActor* Actor, const FActorSaveData& ActorArray, const bool bSetupStructs = true);
+	void ProcessLevelActor(AActor* Actor, const FActorSaveData& ActorArray, const bool bSetupStructs, const bool bDeferredSpawn = false);
 
 	void PruneLevelActors();
 
@@ -182,14 +193,14 @@ private:
 
 	bool UnpackActorArchive(FMemoryReader& FromBinary, const EDataLoadType LoadType) override;
 	bool UnpackLevelArchive(FMemoryReader& FromBinary);
-	bool UnpackPlayerArchive(FMemoryReader& FromBinary);
+	bool UnpackPlayerArchive(FMemoryReader& FromBinary, const bool bCustomFile);
 	bool UnpackLevel(const FLevelArchive& LevelArchive);
 	void UnpackPlayer(const FPlayerArchive& PlayerArchive);
 
 	void PrepareLevelActors(const FActorInitContext& Init);
 	void PreparePlayerActors(const FActorInitContext& Init);
 	void AddActorToList(const FActorInitContext& Init);
-	void InitListActor(const FActorInitContext& Init);
+	void InitGameActor(const FActorInitContext& Init);
 	
 	FGameObjectSaveData ParseGameModeObjectForSaving(const AActor* Actor) const;
 	FLevelScriptSaveData ParseLevelScriptForSaving(const AActor* Actor) const;
@@ -229,24 +240,28 @@ private:
 
 	void OnPreWorldInit(UWorld* World, const UWorld::InitializationValues IVS);
 	void OnWorldCleanup(UWorld* World, bool bSessionEnded, bool bCleanupResources);
-	void RemoveWorldPartitionStreamDelegates();
+
+	void OnLevelStreamingStateChanged(UWorld* InWorld, const ULevelStreaming* InStreamingLevel, ULevel* InLevelIfLoaded, ELevelStreamingState PreviousState, ELevelStreamingState NewState);
+	void OnLevelBeginMakingInvisible(UWorld* InWorld, const ULevelStreaming* InStreamingLevel, ULevel* InLoadedLevel);
+	void RemoveWorldStreamDelegates();
+
+/** General Streaming Functions  */
+
+	void HandleStreamingPersistence(const UWorld* InWorld, const ULevel* InLevel, const bool bIsLoading);
+	bool ProcessSaveStreamingActors(const ULevel* InLoadedLevel);
+	void StartStreamingSave(const ULevel* InLoadedLevel);
+	void StartStreamingLoad(const ULevel* InLoadedLevel);
+	void TryAccumulatedStreamingSave();
 
 /** World Partition Functions  */
 
 private:
 
-	void OnLevelStreamingStateChanged(UWorld* InWorld, const ULevelStreaming* InStreamingLevel, ULevel* InLevelIfLoaded, ELevelStreamingState PreviousState, ELevelStreamingState NewState);
-	void OnLevelBeginMakingInvisible(UWorld* InWorld, const ULevelStreaming* InStreamingLevel, ULevel* InLoadedLevel);
+	void WorldPartitionLoadLevel(const ULevel* InLoadedLevel);
+	void WorldPartitionSaveLevel(const UWorld* InWorld, const ULevel* InLoadedLevel);
 
 	void TryInitWorldPartition();
 	void PollInitWorldPartition();
-
-	void TrySaveWorldPartition();
-	void AccumulatedSaveWorldPartition();
-
-public:
-
-	void LoadStreamingActor(AActor* Actor, const FActorSaveData& ActorData);
 
 /** Delegate Functions  */
 
@@ -264,6 +279,11 @@ public:
 		RealLoadedActors.Empty();
 	}
 
+	inline void BroadcastOnActorsSaved(const ESaveGameMode InMode, const bool bSuccess)
+	{
+		OnActorsSaved.Broadcast(InMode, bSuccess);
+	}
+
 	inline void AllocateRealLoadedActors(const int32 AllocNum)
 	{
 		RealLoadedActors.Reserve(AllocNum);
@@ -271,32 +291,20 @@ public:
 
 	inline bool HasActuallyLoadedActors()
 	{
-		return !EMS::ArrayEmpty(RealLoadedActors);
+		return !RealLoadedActors.IsEmpty();
 	}
 
 /** Clear Data Functions  */
 
 public:
 
-	inline void ClearMultiLevelSave()
-	{
-		ClearSavedLevelActors();
-		ClearStreamingData();
-		ClearMultiSaveLevels();
-		LevelArchiveList.Empty();
-		PlayerStackData = FPlayerStackArchive();
-		bLoadFromMemory = false;
-	}
+	void ClearMultiLevelSave();
+	void ClearWorldPartition();
+	void ClearUserData() override;
 
-	inline void ClearWorldPartition()
-	{
-		WorldPartitionActors.Empty();
-		bSavePartition = false;
-		bLoadPartition = false;
-		bInitWorldPartitionLoad = false;
-		bLoadFromMemory = false;
-		WorldPartitionInitTimer = 0.f;
-	}
+protected:
+
+	void ClearLoadFromMemory() override;
 
 private:
 
@@ -309,6 +317,12 @@ private:
 	{
 		ActorList.Empty();
 		ActorMap.Empty();
+		ClearRawObjectData();
+	}
+
+	inline void ClearRawObjectData()
+	{
+		FScopeLock Lock(&RawObjectScope);
 		RawObjectData.Empty();
 	}
 
@@ -317,8 +331,6 @@ private:
 		SavedActors.Empty();
 		SavedScripts.Empty();
 		SavedActorsPruned.Empty();
-
-		ClearDestroyedActors();
 	}
 
 	inline void ClearStreamingData()
@@ -326,9 +338,9 @@ private:
 		MultiLevelStreamData = FMultiLevelStreamingData();
 	}
 
-	inline void ClearWorldPartitionActors()
+	inline void ClearStreamingActors()
 	{
-		WorldPartitionActors.Empty();
+		StreamingActors.Empty();
 	}
 
 	inline void ClearDestroyedActors()
@@ -341,16 +353,6 @@ private:
 		RawObjectLevelActors.Empty();
 	}
 
-	inline void ClearUserData() override
-	{
-		Super::ClearUserData();
-
-		//When setting/deleting a Save User, we need to clear this
-		ClearMultiLevelSave();
-		ClearWorldPartition();
-		ClearRawObjectLevelActors();
-	}
-
 /** Actor Helpers  */
 
 public:
@@ -358,22 +360,26 @@ public:
 	FName GetLevelName();
 	void AssignLevelName(const UWorld* InWorld);
 	bool MatchesLevelName(const FName& InLevelName);
+
+	bool IsDifferentGameWorld(const UWorld* InWorld) const;
+	void RemoveActor(AActor* Actor);
+
 	static FName LevelScriptSaveName(const AActor* Actor);
 	static EActorType GetActorType(const AActor* Actor);
 	static FString GetActorLevelName(const AActor* Actor);
 	static FString GetFullActorName(const AActor* Actor);
+
 	static bool IsLoaded(const AActor* Actor);
 	static bool IsPlaced(const AActor* Actor);
 	static bool IsSkipSave(const AActor* Actor);
 	static bool IsSkipTransform(const AActor* Actor);
 	static bool IsLevelScript(const EActorType Type);
 	static bool IsLevelActor(const EActorType Type, const bool bIncludeScripts);
+	static bool IsRuntimeActor(const EActorType Type);
 	static bool HasSaveInterface(const AActor* Actor);
 	static bool HasComponentSaveInterface(const UActorComponent* Comp);
 
-protected:
-
-	void ClearLoadFromMemory() override;
+	FLevelSnapshot CaptureActorSnapshot(const bool bStreamingActorsOnly);
 
 /** Other Helper Functions  */
 
@@ -382,11 +388,6 @@ public:
 	inline static bool AutoDestroyActors()
 	{
 		return UEMSPluginSettings::Get()->bAutoDestroyActors;
-	}
-
-	inline static bool AdvancedSpawnCheck()
-	{
-		return UEMSPluginSettings::Get()->bAdvancedSpawnCheck;
 	}
 
 	inline bool IsValidActor(const AActor* Actor) const
@@ -404,23 +405,55 @@ public:
 		return IsValidActor(Actor) && !IsLoaded(Actor);
 	}
 
+	inline bool HasLevelData() const
+	{
+		return !SavedActors.IsEmpty()
+			|| !SavedScripts.IsEmpty()
+			|| SavedGameMode.HasData()
+			|| SavedGameState.HasData()
+			|| MultiLevelStreamData.HasData();
+	}
+
+/** Streaming Helpers  */
+
+public:
+
+	inline bool HasAnyLevelStreaming() const
+	{
+		return bCachedHasStreamingLevels || bCachedIsWorldPartition;
+	}
+
+	inline bool IsLevelStreaming() const
+	{
+		return FStreamHelpers::IsLevelStillStreaming(GetWorld());
+	}
+
+	inline bool CanProcessStreaming() const
+	{
+		return FStreamHelpers::CanProcessStreaming(GetWorld());
+	}
+
+	inline bool AutoSaveLoadStreamingLevels()
+	{
+		//The Multi-Level check mirrors AutoSaveLoadWorldPartition, required since the setting is enabled by default
+		return bCachedHasStreamingLevels
+			&& FSettingHelpers::IsContainingStreamMultiLevelSave()
+			&& UEMSPluginSettings::Get()->LevelStreamSaving != EAutoSaveStreamMethod::Disabled;
+	}
+
 	inline FMultiLevelStreamingData GetMultiLevelStreamData() const
 	{
+		FScopeLock Lock(&SaveActorsScope);
 		return MultiLevelStreamData;
 	}
 
-	inline bool HasStreamingLevels() const
+	inline void RestoreStreamingActors(const TArray<FActorSaveData>& InActors)
 	{
-		return bCachedHasStreamingLevels;
-	}
-
-	inline bool HasLevelData() const
-	{
-		return !EMS::ArrayEmpty(SavedActors) 
-			|| !EMS::ArrayEmpty(SavedScripts) 
-			|| !EMS::ArrayEmpty(SavedGameMode.Data)
-			|| !EMS::ArrayEmpty(SavedGameState.Data)
-			|| MultiLevelStreamData.HasData();
+		//Returns snapshot data to the pending set after a failed save as their are cleared on snapshot.
+		for (const FActorSaveData& ActorData : InActors)
+		{
+			StreamingActors.Add(ActorData);
+		}
 	}
 
 /** World Partition Helpers  */
@@ -439,12 +472,7 @@ public:
 
 	inline bool IsInitialWorldPartitionLoading() const
 	{
-		return !bInitWorldPartitionLoad && IsAsyncSaveOrLoadTaskActive(ESaveGameMode::MODE_Level, EAsyncCheckType::CT_Load, false);
-	}
-
-	inline bool IsLevelStreaming() const
-	{
-		return FStreamHelpers::IsLevelStillStreaming(GetWorld());
+		return !bInitWorldPartitionLoadComplete && IsAsyncTaskActiveWithPause(ESaveGameMode::MODE_Level, false);
 	}
 
 	inline static bool SkipInitialWorldPartitionLoad()
@@ -454,11 +482,11 @@ public:
 
 	inline bool AlwaysAutoLoadWorldPartition() const
 	{
-		return bInitWorldPartitionLoad && bLoadFromMemory;
+		return bInitWorldPartitionLoadComplete && bLoadFromMemory;
 	}
 
 	inline bool WorldPartitionLoadComplete() const
 	{
-		return bInitWorldPartitionLoad && !IsLevelStreaming() && !IsInitialWorldPartitionLoading();
+		return bInitWorldPartitionLoadComplete && !IsLevelStreaming() && !IsInitialWorldPartitionLoading();
 	}
 };

@@ -5,6 +5,8 @@
 #include "Hades/Camera/HadesPlayerCameraManager.h"
 #include "Hades/UI/WorldMarker/HadesWorldMarkerManagerComponent.h"
 
+#include "Components/PostProcessComponent.h"
+
 #include "CommonActivatableWidget.h"
 #include "CommonUIExtensions.h"
 
@@ -23,6 +25,14 @@ AHadesPlayerController::AHadesPlayerController()
 
 	WorldMarkerManager = CreateDefaultSubobject<UHadesWorldMarkerManagerComponent>(TEXT("WorldMarkerManager"));
 	ItemBoxInventory = CreateDefaultSubobject<UInventoryComponent>(TEXT("ItemBoxInventory"));
+
+	PausedPostProcess = CreateDefaultSubobject<UPostProcessComponent>(TEXT("PausedPostProcess"));
+	PausedPostProcess->SetupAttachment(RootComponent);
+	PausedPostProcess->bUnbound = true;
+	PausedPostProcess->bEnabled = false;
+	PausedPostProcess->Priority = 1000.0f;
+	PausedPostProcess->Settings.bOverride_ColorSaturation = true;
+	PausedPostProcess->Settings.ColorSaturation = FVector4(0.0, 0.0, 0.0, 1.0);
 }
 
 void AHadesPlayerController::ReceivedPlayer()
@@ -106,4 +116,11 @@ void AHadesPlayerController::UpdatePause()
 	{
 		SetPause(bWantsPause);
 	}
+
+	// Menus that stop the world cover the screen, so the HUD would only show through them.
+	if (UCommonActivatableWidget* Layout = HUDLayout.Get())
+	{
+		Layout->SetVisibility(bWantsPause ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
+	}
+	PausedPostProcess->bEnabled = bWantsPause;
 }

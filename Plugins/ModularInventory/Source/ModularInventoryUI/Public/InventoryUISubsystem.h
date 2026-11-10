@@ -37,6 +37,19 @@ public:
 	virtual void Deinitialize() override;
 	//~ End USubsystem Interface
 
+	// Style: set these once, such as when the inventory screen opens. All off is drag-and-drop with click-to-move.
+	/** A click or Accept on an item asks for its item menu instead of picking it up. Items are then picked up by dragging, or with Begin Hold from a Move button. */
+	UPROPERTY(BlueprintReadWrite, Category = "Inventory UI|Style")
+	bool bClickOpensItemMenu = false;
+
+	/** Swapping with another item picks that one up from where the held item was, instead of only trading places. Letting go of it finishes the swap. */
+	UPROPERTY(BlueprintReadWrite, Category = "Inventory UI|Style")
+	bool bSwapPicksUpOther = false;
+
+	/** Grids draw the held item on the cells it would land on instead of under the cursor. It stays on the last cells aimed at, and a mouse drag let go anywhere puts it there. */
+	UPROPERTY(BlueprintReadWrite, Category = "Inventory UI|Style")
+	bool bSnapHeldItem = false;
+
 	// Holding
 	/** Count 0 holds the whole stack. Items that can't split are always held whole. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
@@ -45,8 +58,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	void CancelHold();
 
+	/** Turns the held item, if Can Rotate Held. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	void RotateHeld();
+
+	/** Whether the held item can turn, and could still fit the grid it's over turned: the targeted one, or else the one it's in. */
+	UFUNCTION(BlueprintPure, Category = "Inventory UI")
+	bool CanRotateHeld() const;
 
 	/** Halves the held count. From one, goes back to the whole stack. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
@@ -72,11 +90,11 @@ public:
 	FIntPoint GetHeldSize() const;
 
 	// Placing
-	/** Puts the held item there: on a free spot, onto a stack it can join, or by swapping with the item there. */
+	/** Puts the held item there: on a free spot, onto a stack it can join, or by swapping with an item of its size there. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	bool PlaceHeld(FInventoryContainerHandle Container, const FInventoryPlacement& Placement);
 
-	/** What a click or Accept does: places the held item there, or picks up the item there. */
+	/** What a click or Accept does: places the held item, or picks up the item there or asks for its item menu. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	bool ActivatePlacement(FInventoryContainerHandle Container, const FInventoryPlacement& Placement);
 
@@ -100,12 +118,23 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory UI")
 	EInventoryDropAction GetTargetAction() const { return TargetAction; }
 
+	/** Where the held item would land at the target. In a grid: exactly on an item of its size there, or moved in from the edge so it fits. */
+	UFUNCTION(BlueprintPure, Category = "Inventory UI")
+	FInventoryPlacement GetLandingPlacement() const { return FitInGrid(TargetContainer, TargetPlacement); }
+
 	// Hover: the item under the cursor or gamepad focus, for details panels.
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	void SetHoveredItem(FInventoryItemHandle Item);
 
 	UFUNCTION(BlueprintPure, Category = "Inventory UI")
 	FInventoryItemHandle GetHoveredItem() const { return HoveredItem; }
+
+	// Selection: the item being acted on, such as the one whose item menu is open. Item widgets show it with On Selected Changed.
+	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
+	void SetSelectedItem(FInventoryItemHandle Item);
+
+	UFUNCTION(BlueprintPure, Category = "Inventory UI")
+	FInventoryItemHandle GetSelectedItem() const { return SelectedItem; }
 
 	// Item menus
 	/** Asks whoever shows item menus, usually the screen, to open one. Item widgets call it on right click; call it from your gamepad binding. */
@@ -123,7 +152,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory UI")
 	bool IsChoosingItem() const { return bChoosingItem; }
 
-	/** Drops the hold, the choosing, the target and the hover. Call it when an inventory screen closes. */
+	/** Drops the hold, the choosing, the target, the hover and the selection. Call it when an inventory screen closes. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	void ClearInteraction();
 
@@ -139,6 +168,9 @@ public:
 	FInventoryUIHoveredItemChangedSignature OnHoveredItemChanged;
 
 	UPROPERTY(BlueprintAssignable, Category = "Inventory UI")
+	FInventoryUIItemSignature OnSelectedItemChanged;
+
+	UPROPERTY(BlueprintAssignable, Category = "Inventory UI")
 	FInventoryUIItemSignature OnContextRequested;
 
 	/** The item picked after Begin Choosing Item. */
@@ -147,6 +179,7 @@ public:
 
 private:
 	FInventoryRegistry* GetRegistry() const;
+	FInventoryPlacement FitInGrid(FInventoryContainerHandle Container, const FInventoryPlacement& Placement) const;
 	EInventoryDropAction ResolvePlacement(FInventoryContainerHandle Container, const FInventoryPlacement& Placement, bool bApply);
 	void SetHeld(FInventoryItemHandle Item, int32 Count, bool bRotated);
 	void RefreshTarget();
@@ -161,6 +194,7 @@ private:
 	EInventoryDropAction TargetAction = EInventoryDropAction::None;
 
 	FInventoryItemHandle HoveredItem;
+	FInventoryItemHandle SelectedItem;
 
 	bool bChoosingItem = false;
 

@@ -5,22 +5,26 @@
 #include "EMSTypes.h"
 #include "EMSInfoSaveGame.h"
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "Misc/PackageName.h"
+#include "Engine/DeveloperSettings.h"
 #include "EMSPluginSettings.generated.h"
 
-UCLASS(config=Engine, defaultconfig)
-class EASYMULTISAVE_API UEMSPluginSettings : public UObject
+UCLASS(config=Engine, defaultconfig, meta = (DisplayName = "Plugin Settings"))
+class EASYMULTISAVE_API UEMSPluginSettings : public UDeveloperSettings
 {
 	GENERATED_BODY()
 
 public:
+
+	virtual FName GetCategoryName() const override { return TEXT("Easy Multi Save"); }
 
 	/**The default save game slot name, that is used if no name is set with 'Set Current Save Slot Name'.*/
 	UPROPERTY(config, EditAnywhere, Category = "General Settings", meta = (DisplayName = "Default Slot Name"))
 	FString DefaultSaveGameName = "MySaveGame";
 
 	/**The Blueprint class that you want to use for the slot info, usually does not need a custom class.*/
-	UPROPERTY(config, EditAnywhere, Category = "General Settings", meta = (MetaClass = "/Script/EasyMultiSave.EMSInfoSaveGame", DisplayName = "Slot Info Class"))
+	UPROPERTY(config, EditAnywhere, Category = "General Settings", 
+		meta = (MetaClass = "/Script/EasyMultiSave.EMSInfoSaveGame", DisplayName = "Slot Info Class"))
 	FSoftClassPath SlotInfoSaveGameClass;
 
 	/**The file system that is used depending on the platform.*/
@@ -50,10 +54,6 @@ public:
 	UPROPERTY(config, EditAnywhere, Category = "Actors", meta = (DisplayName = "Auto Destroy Actors"))
 	bool bAutoDestroyActors = true;
 
-	/**If enabled, the system runs a more expensive check for spawned Actors. This is useful if you spawn Actors at the beginning of a level and experience issues.*/
-	UPROPERTY(config, EditAnywhere, AdvancedDisplay, Category = "Actors", meta = (DisplayName = "Advanced Spawn Check"))
-	bool bAdvancedSpawnCheck = false;
-
 public:
 
 	/**If enabled, saving player and level actors is outsourced to a background thread.*/
@@ -65,14 +65,16 @@ public:
 	ELoadMethod LoadMethod = ELoadMethod::LM_Default;
 
 	/**Estimated Number of Actors to load in one batch when using Multi-Thread or Deferred Loading.*/
-	UPROPERTY(config, EditAnywhere, AdvancedDisplay, Category = "Save and Load", meta = (UIMin=1, ClampMin=1, DisplayName = "Load Batch Size", EditCondition = "LoadMethod != ELoadMethod::LM_Default"))
+	UPROPERTY(config, EditAnywhere, AdvancedDisplay, Category = "Save and Load", 
+		meta = (UIMin=1, ClampMin=1, DisplayName = "Load Batch Size", EditCondition = "LoadMethod != ELoadMethod::LM_Default"))
 	int DeferredLoadStackSize = 20;
 
 	/**
 	* How long the 'Wait For Save or Load Completed' and 'Load Game Actors' nodes are allowed to remain fixed in a state.
 	* The 'Save Game Actors' node will always complete in one or another way. 
 	*/
-	UPROPERTY(config, EditAnywhere, AdvancedDisplay, Category = "Save and Load", meta = (DisplayName = "Async Wait Delay"))
+	UPROPERTY(config, EditAnywhere, AdvancedDisplay, Category = "Save and Load", 
+		meta = (UIMin = 5, ClampMin = 5, DisplayName = "Async Wait Delay"))
 	float AsyncWaitDelay = 10.f;
 
 	/**
@@ -80,7 +82,8 @@ public:
 	* This should be enabled if you directly access Game Thread-only objects (Timers, Widgets, etc.) or rendering-related properties from the event.
 	* Enabling this adds some overhead to save time with no game performance impact.
 	*/
-	UPROPERTY(config, EditAnywhere, AdvancedDisplay, Category = "Save and Load", meta = (DisplayName = "Pre-Save On Game Thread", EditCondition = "bMultiThreadSaving == true"))
+	UPROPERTY(config, EditAnywhere, AdvancedDisplay, Category = "Save and Load", 
+		meta = (DisplayName = "Pre-Save On Game Thread", EditCondition = "bMultiThreadSaving == true"))
 	bool bPreSaveOnGameThread = false;
 
 public:
@@ -95,15 +98,35 @@ public:
 	* The level name from the slot is always the last saved level.
 	* 
 	* Multi-Level Saving modes are only partly compatible with each other:
-	*		Disabled <AND> Streaming
-	*		Basic    <AND> Full 
+	* Disabled <AND> Streaming
+	* Basic    <AND> Full 
 	*/
 	UPROPERTY(config, EditAnywhere, Category = "Persistence", meta = (DisplayName = "Multi-Level Saving"))
 	EMultiLevelSaveMethod MultiLevelSaving = EMultiLevelSaveMethod::ML_Disabled;
 
+public:
+
+	/**
+	* The method to use for automatic saving and loading of manually streamed levels and World Partition.
+	* Data is stored in memory and written to disk with 'Save Game Actors'.
+	* Multi-Level Saving must be set to Streaming or Full.
+	*/
+	UPROPERTY(config, EditAnywhere, Category = "Streaming",
+		meta = (DisplayName = "Streaming Saving", EditCondition = "MultiLevelSaving == EMultiLevelSaveMethod::ML_Stream || MultiLevelSaving == EMultiLevelSaveMethod::ML_Full"))
+	EAutoSaveStreamMethod LevelStreamSaving = EAutoSaveStreamMethod::Enabled;
+
+	/** 
+	* Minimum duration a streaming level must remain unloaded before the auto-save is triggered.
+	* This optimizes performance by batching save operations when multiple levels unload simultaneously.
+	* Avoid re-streaming these levels until this cooldown period has elapsed.
+	*/
+	UPROPERTY(config, EditAnywhere, AdvancedDisplay, Category = "Streaming", 
+		meta = (DisplayName = "Streaming Save Threshold", EditCondition = "(MultiLevelSaving == EMultiLevelSaveMethod::ML_Stream || MultiLevelSaving == EMultiLevelSaveMethod::ML_Full) && LevelStreamSaving != EAutoSaveStreamMethod::Disabled"))
+	float StreamingSaveThreshold = 0.5f;
+
 	/**
 	* Enables support for Runtime Level Instances and multiple Streaming Levels of the same type.
-	* Also enables support for Actors inside Level Instances that exist in Streaming Levels that are loaded and unloaded. 
+	* Also enables support for Actors inside Level Instances within Streaming Levels that are loaded and unloaded. 
 	* Has no effect for World Partition levels, as those handle Level Instances automatically.
 	* 
 	* Make sure to use 'Opitional Level Name Override' for dynamically spawned Level Instances.
@@ -111,32 +134,29 @@ public:
 	* 
 	* This setting is not backwards-compatible, as it generates different unique IDs for Actors.
 	*/
-	UPROPERTY(config, EditAnywhere, AdvancedDisplay, Category = "Persistence", meta = (DisplayName = "Allow Dynamic Streaming Levels", EditCondition = "MultiLevelSaving == EMultiLevelSaveMethod::ML_Stream || MultiLevelSaving == EMultiLevelSaveMethod::ML_Full"))
+	UPROPERTY(config, EditAnywhere, AdvancedDisplay, Category = "Streaming", 
+		meta = (DisplayName = "Allow Dynamic Streaming Levels", EditCondition = "MultiLevelSaving == EMultiLevelSaveMethod::ML_Stream || MultiLevelSaving == EMultiLevelSaveMethod::ML_Full"))
 
 	bool bDynamicLevelStreaming = false;
 
 public:
 
-	/**
-	* The method to use for automatic saving and loading of World Partition levels.
-	* Multi-Level Saving must be set to Streaming or Full.
-	*/
-	UPROPERTY(config, EditAnywhere, Category = "World Partition", meta = (DisplayName = "World Partition Saving", EditCondition = "MultiLevelSaving == EMultiLevelSaveMethod::ML_Stream || MultiLevelSaving == EMultiLevelSaveMethod::ML_Full"))
-	EWorldPartitionMethod WorldPartitionSaving = EWorldPartitionMethod::MemoryOnly;
-
 	/**The mode for initially loading World Partition levels.*/
-	UPROPERTY(config, EditAnywhere, Category = "World Partition", meta = (DisplayName = "World Partition Init Mode", EditCondition = "(MultiLevelSaving == EMultiLevelSaveMethod::ML_Stream || MultiLevelSaving == EMultiLevelSaveMethod::ML_Full) && WorldPartitionSaving != EWorldPartitionMethod::Disabled"))
+	UPROPERTY(config, EditAnywhere, Category = "World Partition", 
+		meta = (DisplayName = "World Partition Init Mode", EditCondition = "(MultiLevelSaving == EMultiLevelSaveMethod::ML_Stream || MultiLevelSaving == EMultiLevelSaveMethod::ML_Full) && LevelStreamSaving != EAutoSaveStreamMethod::Disabled"))
 	EWorldPartitionInit WorldPartitionInit = EWorldPartitionInit::Default;
 
 	/**
 	* Delay before the initial World Partition loading process can begin.
 	* During this time, the players position (transform) should be set, either manually or by loading Player Actors.
 	*/
-	UPROPERTY(config, EditAnywhere, AdvancedDisplay, Category = "World Partition", meta = (DisplayName = "World Partition Init Delay", EditCondition = "(MultiLevelSaving == EMultiLevelSaveMethod::ML_Stream || MultiLevelSaving == EMultiLevelSaveMethod::ML_Full) && WorldPartitionInit != EWorldPartitionInit::Skip && WorldPartitionSaving != EWorldPartitionMethod::Disabled"))
+	UPROPERTY(config, EditAnywhere, AdvancedDisplay, Category = "World Partition", 
+		meta = (DisplayName = "World Partition Init Delay", EditCondition = "(MultiLevelSaving == EMultiLevelSaveMethod::ML_Stream || MultiLevelSaving == EMultiLevelSaveMethod::ML_Full) && WorldPartitionInit != EWorldPartitionInit::Skip && LevelStreamSaving != EAutoSaveStreamMethod::Disabled"))
 	float WorldPartitionInitTime = 1.f;
 
 	/**The minimum time that level streaming must remain in a finished state until the initial World Partition load will start.*/
-	UPROPERTY(config, EditAnywhere, AdvancedDisplay, Category = "World Partition", meta = (DisplayName = "World Partition Init Threshold", EditCondition = "(MultiLevelSaving == EMultiLevelSaveMethod::ML_Stream || MultiLevelSaving == EMultiLevelSaveMethod::ML_Full) && WorldPartitionInit != EWorldPartitionInit::Skip && WorldPartitionSaving != EWorldPartitionMethod::Disabled"))
+	UPROPERTY(config, EditAnywhere, AdvancedDisplay, Category = "World Partition",
+		meta = (DisplayName = "World Partition Init Threshold", EditCondition = "(MultiLevelSaving == EMultiLevelSaveMethod::ML_Stream || MultiLevelSaving == EMultiLevelSaveMethod::ML_Full) && WorldPartitionInit != EWorldPartitionInit::Skip && LevelStreamSaving != EAutoSaveStreamMethod::Disabled"))
 	float WorldPartitionInitThreshold = 1.f;
 
 public:
@@ -171,13 +191,12 @@ public:
 	* To get the class path:
 	* 1. Right-click the Blueprint in Content Browser
 	* 2. Select "Copy Object Path"
-	* 3. Paste - it will look like: Blueprint'/Game/Path/MyActor.MyActor'
-	* 4. (Optional) Convert to generated class format: /Game/Path/MyActor.MyActor_C
-	*    If missing, will automatically add the "_C" suffix.
+	* 3. Paste - it will look like: /Game/Path/MyActor.MyActor
+	* 4. Convert to generated class format: /Game/Path/MyActor.MyActor_C
 	*
 	* Example:
 	* Key:   /Game/OldFolder/Blueprints/EMS_OldProjectile.EMS_OldProjectile_C
-	* Value: /Game/NewFolder/Blueprints/EMS_NewProjectile.EMS_NewProjectile_C
+	* Value: Selected from Content Browser
 	*
 	* Result: Save data referencing the old class will spawn the new class instead.
 	* This ensures existing save data continues to work after Blueprint reorganization.
@@ -210,6 +229,27 @@ public:
 
 public:
 
+	/**
+	* Generates a human-readable text mirror of binary save game data inside Saved/Logs/Ems .
+	* Separates diagnostic snapshots into hierarchical directories based on Session, Operation(Save/Load), User, and Slot.
+	* Captures deeply nested property hierarchies, transforms, and metadata for all valid serialized UObjects.
+	* 
+	* Does not write unserialized data, such as inactive Actors residing inside unloaded streaming levels.
+	* Custom Player saves are currently not fully supported and always write to the "Player txt" file.
+	*
+	* NOTE: This operation is SLOW and resource-heavy. Use strictly for diagnostics.
+	*/
+	UPROPERTY(config, EditAnywhere, Category = "Diagnostics", meta = (DisplayName = "Advanced Save Report"))
+	ESaveReportSetting SaveReport = ESaveReportSetting::Disabled;
+
+	/**
+	* Logs the exact binary payload sizes of objects to the output log during save.
+	*/
+	UPROPERTY(config, EditAnywhere, Category = "Diagnostics", meta = (DisplayName = "Log Object Data Size"))
+	bool bDebugDataSize = false;
+
+public:
+
 	/** The time between checking if World Partition can initially load. */
 	UPROPERTY(config)
 	float WorldPartitionInitPollingRate = 0.05f;
@@ -234,9 +274,9 @@ public:
 
 public:
 
-	TMap<FString, FString> ShortLevelRedirects;         // Short: Old -> New
-	TMap<FString, FString> ReverseLevelRedirects;       // Long: New -> Old (swapped)
-	TMap<FString, FString> ReverseShortLevelRedirects;  // Short: New -> Old (swapped)
+	TMap<FString, FString> ShortLevelRedirects;         //Short: Old -> New
+	TMap<FString, FString> ReverseLevelRedirects;       //Long: New -> Old (swapped)
+	TMap<FString, FString> ReverseShortLevelRedirects;  //Short: New -> Old (swapped)
 
 	static void BuildLevelRedirects()
 	{

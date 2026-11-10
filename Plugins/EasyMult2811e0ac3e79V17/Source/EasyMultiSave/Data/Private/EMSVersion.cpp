@@ -23,15 +23,25 @@ FString FSaveVersion::GetEngineString(const FEngineVersion& InEngine)
 	return InEngine.ToString(EVersionComponent::Patch);
 }
 
+uint32 FSaveVersion::GetSettingsGameVersionAsInt()
+{
+	return UEMSPluginSettings::Get()->SaveGameVersion;
+}
+
 FString FSaveVersion::GetSettingsGameVersion()
 {
-	const FString CustomVersion = FString::FromInt(UEMSPluginSettings::Get()->SaveGameVersion);
+	const FString CustomVersion = FString::FromInt(GetSettingsGameVersionAsInt());
 	return CustomVersion;
+}
+
+FString FSaveVersion::GetStaticPluginVersion()
+{
+	return FString::FromInt(EMS_VERSION_NUMBER);
 }
 
 bool FSaveVersion::IsSaveGameVersionEqual(const FGameVersionInfo& SaveVersion)
 {
-	const uint32 GameVersion = UEMSPluginSettings::Get()->SaveGameVersion;
+	const uint32 GameVersion = GetSettingsGameVersionAsInt();
 	return SaveVersion.GetGameVal() == GameVersion;
 }
 
@@ -130,7 +140,7 @@ FSaveHeader
 void FSaveHeader::Build(const FFileContext& Context)
 {
 	Tag = EMS::HEADER_TAG;
-	Version = EMS::HEADER_VERSION;
+	Version = EMS::HEADER_VERSION_LATEST;
 
 	FileVersion = FFileVersionInfo(GPackageFileUEVersion, FEngineVersion::Current());
 	FileVersion.LegacyPackageVersion = Context.LegacyFileVersion;
@@ -138,8 +148,8 @@ void FSaveHeader::Build(const FFileContext& Context)
 
 	UnixTimeStamp = FDateTime::UtcNow().ToUnixTimestamp();
 
-	//Can be used for additional meta data later
-	Flags = 0; 
+	//Compression is always allowed now. But we need the flag for consoles. See comment in EMSObjectBase
+	Flags |= EMS::FLAG_COMPRESSED;
 
 	//Save MLS mode, as it might not be compatible. Its in all files now
 	MultiLevel = uint8(UEMSPluginSettings::Get()->MultiLevelSaving);
@@ -161,6 +171,13 @@ FSaveFileIntegrity - Save and Load
 
 bool FSaveFileIntegrity::CheckAndSaveFile(const FFileContext& Context, const TArray<uint8>& InData)
 {
+	//Refuse to write a structurally valid but semantically empty save. Will likely never happen.
+	if (InData.Num() <= 0)
+	{
+		UE_LOG(LogEasyMultiSave, Error, TEXT("Refusing to save: payload is empty for %s"), *Context.Path);
+		return false;
+	}
+
 	//Calculate hash from payload
 	const uint32 Hash = EMS::GetHash(InData.GetData(), InData.Num());
 
@@ -187,7 +204,7 @@ bool FSaveFileIntegrity::CheckAndSaveFile(const FFileContext& Context, const TAr
 EFileValidity FSaveFileIntegrity::CheckAndLoadFile(const FFileContext& Context, TArray<uint8>& OutData, FSaveHeader& OutHeader)
 {
 	TArray<uint8> RawData;
-	const EFileValidity Load = LoadRawSaveData(Context, RawData);
+	const EFileValidity Load = LoadFromFile(Context, RawData);
 	if (Load != EFileValidity::FILE_VALID)
 	{
 		return Load;
@@ -195,7 +212,7 @@ EFileValidity FSaveFileIntegrity::CheckAndLoadFile(const FFileContext& Context, 
 
 	const FString InSavePath = Context.Path;
 
-	//Handle legacy files (pre-header format)
+	//Early out for legacy files 
 	if (!HasFileHeaderTag(RawData))
 	{
 		OutHeader.bLoadedLegacyFile = true;
@@ -239,15 +256,8 @@ void FSaveFileIntegrity::PerformAutoBackup(const FFileContext& Context)
 {
 	//Load Primary Data
 	TArray<uint8> PrimaryRaw;
-	const EFileValidity PrimaryLoadStatus = LoadRawSaveData(Context, PrimaryRaw);
+	const EFileValidity PrimaryLoadStatus = LoadFromFile(Context, PrimaryRaw);
 
-	//Skip legacy
-	if (!HasFileHeaderTag(PrimaryRaw))
-	{
-		return;
-	}
-
-	//If the primary doesn't exist yet, there is nothing to back up or recover
 	if (PrimaryLoadStatus == EFileValidity::FILE_MISSING)
 	{
 		return;
@@ -269,13 +279,39 @@ void FSaveFileIntegrity::PerformAutoBackup(const FFileContext& Context)
 		return;
 	}
 
+	//Legacy primary is valid data. Back it up so the original is preserved before it gets overwritten.
+	if (TempHeader.IsLegacy())
+	{
+		/*
+		Legacy only means the header tag is missing, which a corrupted modern file looks like too.
+		Unverifiable data must never replace a Backup that is still intact.
+		*/
+		TArray<uint8> ExistingBackup;
+		FSaveHeader BackupHeader;
+		const bool bHasHealthyBackup =
+			LoadFromFile(BackupContext, ExistingBackup) == EFileValidity::FILE_VALID
+			&& IsFileHashValid(ExistingBackup, BackupHeader);
+
+		if (bHasHealthyBackup)
+		{
+			UE_LOG(LogEasyMultiSave, Warning, TEXT("Primary has no header, but the Backup is intact. Backup kept: %s"), *BackupPath);
+			return;
+		}
+
+		if (SaveToFile(BackupContext, PrimaryRaw))
+		{
+			UE_LOG(LogEasyMultiSave, Log, TEXT("Auto-Backup successful for legacy file: %s"), *BackupPath);
+		}
+		return;
+	}
+
 	//Recovery Flow: Primary is corrupt, try to restore from existing backup
 	UE_LOG(LogEasyMultiSave, Warning, TEXT("Primary save is corrupt. Attempting to restore from Backup..."));
 
 	TArray<uint8> BackupRaw;
 
 	//Use BackupContext here to load the backup file instead of the primary again
-	const EFileValidity RecoveryLoadStatus = LoadRawSaveData(BackupContext, BackupRaw);
+	const EFileValidity RecoveryLoadStatus = LoadFromFile(BackupContext, BackupRaw);
 	bool bRecoveryIsHealthy = (RecoveryLoadStatus == EFileValidity::FILE_VALID) && IsFileHashValid(BackupRaw, TempHeader);
 
 	if (bRecoveryIsHealthy)
@@ -297,50 +333,46 @@ void FSaveFileIntegrity::PerformAutoBackup(const FFileContext& Context)
 FSaveFileIntegrity - Advanced Checks
 **/
 
-EIntegrityCheckResult FSaveFileIntegrity::CheckSaveGameIntegrity(const FFileContext& Context, const bool bCheckVersion)
+EIntegrityCheckResult FSaveFileIntegrity::CheckSaveGameIntegrity(const FFileContext& Context)
 {
-	//This checks only happens on the local file.
-
+	//This check only happens on the local file
 	FSaveHeader Header;
 	const EFileValidity ValidCheck = IsFileValidFast(Context, Header);
 
-	if (Header.bLoadedLegacyFile)
-	{
-		UE_LOG(LogEasyMultiSave, Log, TEXT("Legacy file integrity check skipped and marked as valid: %s"), *Context.Path);
-		return EIntegrityCheckResult::Success;
-	}
-
-	if (ValidCheck == EFileValidity::FILE_INVALID)
-	{
-		UE_LOG(LogEasyMultiSave, Warning, TEXT("File integrity invalid: %s"), *Context.Path);
-		return EIntegrityCheckResult::Invalid;
-	}
-
-	//Missing file is treated as valid (nothing to load) 
+	//Missing file is treated as valid (nothing to load)
 	if (ValidCheck == EFileValidity::FILE_MISSING)
 	{
 		return EIntegrityCheckResult::Success;
 	}
 
-	UE_LOG(LogEasyMultiSave, Log, TEXT("File integrity verified for: %s"), *Context.Path);
-
-	//Skip for legacy, would be too much
-	FFileVersionInfo FileInfo; Header.InitVersionInfo(FileInfo);
-	if (FileInfo.IsLegacyFile())
+	//Fail on invalid files, but also handle legacy which returns false for Hash check!
+	if (ValidCheck == EFileValidity::FILE_INVALID)
 	{
-		UE_LOG(LogEasyMultiSave, Warning, TEXT("Game Version check and advanced info for Legacy files is not supported."));
-		return EIntegrityCheckResult::Success;
+		//Legacy path, structure is acceptable but predates the current header
+		if (Header.IsLegacy())
+		{
+			UE_LOG(LogEasyMultiSave, Log, TEXT("Legacy file integrity check skipped and marked as valid: %s"), *Context.Path);
+			UE_LOG(LogEasyMultiSave, Warning, TEXT("Game Version check and advanced info for Legacy files is not supported."));
+			return EIntegrityCheckResult::Success;
+		}
+
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("File integrity invalid: %s"), *Context.Path);
+		return EIntegrityCheckResult::Invalid;
 	}
 
-	//Multi level modes
-	const bool bMultiLevelCompat = FSaveFileIntegrity::HasMultiLevelCompatibility(Context, Header);
-	if (!bMultiLevelCompat)
+	//Multi-level mode compatibility
+	if (!FSaveFileIntegrity::HasMultiLevelCompatibility(Context, Header))
 	{
 		return EIntegrityCheckResult::Invalid;
 	}
 
+	UE_LOG(LogEasyMultiSave, Log, TEXT("File integrity verified for: %s"), *Context.Path);
+
+	FFileVersionInfo FileInfo;
+	FGameVersionInfo GameInfo;
+	Header.InitVersionInfo(FileInfo, GameInfo);
+
 	const FString FileEngine = FSaveVersion::GetEngineString(FileInfo.GetEngineVer());
-	const FGameVersionInfo GameInfo = Header.GetGameVersion();
 
 	UE_LOG(LogEasyMultiSave, Log, TEXT(">>> Loaded Save Version | Package: %d | Engine: %s | Plugin: %s | Game: %s ||| Legacy Package: %d"),
 		FileInfo.GetPackageVal(),
@@ -349,14 +381,16 @@ EIntegrityCheckResult FSaveFileIntegrity::CheckSaveGameIntegrity(const FFileCont
 		*GameInfo.GetGameVer(),
 		FileInfo.GetLegacyVal());
 
+	//Compute version diffs once, reused for both the conditional log and the final mismatch return
+	const bool bEngineDiffers = FileInfo.GetEngineVer().GetMinor() != FEngineVersion::Current().GetMinor();
+	const bool bPluginDiffers = !FSaveVersion::IsPluginVersionEqual(GameInfo);
+	const bool bGameDiffers = !FSaveVersion::IsSaveGameVersionEqual(GameInfo);
+
 	//Additional info if versions differ
-	if (FileInfo.GetEngineVer().GetMinor() != FEngineVersion::Current().GetMinor()
-		|| !FSaveVersion::IsPluginVersionEqual(GameInfo)
-		|| !FSaveVersion::IsSaveGameVersionEqual(GameInfo))
+	if (bEngineDiffers || bPluginDiffers || bGameDiffers)
 	{
 		const FString CurEngine = FSaveVersion::GetEngineString(FEngineVersion::Current());
 		const FGameVersionInfo ThisGameInfo = FSaveVersion::MakeSaveGameVersion();
-
 		UE_LOG(LogEasyMultiSave, Log, TEXT(">>> This Unreal Version | Package: %d | Engine: %s | Plugin: %s | Game: %s"),
 			GPackageFileUEVersion.ToValue(),
 			*CurEngine,
@@ -364,26 +398,15 @@ EIntegrityCheckResult FSaveFileIntegrity::CheckSaveGameIntegrity(const FFileCont
 			*ThisGameInfo.GetGameVer());
 	}
 
-	//No version check
-	if (!bCheckVersion)
+	//Strict game-version comparison
+	if (bGameDiffers)
 	{
-		return EIntegrityCheckResult::Success;
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("Save Game Version mismatch: File: %s | Settings: %s"),
+			*GameInfo.GetGameVer(), *FSaveVersion::GetSettingsGameVersion());
+		return EIntegrityCheckResult::VersionMismatch;
 	}
 
-	//Perform complex integrity check if file is valid and check is requested
-	EIntegrityCheckResult Result = EIntegrityCheckResult::Success;
-	if (ValidCheck == EFileValidity::FILE_VALID)
-	{
-		if (!FSaveVersion::IsSaveGameVersionEqual(GameInfo))
-		{
-			UE_LOG(LogEasyMultiSave, Warning, TEXT("Save Game Version mismatch: File: %s | Settings: %s"), 
-				*GameInfo.GetGameVer(), *FSaveVersion::GetSettingsGameVersion());
-
-			Result = EIntegrityCheckResult::VersionMismatch;
-		}
-	}
-
-	return Result;
+	return EIntegrityCheckResult::Success;
 }
 
 bool FSaveFileIntegrity::HasMultiLevelCompatibility(const FFileContext& Context, const FSaveHeader& InHeader)
@@ -395,26 +418,177 @@ bool FSaveFileIntegrity::HasMultiLevelCompatibility(const FFileContext& Context,
 	}
 
 	//Early check for incompatible multi level modes, which can cause a crash! New files only.
-	const bool bIsMultiLevelData = Context.Path.Contains(EMS::PlayerSuffix) || Context.Path.Contains(EMS::ActorSuffix);
 	const bool bMultiLevelCompat = FSettingHelpers::IsMultiLevelSaveCompatible(InHeader.GetLoadedMultiLevelMode());
-
-	if (bIsMultiLevelData && !bMultiLevelCompat)
+	if (!bMultiLevelCompat)
 	{
-		const UEnum* EnumPtr = StaticEnum<EMultiLevelSaveMethod>();
-		const FString LoadedStr = EnumPtr->GetNameStringByValue((uint8)InHeader.GetLoadedMultiLevelMode());
-		const FString SettingsStr = EnumPtr->GetNameStringByValue((uint8)UEMSPluginSettings::Get()->MultiLevelSaving);
+		//Lets limit this to the actual Player and Level slot files, not custom names that end with the suffix
+		const FString FolderOrFile = FSettingHelpers::IsConsoleFileSystem() ? EMS::UnderscoreFile : EMS::Slash;
+		const bool bIsMultiLevelData =
+			Context.Path.EndsWith(FolderOrFile + EMS::PlayerSuffix) ||
+			Context.Path.EndsWith(FolderOrFile + EMS::ActorSuffix);
+		if (bIsMultiLevelData)
+		{
+			const UEnum* EnumPtr = StaticEnum<EMultiLevelSaveMethod>();
+			const FString LoadedStr = EnumPtr->GetNameStringByValue((uint8)InHeader.GetLoadedMultiLevelMode());
+			const FString SettingsStr = EnumPtr->GetNameStringByValue((uint8)UEMSPluginSettings::Get()->MultiLevelSaving);
 
-		UE_LOG(LogEasyMultiSave, Warning, TEXT("Save is valid, but has incompatible Multi-Level mode! Loaded: %s | Settings: %s"), *LoadedStr, *SettingsStr);
-		UE_LOG(LogEasyMultiSave, Warning, TEXT("Please change Plugin Setting to %s or load a different file!"), *LoadedStr);
+			UE_LOG(LogEasyMultiSave, Warning, TEXT("Save is valid, but has incompatible Multi-Level mode! Loaded: %s | Settings: %s"), *LoadedStr, *SettingsStr);
+			UE_LOG(LogEasyMultiSave, Warning, TEXT("Please change Plugin Setting to %s or load a different file!"), *LoadedStr);
 
-		return false;
+			return false;
+		}
 	}
 
 	return true;
 }
 
+bool FSaveFileIntegrity::VerifyCloudFile(const FString& InSavePath, const TArray<uint8>& InRawData)
+{
+	if (IsZeroData(InSavePath, InRawData))
+	{
+		return false;
+	}
+
+	FSaveHeader TempHeader;
+	return FSaveFileIntegrity::IsFileHashValid(InRawData, TempHeader);
+}
+
+bool FSaveFileIntegrity::VerifyLocalFile(const FString& InSavePath, const TArray<uint8>& InRawData)
+{
+	if (IsZeroData(InSavePath, InRawData))
+	{
+		return false;
+	}
+
+	/*
+	Legacy has no header tag, so the hash check fails without the data being broken.
+	A truncated file still fails, the size check returns before the legacy flag is set.
+	*/
+	FSaveHeader TempHeader;
+	return FSaveFileIntegrity::IsFileHashValid(InRawData, TempHeader) || TempHeader.IsLegacy();
+}
+
 /**
-FSaveFileIntegrity - Low Level functions
+FSaveFileIntegrity - Basic Save System
+**/
+
+bool FSaveFileIntegrity::SaveToFile(const FFileContext& Context, const TArray<uint8>& InData)
+{
+	if (IsZeroData(Context.Path, InData))
+	{
+		return false;
+	}
+
+#if EMS_PLATFORM_DESKTOP
+	//Safer writing
+	return SaveToFileProtected(Context, InData);
+#else
+	//Platform handles integrity
+	return SaveToFileDirect(Context, InData); 
+#endif
+
+}
+
+bool FSaveFileIntegrity::SaveThumbnailToFile(const FFileContext& Context, const TArray<uint8>& InData)
+{
+	//Always save directly without checks
+	return SaveToFileDirect(Context, InData);
+}
+
+bool FSaveFileIntegrity::SaveToFileDirect(const FFileContext& Context, const TArray<uint8>& InData)
+{
+	ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem();
+	if (SaveSystem && SaveSystem->SaveGame(false, *Context.Path, Context.Player, InData))
+	{
+		return true;
+	}
+	UE_LOG(LogEasyMultiSave, Error, TEXT("Failed writing save data to disk. Rejected by platform at lowest level. File: %s"), *Context.Path);
+	return false;
+}
+
+bool FSaveFileIntegrity::SaveToFileProtected(const FFileContext& Context, const TArray<uint8>& InData)
+{
+	const FString TempPath = Context.Path + EMS::TempType;
+	const FFileContext TempContext(Context.Player, TempPath);
+
+	//Clean up old temp files first
+	DeleteSaveFile(TempContext);
+
+	//Write to TEMP file first
+	if (!SaveToFileDirect(TempContext, InData))
+	{
+		DeleteSaveFile(TempContext);
+		return false;
+	}
+
+	//Pseudo-Atomic Move on same volume, protect against App crash etc. But not against OS Crash or Power loss
+	const FString SrcPath = FSavePaths::GetBaseSavePath(TempPath);
+	const FString DestPath = FSavePaths::GetBaseSavePath(Context.Path);
+	if (IFileManager::Get().Move(*DestPath, *SrcPath, true, true, false, false))
+	{
+		/*
+		Move succeeded - temp file was renamed, no cleanup needed
+		Steam cloud etc. usually do not sync during file write and when running
+		*/
+		return true;
+	}
+
+	//Move failed, the aborted move keeps the temp file for manual recovery(Edge case), but will clean it up on next try
+	UE_LOG(LogEasyMultiSave, Error, TEXT("Save file move failed for %s. Temp file is kept for manual recovery!"), *Context.Path);
+	return false; 
+}
+
+EFileValidity FSaveFileIntegrity::LoadFromFile(const FFileContext& Context, TArray<uint8>& OutRawData)
+{
+	ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem();
+	if (!SaveSystem)
+	{
+		return EFileValidity::FILE_INVALID;
+	}
+
+	const uint32 PlayerIndex = Context.Player;
+	const FString InSavePath = Context.Path;
+
+	if (!SaveSystem->DoesSaveGameExist(*InSavePath, PlayerIndex))
+	{
+		return EFileValidity::FILE_MISSING;
+	}
+
+	//Load raw buffer from disk
+	if (!SaveSystem->LoadGame(false, *InSavePath, PlayerIndex, OutRawData))
+	{
+		UE_LOG(LogEasyMultiSave, Error, TEXT("Save file unreadable: %s"), *InSavePath);
+		return EFileValidity::FILE_INVALID;
+	}
+
+	//Check minimum size or zero file
+	if (IsZeroData(InSavePath, OutRawData))
+	{
+		return EFileValidity::FILE_INVALID;
+	}
+
+	return EFileValidity::FILE_VALID;
+}
+
+bool FSaveFileIntegrity::DeleteSaveFile(const FFileContext& Context)
+{
+	ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem();
+	if (SaveSystem && SaveSystem->DoesSaveGameExist(*Context.Path, Context.Player))
+	{
+		return SaveSystem->DeleteGame(false, *Context.Path, Context.Player);
+	}
+
+	return false;
+}
+
+bool FSaveFileIntegrity::DoesSaveExist(const FFileContext& Context)
+{
+	ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem();
+	return SaveSystem && SaveSystem->DoesSaveGameExist(*Context.Path, Context.Player);
+}
+
+/**
+FSaveFileIntegrity - Low Level private functions
 **/
 
 bool FSaveFileIntegrity::HasFileHeaderTag(const TArray<uint8>& RawData)
@@ -441,7 +615,7 @@ bool FSaveFileIntegrity::HasFileHeaderTag(const TArray<uint8>& RawData)
 EFileValidity FSaveFileIntegrity::IsFileValidFast(const FFileContext& Context, FSaveHeader& OutHeader)
 {
 	TArray<uint8> RawData;
-	const EFileValidity Result = LoadRawSaveData(Context, RawData);
+	const EFileValidity Result = LoadFromFile(Context, RawData);
 
 	if (Result != EFileValidity::FILE_VALID)
 	{
@@ -462,6 +636,7 @@ bool FSaveFileIntegrity::IsFileHashValid(const TArray<uint8>& RawData, FSaveHead
 		return false;
 	}
 
+	//Legacy marked as invalid by default, must be handled manually in the respective functions like backup
 	if (!HasFileHeaderTag(RawData))
 	{
 		OutHeader = FSaveHeader{};
@@ -478,9 +653,9 @@ bool FSaveFileIntegrity::IsFileHashValid(const TArray<uint8>& RawData, FSaveHead
 	int32 PayloadCount = 0;
 	Reader << PayloadCount;
 
-	if (PayloadCount < 0)
+	if (Reader.IsError() || PayloadCount <= 0)
 	{
-		UE_LOG(LogEasyMultiSave, Warning, TEXT("Invalid payload size."));
+		UE_LOG(LogEasyMultiSave, Error, TEXT("Invalid data payload size"));
 		return false;
 	}
 
@@ -524,78 +699,29 @@ bool FSaveFileIntegrity::IsFileHashValid(const TArray<uint8>& RawData, FSaveHead
 	return false;
 }
 
-/**
-FSaveFileIntegrity - Basic Save System
-**/
-
-bool FSaveFileIntegrity::SaveToFile(const FFileContext& Context, const TArray<uint8>& InData)
+bool FSaveFileIntegrity::IsZeroData(const FString& InSavePath, const TArray<uint8>& InRawData)
 {
-	//Save to disk
-	ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem();
-	const bool bSaved = SaveSystem->SaveGame(false, *Context.Path, Context.Player, InData);
-	if (!bSaved)
+	/*
+	Header Tag + Footer + Hash
+	Its unlikely that pre EMS 150 file is rejected here
+	*/
+	static constexpr int32 MinSize = (sizeof(uint32) * 3);
+
+	//Check minimum size
+	if (InRawData.Num() < MinSize)
 	{
-		UE_LOG(LogEasyMultiSave, Error, TEXT("Failed to save file: %s"), *Context.Path);
-	}
-
-	return bSaved;
-}
-
-EFileValidity FSaveFileIntegrity::LoadRawSaveData(const FFileContext& Context, TArray<uint8>& OutRawData)
-{
-	ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem();
-	if (!SaveSystem)
-	{
-		return EFileValidity::FILE_INVALID;
-	}
-
-	const uint32 PlayerIndex = Context.Player;
-	const FString InSavePath = Context.Path;
-
-	if (!SaveSystem->DoesSaveGameExist(*InSavePath, PlayerIndex))
-	{
-		return EFileValidity::FILE_MISSING;
-	}
-
-	//Load raw buffer from disk
-	if (!SaveSystem->LoadGame(false, *InSavePath, PlayerIndex, OutRawData))
-	{
-		UE_LOG(LogEasyMultiSave, Error, TEXT("Save file unreadable: %s"), *InSavePath);
-		return EFileValidity::FILE_INVALID;
-	}
-
-	uint32 FirstBytes = 0;
-
-	//Check minimum size (minimum 4 bytes for a tag)
-	if (OutRawData.Num() < sizeof(FirstBytes))
-	{
-		return EFileValidity::FILE_INVALID;
+		UE_LOG(LogEasyMultiSave, Error, TEXT("Save data is smaller than minimum structural size: %s"), *InSavePath);
+		return true;
 	}
 
 	//Check for zeroes
-	FMemory::Memcpy(&FirstBytes, OutRawData.GetData(), sizeof(FirstBytes));
+	uint32 FirstBytes = 0;
+	FMemory::Memcpy(&FirstBytes, InRawData.GetData(), sizeof(FirstBytes));
 	if (!FirstBytes)
 	{
 		UE_LOG(LogEasyMultiSave, Error, TEXT("Save file has zero byte data or is corrupt: %s"), *InSavePath);
-		return EFileValidity::FILE_INVALID;
-	}
-
-	return EFileValidity::FILE_VALID;
-}
-
-bool FSaveFileIntegrity::DeleteSaveFile(const FFileContext& Context)
-{
-	ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem();
-	if (SaveSystem->DoesSaveGameExist(*Context.Path, Context.Player))
-	{
-		return SaveSystem->DeleteGame(false, *Context.Path, Context.Player);
+		return true;
 	}
 
 	return false;
-}
-
-bool FSaveFileIntegrity::DoesSaveExist(const FFileContext& Context)
-{
-	ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem();
-	return SaveSystem->DoesSaveGameExist(*Context.Path, Context.Player);
 }

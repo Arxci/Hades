@@ -13,6 +13,63 @@
 DEFINE_LOG_CATEGORY(LogEasyMultiSave);
 
 /**
+FArchiveVersion
+**/
+
+void FArchiveVersion::Apply(FArchive& Ar, uint32 ExpectedTag, uint32 LatestVersion, uint32& OutTag, uint32& OutVersion)
+{
+	/*
+	Handles versioned save archive data.
+	On load peeks the first entry. If it matches ExpectedTag, reads tag + version into outputs.
+	Otherwise rewinds and treats archive as legacy.
+	On save: always writes Tag and LatestVersion to the archive.
+
+	How to use:
+
+		//Version this archive
+		FArchiveVersion::Apply
+		(
+			Ar,
+			EMS::ACTOR_DATA_TAG, EMS::ACTOR_DATA_VERSION_LATEST,
+			ActorData.Tag, ActorData.Version
+		);
+
+		//New Data
+		if (Ar.IsSaving() || ActorData.Version >= EMS::ACTOR_DATA_VERSION_2)
+		{
+			Ar << ActorData.LoadPriority;
+		}
+	*/
+
+	if (Ar.IsLoading())
+	{
+		const int64 StartPos = Ar.Tell();
+		uint32 ReadTag = 0;
+		Ar << ReadTag;
+
+		if (ReadTag == ExpectedTag)
+		{
+			OutTag = ReadTag;
+			Ar << OutVersion;
+		}
+		else
+		{
+			//Legacy: no tag/version in stream. Rewind so the next field reads correctly.
+			Ar.Seek(StartPos);
+			OutTag = ExpectedTag;
+			OutVersion = 0;
+		}
+	}
+	else
+	{
+		OutTag = ExpectedTag;
+		OutVersion = LatestVersion;
+		Ar << OutTag;
+		Ar << OutVersion;
+	}
+}
+
+/**
 FSaveHelpers
 **/
 
@@ -92,16 +149,18 @@ void FSaveHelpers::ExtractPlayerNames(const UWorld* InWorld, TArray<FString>& Ou
 	if (const AGameStateBase* GameState = InWorld->GetGameState())
 	{
 		const TArray<APlayerState*> Players = GameState->PlayerArray;
-		if (!EMS::ArrayEmpty(Players))
+		if (!Players.IsEmpty())
 		{
 			for (const APlayerState* PlayerState : Players)
 			{
-				OutPlayerNames.Add(PlayerState->GetPlayerName());
+				if (PlayerState)
+				{
+					OutPlayerNames.Add(PlayerState->GetPlayerName());
+				}
 			}
 		}
 	}
 }
-
 
 void FSaveHelpers::ResetObjectToDefaults(UObject* ObjectToReset, const bool bMustBeSaveGame)
 {
@@ -138,7 +197,7 @@ void FSaveHelpers::ResetObjectToDefaults(UObject* ObjectToReset, const bool bMus
 FActorInitContext
 **/
 
-void FActorInitContext::ApplyLoadStateTag() const
+void FActorInitContext::RemoveLoadedTag() const
 {
 	if (!Actor)
 	{
@@ -147,7 +206,7 @@ void FActorInitContext::ApplyLoadStateTag() const
 
 	if (bIsLoading)
 	{
-		//Remove loaded tags on full reload
+		//Remove loaded tags on full reload.
 		if (bFullReload)
 		{
 			Actor->Tags.Remove(EMS::HasLoadedTag);
@@ -155,8 +214,10 @@ void FActorInitContext::ApplyLoadStateTag() const
 	}
 	else
 	{
-		//Mark as loaded to prevent redundant reloads after an Actor was saved
-		Actor->Tags.Add(EMS::HasLoadedTag);
+		/*
+		In previous versions, we marked as loaded 'pre save' to prevent redundant reloads after an Actor was saved.
+		But this was too illogical and somewhat useless as usually you dont load directly post save.
+		*/
 	}
 }
 
@@ -166,6 +227,12 @@ FStructHelpers
 
 void FStructHelpers::SerializeStruct(const UObject* Object)
 {
+	//Need to check here as this function might be called directly for UObjects 
+	if (!UEMSPluginSettings::Get()->bAutoSaveStructs)
+	{
+		return;
+	}
+
 	//Non-array struct vars.
 	for (TFieldIterator<FStructProperty> ObjectStruct(Object->GetClass()); ObjectStruct; ++ObjectStruct)
 	{
@@ -214,7 +281,7 @@ void FStructHelpers::SerializeArrayStruct(const FArrayProperty* ArrayProp)
 	const FProperty* InnerProperty = ArrayProp->Inner;
 	if (InnerProperty)
 	{
-		//Here we finally get to the structproperty, wich hides in the Array->Inner
+		//Here we finally get to the structproperty, which hides in the Array->Inner
 		const FStructProperty* ArrayStructProp = CastField<FStructProperty>(InnerProperty);
 		if (ArrayStructProp)
 		{
@@ -263,17 +330,17 @@ FMultiLevelStreamingData
 **/
 
 template <typename TSaveData, typename TSaveDataArray>
-void FMultiLevelStreamingData::ReplaceOrAddToArray(const TSaveData& Data, TSaveDataArray& OuputArray)
+void FMultiLevelStreamingData::ReplaceOrAddToArray(const TSaveData& Data, TSaveDataArray& OutputArray)
 {
 	//This will replace an existing element or add a new one. 
-	const uint32 Index =  OuputArray.IndexOfByKey(Data);
+	const int32 Index = OutputArray.IndexOfByKey(Data);
 	if (Index != INDEX_NONE)
 	{
-		OuputArray[Index] = Data;
+		OutputArray[Index] = Data;
 	}
 	else
 	{
-		OuputArray.Add(Data);
+		OutputArray.Add(Data);
 	}
 }
 
@@ -288,6 +355,11 @@ void FMultiLevelStreamingData::CopyActors(const TArray<FActorSaveData>& InData)
 			ReplaceOrAddToArray(ActorData, ActorArray);
 		}
 	}
+}
+
+void FMultiLevelStreamingData::AddScript(const FLevelScriptSaveData& ScriptData)
+{
+	ReplaceOrAddToArray(ScriptData, ScriptArray);
 }
 
 void FMultiLevelStreamingData::CopyTo(const FLevelArchive& A)
@@ -320,124 +392,11 @@ void FMultiLevelStreamingData::CopyFrom(FLevelArchive& A)
 }
 
 /**
-FSaveGameArchive
+FActorByteKey
 **/
 
-FArchive& FSaveGameArchive::operator<<(UObject*& Obj)
+FActorByteKey::FActorByteKey(const FString& InString)
+	: Bytes(FSaveHelpers::BytesFromString(InString))
 {
-	if (IsSaving())
-	{
-		FSoftObjectPath SoftPath(Obj);
-		return CleanSoftObjectPath(SoftPath);
-	}
-	else if (IsLoading())
-	{
-		//Read the raw path from disk
-		FSoftObjectPath SoftPath;
-
-		if (ObjectVersion >= EMS::OBJECT_DATA_VERSION)
-		{
-			SoftPath.SerializePath(*this);
-		}
-		else
-		{
-			//Support legacy pointers that do not use SerializePath()
-			FString LegacyPath;
-			*this << LegacyPath;
-			SoftPath = FSoftObjectPath(LegacyPath);
-		}
-
-		//Apply Redirects 
-		SoftPath = FRedirectHelpers::ResolveLevelPath(SoftPath);
-
-		//PIE Fixup
-		FixupForPIE(SoftPath);
-
-		//Resolve using SoftPtr logic for both Soft and Hard refs identically
-		FSoftObjectPtr SoftPtr(SoftPath);
-		Obj = SoftPtr.LoadSynchronous();
-
-		return *this;
-	}
-
-	return FObjectAndNameAsStringProxyArchive::operator<<(Obj);
-}
-
-FArchive& FSaveGameArchive::operator<<(FSoftObjectPtr& Value)
-{
-	if (IsSaving())
-	{
-		FSoftObjectPath Path = Value.ToSoftObjectPath();
-		return CleanSoftObjectPath(Path);
-	}
-	else if (IsLoading())
-	{
-		//Load and apply redirects
-		FObjectAndNameAsStringProxyArchive::operator<<(Value);
-
-		FSoftObjectPath SoftPath = Value.ToSoftObjectPath();
-		SoftPath = FRedirectHelpers::ResolveLevelPath(SoftPath);
-
-		//PIE Fixup
-		FixupForPIE(SoftPath);
-
-		Value = FSoftObjectPtr(SoftPath);
-
-		return *this;
-	}
-
-	return FObjectAndNameAsStringProxyArchive::operator<<(Value);
-}
-
-FArchive& FSaveGameArchive::operator<<(FSoftObjectPath& Value)
-{
-	if (IsSaving())
-	{
-		return CleanSoftObjectPath(Value);
-	}
-	else if (IsLoading())
-	{
-		//Load and apply redirects
-		FObjectAndNameAsStringProxyArchive::operator<<(Value);
-		Value = FRedirectHelpers::ResolveLevelPath(Value);
-
-		//PIE Fixup
-		FixupForPIE(Value);
-
-		return *this;
-	}
-
-	return FObjectAndNameAsStringProxyArchive::operator<<(Value);
-}
-
-FArchive& FSaveGameArchive::CleanSoftObjectPath(FSoftObjectPath& Path)
-{
-	FString PathString = Path.ToString();
-
-#if WITH_EDITOR
-	//Remove any PIE prefixes 
-	FEditorPaths::StripRefPIEPrefix(PathString);
-	Path = FSoftObjectPath(PathString);
-#endif
-
-	Path.SerializePath(*this);
-
-	return *this;
-}
-
-void FSaveGameArchive::FixupForPIE(FSoftObjectPath& Path)
-{
-	/*
-	Loading PIE Fixup(Editor Only)
-	This is important, so we get the PIE prefix from non-resolved refs in the editor.
-	But still remain compatible between editor and packaged builds.
-	*/
-#if WITH_EDITOR
-	if (GIsPlayInEditorWorld)
-	{
-		Path.FixupForPIE();
-	}
-#endif
 
 }
-

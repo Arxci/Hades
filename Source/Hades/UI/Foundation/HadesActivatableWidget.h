@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 
 #include "CommonActivatableWidget.h"
+#include "Engine/DataTable.h"
 
 #include "HadesActivatableWidget.generated.h"
 
@@ -33,6 +34,10 @@ public:
 #endif
 
 protected:
+	//~ Begin UUserWidget Interface
+	virtual void NativeOnInitialized() override;
+	//~ End UUserWidget Interface
+
 	//~ Begin UCommonActivatableWidget Interface
 	virtual void NativeOnActivated() override;
 	virtual void NativeOnDeactivated() override;
@@ -49,4 +54,8 @@ protected:
 	/** The world stops while this is active. */
 	UPROPERTY(EditDefaultsOnly, Category = "Pause")
 	bool bPauseGame = false;
+
+	/** Shown in an action bar for what Accept does here. Accept itself still goes to the focused button. */
+	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
+	FDataTableRowHandle ConfirmAction;
 };

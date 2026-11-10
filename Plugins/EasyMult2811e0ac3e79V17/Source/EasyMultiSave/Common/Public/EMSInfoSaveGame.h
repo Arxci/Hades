@@ -4,6 +4,7 @@
 
 #include "EMSData.h"
 #include "CoreMinimal.h"
+#include "Engine/World.h"
 #include "GameFramework/SaveGame.h"
 #include "EMSInfoSaveGame.generated.h"
 
@@ -11,11 +12,32 @@ UCLASS()
 class EASYMULTISAVE_API UEMSInfoSaveGame : public USaveGame
 {
 	GENERATED_BODY()
+
+protected:
+
+	inline virtual UWorld* GetWorld() const override
+	{
+		if (HasAnyFlags(RF_ClassDefaultObject))
+		{
+			return nullptr;
+		}
+
+		if (UObject* Outer = GetOuter())
+		{
+			return Outer->GetWorld();
+		}
+
+		return nullptr;
+	}
 	
 public:
 
 	UPROPERTY(SaveGame, BlueprintReadOnly, Category = "Slots")
 	FSaveSlotInfo SlotInfo;
+
+	//Prevent too many slot info writes in a row
+	UPROPERTY(Transient)
+	double LastSaveAttemptTime = 0.0;
 
 public:
 
@@ -27,7 +49,7 @@ public:
 
 	inline void KeepMultiLevelSave(const TArray<FName>& InLevels)
 	{
-		if (!EMS::ArrayEmpty(InLevels) && EMS::ArrayEmpty(SlotInfo.Levels))
+		if (!InLevels.IsEmpty() && SlotInfo.Levels.IsEmpty())
 		{
 			SlotInfo.Levels = InLevels;
 		}

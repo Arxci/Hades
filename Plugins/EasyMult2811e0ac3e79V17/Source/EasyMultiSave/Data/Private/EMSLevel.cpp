@@ -11,6 +11,7 @@
 #include "Misc/PackageName.h"
 #include "GameFramework/Actor.h"
 #include "Kismet/GameplayStatics.h"
+#include "WorldPartition/WorldPartition.h"
 #include "WorldPartition/WorldPartitionSubsystem.h"
 #include "LevelInstance/LevelInstanceTypes.h"
 #include "LevelInstance/LevelInstanceLevelStreaming.h"
@@ -163,14 +164,24 @@ bool FStreamHelpers::AutoSaveLoadWorldPartition(const UWorld* InWorld)
 		return false;
 	}
 
-	if (UEMSPluginSettings::Get()->WorldPartitionSaving == EWorldPartitionMethod::Disabled)
+	if (UEMSPluginSettings::Get()->LevelStreamSaving == EAutoSaveStreamMethod::Disabled)
 	{
 		return false;
 	}
 
-	if (FSettingHelpers::IsContainingStreamMultiLevelSave() && InWorld->IsPartitionedWorld())
+	if (FSettingHelpers::IsContainingStreamMultiLevelSave())
 	{
-		return true;
+		/*
+		Check for actual World Partition streaming, not just the presence of a WP object.
+		World Partition can be enabled without streaming.
+		*/
+		if (const UWorldPartition* WorldPartition = InWorld->GetWorldPartition())
+		{
+			if (WorldPartition->bEnableStreaming)
+			{
+				return true;
+			}
+		}
 	}
 
 	return false;
@@ -183,7 +194,13 @@ bool FStreamHelpers::HasStreamingLevels(const UWorld* InWorld)
 		return false;
 	}
 
-	if (AutoSaveLoadWorldPartition(InWorld))
+	if (InWorld->IsPartitionedWorld())
+	{
+		return false;
+	}
+
+	//Return true, as this might have Level Instances in the persistent level.
+	if (FSettingHelpers::IsDynamicLevelStreaming())
 	{
 		return true;
 	}
@@ -198,12 +215,7 @@ bool FStreamHelpers::IsLevelStillStreaming(const UWorld* InWorld)
 		return true;
 	}
 
-	if (!HasStreamingLevels(InWorld))
-	{
-		return false;
-	}
-
-	//Check to see if the subsystem has something to say
+	//World Partition
 	if (AutoSaveLoadWorldPartition(InWorld))
 	{
 		if (UWorldPartitionSubsystem* WorldPartitionSubsystem = InWorld->GetSubsystem<UWorldPartitionSubsystem>())
@@ -214,8 +226,20 @@ bool FStreamHelpers::IsLevelStillStreaming(const UWorld* InWorld)
 				return false;
 			}
 		}
+		else
+		{
+			return false;
+		}
+
+		return true;
 	}
 
+	//Manual Level Streaming
+	if (!HasStreamingLevels(InWorld))
+	{
+		return false;
+	}
+	
 	for (const ULevelStreaming* StreamingLevel : InWorld->GetStreamingLevels())
 	{
 		if (!StreamingLevel)
@@ -244,6 +268,19 @@ bool FStreamHelpers::IsLevelStillStreaming(const UWorld* InWorld)
 	return false;
 }
 
+bool FStreamHelpers::CanProcessStreaming(const UWorld* InWorld)
+{
+	if (!IsValid(InWorld))
+	{
+		return false;
+	}
+
+	const bool bTooEarly = InWorld->TimeSeconds < EMS::ShortDelay;
+	const bool bIsStreaming = FStreamHelpers::IsLevelStillStreaming(InWorld);
+	const bool bIsAsync = FAsyncSaveHelpers::IsAsyncTaskActiveWithPause(InWorld, ESaveGameMode::MODE_All, false);
+	return !bTooEarly && !bIsStreaming && !bIsAsync;
+}
+
 bool FStreamHelpers::IsWorldPartitionInit(const UWorld* InWorld)
 {
 	if (!IsValid(InWorld))
@@ -262,7 +299,5 @@ bool FStreamHelpers::CanProcessWorldPartition(const UWorld* InWorld)
 	}
 
 	const bool bInit = FStreamHelpers::IsWorldPartitionInit(InWorld);
-	const bool bIsStreaming = FStreamHelpers::IsLevelStillStreaming(InWorld);
-	const bool bIsAsync = FAsyncSaveHelpers::IsAsyncSaveOrLoadTaskActive(InWorld, ESaveGameMode::MODE_All, EAsyncCheckType::CT_Both, false);
-	return !bInit && !bIsStreaming && !bIsAsync;
+	return !bInit && CanProcessStreaming(InWorld);
 }

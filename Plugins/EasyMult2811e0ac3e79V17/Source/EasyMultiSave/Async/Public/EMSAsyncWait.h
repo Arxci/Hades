@@ -27,34 +27,39 @@ public:
 	
 private:
 
+	double StartTime;
+	uint32 CheckCounter;
+
 	UPROPERTY()
 	TObjectPtr<UEMSObject> EMS;
 
 	UPROPERTY()
 	TSoftObjectPtr<AActor> TargetActor;
 
-	EAsyncCheckType Type;
+	ESaveGameMode LoadMode;
 
-	uint8 bSaveOrLoadTaskWasActive :1;
+	uint8 bLoadTaskWasActive :1;
 	uint8 bTimeoutTriggered : 1;
 	uint8 bCompleted : 1;
-	
-	uint32 CheckCounter;
+	uint8 bCachedSaveFileExists : 1;
+	uint8 bCachedHasLevel : 1;
 
 	FTimerHandle WaitTimerHandle;
 
 public:
 
-	/**
-	* Wait until SaveGameActors or LoadGameActors have been completed.
-	* For example, this is useful if you want access loaded variables in a BeginPlay event instead of ActorLoaded.
+	/** 
+	* Wait until a LoadGameActors call has been completed.
+	* Does logically not catch LoadGameActors that were finished before this nodes executes.
+	* Can be used to wait for a loaded reference from the ActorLoaded event. 
+	* Or if you want to access loaded variables from BeginPlay.
 	* 
-	* @param CheckType - The type of Async operation to wait for.
-	* @param CheckActor - If set, this will only check if one particular Actor is in it's loaded state. Overrides CheckType.
+	* @param Mode - The load data to wait for, either Player, Level or Both.
+	* @param CheckActor - If set, this will only check if one particular Actor is in its loaded state. 
 	*/
 	UFUNCTION(BlueprintCallable, Category = "Easy Multi Save | Actors",
-		meta = (DisplayName = "Wait For Save or Load Completed", BlueprintInternalUseOnly = "true", WorldContext = "WorldContextObject", AdvancedDisplay = "CheckActor"))
-	static UEMSAsyncWait* AsyncWaitForOperation(UObject* WorldContextObject, EAsyncCheckType CheckType = EAsyncCheckType::CT_Load, TSoftObjectPtr<AActor> CheckActor = nullptr);
+		meta = (DisplayName = "Wait For Load Actors Completed", BlueprintInternalUseOnly = "true", WorldContext = "WorldContextObject", AdvancedDisplay = "CheckActor"))
+	static UEMSAsyncWait* AsyncWaitForOperation(UObject* WorldContextObject, ESaveGameMode Mode = ESaveGameMode::MODE_All, TSoftObjectPtr<AActor> CheckActor = nullptr);
 
 	void Activate() override;
 

@@ -47,6 +47,7 @@ private:
 	uint8 bLoadFailed : 1;
 	uint8 bFullReload : 1;
 	uint8 bAutoLoadLevel : 1;
+	uint8 bCompleted : 1;
 
 	FTimerHandle FailedTimerHandle;
 
@@ -65,7 +66,7 @@ public:
 	static void AutoLoadLevelActors(UEMSObject* EMSObject);
 
 	void Activate() override;
-	inline bool IsActive() const { return bIsActive && !bLoadFailed; }
+	inline bool IsActive() const { return bIsActive; }
 
 	void LoadLevelActors(const FLoaderInitData& LoaderData);
 
@@ -89,6 +90,7 @@ private:
 
 	void CompleteLoadingTask();
 	void FailLoadingTask();
+	void FinalizeAndBroadcast(const bool bSuccess);
 
 	void ClearFailTimer();
 

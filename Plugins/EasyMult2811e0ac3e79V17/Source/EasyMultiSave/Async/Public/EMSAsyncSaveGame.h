@@ -3,10 +3,12 @@
 #pragma once
 
 #include "EMSTypes.h"
+#include "EMSData.h"
 #include "CoreMinimal.h"
 #include "UObject/ObjectMacros.h"
 #include "Kismet/BlueprintAsyncActionBase.h"
 #include "Async/TaskGraphInterfaces.h"
+#include "HAL/ThreadSafeBool.h"
 #include "EMSAsyncSaveGame.generated.h"
 
 class UEMSObject;
@@ -44,10 +46,17 @@ private:
 	uint32 Data;
 
 	uint8 bIsActive : 1;
-	uint8 bFinishedStep : 1;
-	uint8 bHasFailed : 1;
 	uint8 bAutoSaveLevel : 1;
 	uint8 bMemoryOnly : 1;
+
+	std::atomic<bool> bWasPaused = false;
+	std::atomic<bool> bFinishedStep = false;
+	std::atomic<bool> bHasFailed = false;
+
+	FLevelSnapshot ActorSnapshot;
+
+	UPROPERTY()
+	TWeakObjectPtr<APlayerController> CachedPlayerController;
 
 public:
 
@@ -63,7 +72,7 @@ public:
 	static void AutoSaveLevelActors(UEMSObject* EMSObject);
 
 	void Activate() override;
-	void BeginDestroy() override;
+	void SetReadyToDestroy() override;
 	UWorld* GetWorld() const override;
 
 	inline bool IsActive() const { return bIsActive; }
@@ -86,6 +95,8 @@ private:
 	void TryMoveToNextStep(ENextStepType Step);
 
 	bool CheckLevelStreaming();
+
+	void ResetPauseOnGameThread(const TWeakObjectPtr<UEMSObject> InWeakEMS);
 };
 
 

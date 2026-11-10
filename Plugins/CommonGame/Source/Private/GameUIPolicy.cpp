@@ -35,8 +35,11 @@ UGameUIManagerSubsystem* UGameUIPolicy::GetOwningUIManager() const
 
 UWorld* UGameUIPolicy::GetWorld() const
 {
-	return GetOwningUIManager()->GetGameInstance()->GetWorld();
+	// Blueprint default objects are outered to their package rather than a UI manager.
+	const UGameUIManagerSubsystem* UIManager = Cast<UGameUIManagerSubsystem>(GetOuter());
+	return UIManager ? UIManager->GetGameInstance()->GetWorld() : nullptr;
 }
+
 
 UPrimaryGameLayout* UGameUIPolicy::GetRootLayout(const UCommonLocalPlayer* LocalPlayer) const
 {

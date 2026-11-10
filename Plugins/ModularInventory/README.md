@@ -433,6 +433,7 @@ The shape and rules of a container. It is shared by every container built from i
 | Layout | Capacity | List | Most items; 0 means unlimited. |
 | Layout | Equipment | Slots | The slots are equipment: only items whose equip rules allow the slot fit, and an Equipment Component applies them. |
 | Rules | Filter | all | Query every item must match. Empty accepts anything. |
+| Rules | Read Only In UI | all | The inventory UI shows the items but can't pick them up or put anything here. Code still can. For things like key items, which come and go by themselves. |
 | Tags | Tags | all | Tags for your own logic. |
 | Fragments | Fragments / Instance Fragments | all | Static data, and per-container state. |
 
@@ -555,7 +556,8 @@ Applies whatever sits in the owner's equipment slots. It has no settings.
 | --- | --- |
 | Find Equipment Component (Actor) | Static. |
 | Equip Item (Item, Slot) | Moves the item into the first equipment container with that slot. The slot's current item swaps places with it, or goes to storage. |
-| Unequip Item (Item) / Unequip Slot (Slot) | Moves the item to a free spot in storage. |
+| Equip In Place (Item, Slot) | Equips an item the owner carries without moving it, as the RE games do with the weapon in hand. Its equip rules must allow the slot; use a slot no equipment container has. Whatever was equipped in place in that slot stops being equipped, and the item stays equipped until unequipped or until it leaves the inventory. |
+| Unequip Item (Item) / Unequip Slot (Slot) | Moves the item to a free spot in storage. An item equipped in place just stops being equipped. |
 | Get Equipped Item (Slot) | The item in a slot. |
 | Get Equipped Items | Every applied item, attachments included, parents first. |
 | Is Equipped (Item) | |
@@ -605,6 +607,8 @@ A socket lets an item affect neighbouring items in a grid. Sockets do nothing in
 1. Give the item an **Equip Rules** asset whose **Slots** include the slot's tag, or a parent tag.
 2. Give the owner a container whose layout is **Slots** with **Equipment** ticked and a slot with that tag.
 3. Put the item in the slot with **Equip Item**, by dragging it onto a slot widget, or with **Starting Equipment**.
+
+To equip an item without moving it, skip step 2 and call **Equip In Place** instead. The item keeps its spot, in a grid say, and everything in 8.2 still applies.
 
 ### 8.2 What equipping does
 
@@ -699,7 +703,7 @@ For rules that tags can't express, such as a story flag, make a Blueprint child 
 
 ![One interaction model: the mouse drag path and the gamepad focus path both call the Inventory UI Subsystem, which uses the registry](Docs/Images/ui-architecture.png)
 
-- One **Inventory UI Subsystem** per player holds the held item (count and rotation), the target, and the hovered item.
+- One **Inventory UI Subsystem** per player holds the held item (count and rotation), the target, the hovered item and the selected item.
 - **Holding changes nothing.** Only placing moves items, so cancelling or closing the screen is always safe.
 - Previews use the registry's **Dry Run**: the real operation, always undone. They can't disagree with the actual move.
 - Common UI handles focus, hover, Accept and Back. Cells and slots are Common UI buttons. UMG drag and drop is used only for the mouse.
@@ -712,11 +716,12 @@ All widget classes are abstract: make a Blueprint child of each and design it. N
 
 | Parent class | Named widgets | Settings | Events | Functions |
 | --- | --- | --- | --- | --- |
-| Inventory Item Widget | `Icon` (Image), `CountText` (Text Block) | Drag Visual Class, Drag Cell Size, Tooltip Class | On Item Changed, On Held Changed, On Hovered Changed, On Context Requested | Set Item, Get Item, Get Definition, Get Count, Is Held, Is Drag Visual |
-| Inventory Cell Widget | none | Common UI button style | (Common button events) | Get Container, Get Placement, Get Item |
-| Inventory Grid Widget | **`GridCanvas`** (Canvas Panel, required), `PlacementPreview` (any widget inside Grid Canvas) | Container Tag, Cell Size, Cell Class, Item Class | On Container Refreshed, On Placement Preview Changed | Set Container, Get Container, Get Cell Widget |
-| Inventory Slot Widget | `ItemWidget` (your item widget) | Container Tag, Slot Tag, Common UI button style | On Slot Item Changed, On Placement Preview Changed | Set Container |
-| Inventory Item Details Widget | `Icon`, `NameText`, `DescriptionText`, `CountText` | Follow Hovered Item, Collapse Without Item | On Item Changed | Set Item, Get Item |
+| Inventory Item Widget | `Icon` (Image), `CountText` (Text Block) | Drag Visual Class, Drag Cell Size, Tooltip Class | On Item Changed, On Held Changed, On Hovered Changed, On Selected Changed, On Context Requested | Set Item, Get Item, Get Definition, Get Count, Is Held, Is Selected, Is Drag Visual |
+| Inventory Cell Widget | none, but it needs a root widget of any kind | Common UI button style | (Common button events) | Get Container, Get Placement, Get Item |
+| Inventory Grid Widget | **`GridCanvas`** (Canvas Panel, required), `PlacementPreview` (any widget inside Grid Canvas) | Container Tag, Cell Size, Cell Class, Item Class | On Container Refreshed, On Placement Preview Changed | Set Container, Get Container, Get Cell Widget, Get Item Widget |
+| Inventory Slot Widget | `ItemWidget` (your item widget), `NameText` (Text Block, for list rows) | Container Tag, Slot Tag, Common UI button style | On Slot Item Changed, On Placement Preview Changed | Set Container |
+| Inventory Item Details Widget | `Icon`, `NameText`, `DescriptionText`, `CountText` | Follow Hovered Item, Keep Last Item, Hide Without Item | On Item Changed | Set Item, Get Item |
+| Inventory List Widget | **`EntryPanel`** (any panel, required) | Container Tag, Entry Class, Show Empty Entry | | Set Container, Get Container, Get Entry Widget |
 
 Settings explained:
 
@@ -728,10 +733,14 @@ Settings explained:
 | Container Tag | Grid, Slot | Finds the container with this tag on the owning player's Inventory Component when constructed. Leave empty and call **Set Container** for chests and backpacks. |
 | Cell Size | Grid | Pixels per cell. |
 | Cell Class | Grid | Widget for each cell. Needed for gamepad focus. |
-| Item Class | Grid | Widget for each item. |
+| Item Class | Grid | Widget for each item, and for the held item while Snap Held Item is on. |
+| Preview Glide Speed | Grid | How fast the placement preview, and a snapped held item, glide to new cells. Higher is snappier; 0 jumps. |
 | Slot Tag | Slot | Which slot of the container this widget shows. |
 | Follow Hovered Item | Details | Shows whatever the player hovers or focuses. Turn it off when used as a tooltip. |
-| Collapse Without Item | Details | Hides the panel while there's no item. |
+| Keep Last Item | Details | With Follow Hovered Item, keeps showing the last item while nothing is hovered, until it leaves the inventory. |
+| Hide Without Item | Details | Hides the panel while there's no item. It keeps its size, so nothing around it moves. |
+| Entry Class | List | Widget for each entry: an Inventory Slot Widget. |
+| Show Empty Entry | List | An empty entry after the items while the list has room, for gamepads to put items on. Without it, an item dropped anywhere else on the list goes to the end. Read-only lists never have one. |
 
 ![Inside the grid widget: three layers for cells, items and the placement preview, with the grid and item widget hierarchies](Docs/Images/ui-grid-layers.png)
 
@@ -739,14 +748,14 @@ Settings explained:
 
 **1. Item widget.** Add a Widget Blueprint with parent **Inventory Item Widget**, named `W_InventoryItem`.
 - Root: an **Overlay**.
-- Add an **Image** named `Icon`. Set both alignments to **Center**, not Fill: the grid sizes the icon to the item's cells and turns it with the item.
+- Add an **Image** named `Icon`, straight inside the Overlay. Set both alignments to **Center**, not Fill: the grid sizes the icon to the item's cells and turns it with the item, letting it hang over the Overlay's edges while it turns. Anywhere else, the icon takes its texture's size, so long items stay long. Put the item widget in a **Scale Box** set to **Scale to Fit** to fit it into a slot.
 - Add a **Text Block** named `CountText`, aligned bottom right. It is hidden automatically for items that don't stack.
 - In the Event Graph, add **On Held Changed** and set Render Opacity to 0.35 while held, so the player sees what they picked up.
 - Optionally, **On Hovered Changed** for a highlight.
 
 **2. Cell widget.** Add a Widget Blueprint with parent **Inventory Cell Widget**, named `W_InventoryCell`.
 - It is a Common UI button. Create a **Common Button Style** (Add › Blueprint Class › CommonButtonStyle) with normal, hovered and pressed looks, and set it as the cell's Style.
-- The designer can stay empty. The grid sizes each cell to Cell Size.
+- Give its designer a root widget, such as an empty **Overlay**. Common UI only builds the button around designer content, so a cell with an empty designer draws nothing and can't be clicked. The grid sizes each cell to Cell Size.
 
 **3. Grid widget.** Add a Widget Blueprint with parent **Inventory Grid Widget**, named `W_InventoryGrid`.
 - Root: a **Canvas Panel** named `GridCanvas`.
@@ -760,7 +769,8 @@ Settings explained:
 - In **On Item Changed**, read stats with **Get Tag Value**.
 
 **5. Equipment slot** (optional). Parent **Inventory Slot Widget**, named `W_EquipmentSlot`.
-- Root content: an Overlay with a background Border, and a Size Box (64 × 64) containing `W_InventoryItem` named `ItemWidget`. The item widget is hidden while the slot is empty.
+- Root content: an Overlay with a background Border, and a Size Box (64 × 64) containing a Scale Box (Scale to Fit, Down Only) containing `W_InventoryItem` named `ItemWidget`. The item widget is hidden while the slot is empty.
+- For a row in a list, such as a storage box, add a Text Block named `NameText` beside the item. It shows the item's name.
 - Give it the same Common Button Style as the cells.
 - Container Tag `Container.Equipment`. Set **Slot Tag** on each instance you place in the screen.
 
@@ -772,7 +782,7 @@ Settings explained:
 - In **On Deactivated**, call the Inventory UI Subsystem's **Clear Interaction**.
 - Open the screen by pushing it onto one of your Common UI layer stacks, such as a game menu layer above the HUD.
 
-**7. Rotate and split.** Bind your Rotate and Split actions to the subsystem's **Rotate Held** and **Split Held**. In C++, inside your screen's `NativeOnInitialized`:
+**7. Rotate and split.** Bind your Rotate and Split actions to the subsystem's **Rotate Held** and **Split Held**. Rotate Held leaves the item as it is if, turned, it couldn't fit the targeted grid at all, such as a long gun stood upright in short pockets. In C++, inside your screen's `NativeOnInitialized`:
 
 ```cpp
 RegisterUIActionBinding(FBindUIActionArgs(FUIActionTag::ConvertChecked(RotateTag), true,
@@ -800,6 +810,16 @@ In Blueprint, add Common buttons to the screen with **Triggering Input Action** 
 | Cancel | Release over nothing, or a refused spot | Back |
 | Item menu | Right-click: **On Context Requested** on the item widget | your own binding |
 
+**RE-style play.** Three switches on the Inventory UI Subsystem change the table above. Set them once, such as when the inventory screen opens:
+
+| Switch | Effect |
+| --- | --- |
+| Click Opens Item Menu | A click or Accept on an item asks for its item menu (On Context Requested) instead of picking it up. Items are picked up by dragging, or with **Begin Hold** from your own Move action. |
+| Snap Held Item | Grids draw the held item, using their Item Class, on the cells it would land on instead of a drag visual under the cursor. It stays on the last cells aimed at, and a mouse drag let go anywhere puts it there. |
+| Swap Picks Up Other | Putting the held item on another one picks that one up from where the held item was, instead of only trading places. Cancelling then leaves it there, which finishes the swap. |
+
+With any of them, held items in a grid land as close to the target as fits, never partly off the edge.
+
 ### 11.5 Placement preview
 
 ![The four preview actions: Place, Merge, Swap and Invalid](Docs/Images/placement-preview.png)
@@ -825,11 +845,13 @@ Get it with **Get Inventory UI Subsystem** (it needs the player).
 | Group | Functions and events |
 | --- | --- |
 | Holding | Begin Hold (Item, Count; 0 = whole stack), Cancel Hold, Rotate Held, Split Held, Set Held Count, Is Holding, Get Held Item, Get Held Count, Is Held Rotated, Get Held Size |
-| Placing | Place Held (Container, Placement), Activate Placement (place if holding, otherwise pick up), Preview Placement |
-| Target | Set Target, Clear Target, Get Target Container, Get Target Placement, Get Target Action |
+| Placing | Place Held (Container, Placement), Activate Placement (place if holding, otherwise pick up or ask for the item menu), Preview Placement |
+| Target | Set Target, Clear Target, Get Target Container, Get Target Placement, Get Target Action, Get Landing Placement (where the held item would land, moved in from a grid's edge) |
 | Hover | Set Hovered Item, Get Hovered Item |
-| Reset | Clear Interaction: drops the hold, the target and the hover |
-| Events | On Held Item Changed, On Target Changed, On Hovered Item Changed (Item) |
+| Selection | Set Selected Item, Get Selected Item: the item being acted on, such as the one whose menu is open. Item widgets show it with On Selected Changed. |
+| Style | Click Opens Item Menu, Snap Held Item, Swap Picks Up Other (11.4) |
+| Reset | Clear Interaction: drops the hold, the choosing, the target, the hover and the selection |
+| Events | On Held Item Changed, On Target Changed, On Hovered Item Changed (Item), On Selected Item Changed (Item) |
 
 ---
 
@@ -878,7 +900,7 @@ Inventory widgets stretch an icon over the item's cells, so a 1 × 3 item needs 
 
 - A texture named like `T_FlashlightBattery_Icon`, next to the item's cosmetics or in the **Icon Folder**, assigned to the cosmetics' **Icon**.
 - Its size is the item's cells times **Pixels Per Cell**: a 1 × 3 item gets 128 × 384 pixels by default.
-- It uses the texture settings for UI: UserInterface2D compression, no mipmaps, the UI texture group.
+- It uses the texture settings for UI: UserInterface2D compression and the UI texture group. It has mipmaps, so it stays clean when drawn much smaller, such as in a shortcut slot. Icons generated before that have none until they're generated again.
 - The changed assets are left unsaved, like any other edit.
 
 **Generated and hand-made icons**
@@ -1217,8 +1239,11 @@ From the item widget's **On Context Requested**, show a menu with **Use**. On Us
 | An equipped item is invisible | No pieces, wrong Attach Component, or First Person Primitive Type hides it | Check the cosmetics' Pieces. Get Spawned Pieces shows what spawned |
 | Abilities or effects aren't granted | The owner has no Ability System Component through the Ability System Interface | Add one to the actor |
 | The grid widget is empty | Container Tag doesn't match the component's, the player has no Inventory Component, the container isn't a Grid, or Item Class isn't set | Match the tags, set Item Class, or call Set Container |
+| The grid shows its items but no cells, and empty cells can't be clicked | The Cell Class has nothing in its designer, so Common UI builds no button. The log says so. | Add any root widget to the cell, such as an empty Overlay |
+| An empty slot shrinks to nothing | A Size Box with a collapsed child takes no space, whatever its overrides | Keep the item widget's visibility as the slot sets it (Hidden when empty); don't collapse it yourself |
 | Gamepad can't move through the grid | Cell Class isn't set, or the screen has no desired focus target | Set Cell Class; return a cell from Get Desired Focus Target |
 | Icons are stretched or turn wrong | The Icon fills its parent | Set its alignment to Center |
+| Icons are tiny, huge or squashed outside the grid | Outside grids an icon takes its texture's size | Put the item widget, or the details panel's Icon, in a Scale Box set to Scale to Fit |
 | Items don't stack | No Stack Rules, the item carries containers, or the stacks' state differs | Compare their tag values, tags and fragments |
 | A swap is refused | One stack is partial, a filter refuses, or an item would end up inside itself | Swap whole stacks; check filters |
 | A loot table gives nothing | Pool or entry conditions fail with your context tags, weights are 0, or Min Rolls is 0 | Check its Drop Rates with the same context ([12.6](#126-loot-table-drop-rates)) |

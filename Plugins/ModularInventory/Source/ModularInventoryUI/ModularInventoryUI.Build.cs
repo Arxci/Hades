@@ -7,5 +7,7 @@ public class ModularInventoryUI : ModuleRules
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "GameplayTags", "Slate", "SlateCore", "UMG", "CommonUI", "ModularInventory" });
+
+		PrivateDependencyModuleNames.AddRange(new string[] { "CommonInput" });
 	}
 }

@@ -3,6 +3,8 @@
 #include "Hades/Hades.h"
 #include "Hades/Inventory/HadesInventoryComponent.h"
 
+#include "Equipment/InventoryEquipmentComponent.h"
+
 UHadesQuickSlotComponent::UHadesQuickSlotComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
@@ -20,6 +22,14 @@ void UHadesQuickSlotComponent::BeginPlay()
 		return;
 	}
 	Inventory->OnInventoryChanged.AddDynamic(this, &ThisClass::HandleInventoryChanged);
+
+	// What's in hand changes without the inventory changing, since it stays in the pockets.
+	Equipment = UInventoryEquipmentComponent::FindEquipmentComponent(GetOwner());
+	if (Equipment)
+	{
+		Equipment->OnItemEquipped.AddDynamic(this, &ThisClass::HandleEquipmentChanged);
+		Equipment->OnItemUnequipped.AddDynamic(this, &ThisClass::HandleEquipmentChanged);
+	}
 }
 
 void UHadesQuickSlotComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -27,6 +37,11 @@ void UHadesQuickSlotComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	if (Inventory)
 	{
 		Inventory->OnInventoryChanged.RemoveDynamic(this, &ThisClass::HandleInventoryChanged);
+	}
+	if (Equipment)
+	{
+		Equipment->OnItemEquipped.RemoveDynamic(this, &ThisClass::HandleEquipmentChanged);
+		Equipment->OnItemUnequipped.RemoveDynamic(this, &ThisClass::HandleEquipmentChanged);
 	}
 
 	Super::EndPlay(EndPlayReason);
@@ -70,6 +85,11 @@ void UHadesQuickSlotComponent::ClearSlot(int32 SlotIndex)
 
 void UHadesQuickSlotComponent::ActivateSlot(int32 SlotIndex)
 {
+	if (Slots.IsValidIndex(SlotIndex))
+	{
+		OnSlotActivated.Broadcast(SlotIndex);
+	}
+
 	const FInventoryItemHandle Item = GetSlotItem(SlotIndex);
 	if (!Inventory || !Item.IsSet())
 	{
@@ -95,9 +115,24 @@ FInventoryItemHandle UHadesQuickSlotComponent::GetSlotItem(int32 SlotIndex) cons
 	return Slots.IsValidIndex(SlotIndex) ? Slots[SlotIndex] : FInventoryItemHandle();
 }
 
+int32 UHadesQuickSlotComponent::FindSlot(FInventoryItemHandle Item) const
+{
+	return Item.IsSet() ? Slots.IndexOfByKey(Item) : INDEX_NONE;
+}
+
+FDataTableRowHandle UHadesQuickSlotComponent::GetSlotKey(int32 SlotIndex) const
+{
+	return SlotKeys.IsValidIndex(SlotIndex) ? SlotKeys[SlotIndex] : FDataTableRowHandle();
+}
+
 bool UHadesQuickSlotComponent::CanAssign(FInventoryItemHandle Item) const
 {
 	return Inventory && (Inventory->CanDraw(Item) || Inventory->CanUseItem(Item));
+}
+
+void UHadesQuickSlotComponent::HandleEquipmentChanged(FInventoryItemHandle Item, FGameplayTag Slot)
+{
+	OnChanged.Broadcast();
 }
 
 void UHadesQuickSlotComponent::HandleInventoryChanged(UInventoryComponent* ChangedInventory)

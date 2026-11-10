@@ -51,4 +51,3 @@ public:
 	virtual void ComponentsToSave_Implementation(TArray<UActorComponent*>& Components) {}
 
 };
-

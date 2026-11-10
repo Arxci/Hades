@@ -3,61 +3,78 @@
 #include "EMSAsyncWait.h"
 #include "EMSObject.h"
 #include "EMSFunctionLibrary.h"
+#include "UObject/Package.h"
 #include "TimerManager.h"
 
 UEMSAsyncWait::UEMSAsyncWait()
 {
-	Type = EAsyncCheckType::CT_Load;
-	bSaveOrLoadTaskWasActive = false;
+	bLoadTaskWasActive = false;
 	bTimeoutTriggered = false;
 	bCompleted = false;
+	bCachedSaveFileExists = false;
+	bCachedHasLevel = false;
+	StartTime = 0.0;
 	CheckCounter = 0;
 }
 
-UEMSAsyncWait* UEMSAsyncWait::AsyncWaitForOperation(UObject* WorldContextObject, EAsyncCheckType CheckType, TSoftObjectPtr<AActor> CheckActor)
+UEMSAsyncWait* UEMSAsyncWait::AsyncWaitForOperation(UObject* WorldContextObject, ESaveGameMode Mode, TSoftObjectPtr<AActor> CheckActor)
 {
-	if (UEMSObject* EMSObject = UEMSObject::Get(WorldContextObject))
+	//Always return a valid task so the Blueprint node is guaranteed to fire its output pin. 
+	UEMSAsyncWait* WaitTask = NewObject<UEMSAsyncWait>(GetTransientPackage());
+	WaitTask->TargetActor = CheckActor;
+	WaitTask->LoadMode = Mode;
+	WaitTask->EMS = UEMSObject::Get(WorldContextObject);
+
+	if (!WaitTask->EMS)
 	{
-		UEMSAsyncWait* WaitTask = NewObject<UEMSAsyncWait>(GetTransientPackage());
-		WaitTask->EMS = EMSObject;
-		WaitTask->Type = CheckType;
-		WaitTask->TargetActor = CheckActor;
-		return WaitTask;
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("AsyncWaitForOperation: EMS could not be resolved from the World Context. The node will complete immediately."));
 	}
 
-	return nullptr;
+	return WaitTask;
+}
+
+static float GetWaitTime()
+{
+	const float WaitTime = FMath::Max(EMS::FallbackWaitTime, UEMSPluginSettings::Get()->AsyncWaitDelay);
+	return WaitTime;
 }
 
 void UEMSAsyncWait::Activate()
 {
-	if (EMS)
-	{
-		StartWaitTask();
-
-		const float WaitTime = UEMSPluginSettings::Get()->AsyncWaitDelay;
-		if (WaitTime > 0.f)
-		{
-			EMS->GetTimerManager().SetTimer(WaitTimerHandle, FTimerDelegate::CreateUObject(this, &UEMSAsyncWait::ForceProceed), WaitTime, false);
-		}
-	}
-	else
-	{
-		CompleteWaitTask();
-	}
-}
-
-void UEMSAsyncWait::StartWaitTask()
-{
-	if (!EMS || bTimeoutTriggered)
+	UWorld* World = EMS ? EMS->GetWorld() : nullptr;
+	if (!World)
 	{
 		CompleteWaitTask();
 		return;
 	}
 
+	bCachedSaveFileExists = EMS->DoesSaveSlotExist(EMS->GetCurrentSaveGameName());
+	bCachedHasLevel = EMS->WasCurrentLevelSaved();
+
+	//Arm the timeout BEFORE starting the task. Never register a timer on an object that is ready to destroy.
+	const float WaitTime = GetWaitTime();
+	StartTime = World->GetTimeSeconds();
+
+	EMS->GetTimerManager().SetTimer(WaitTimerHandle, FTimerDelegate::CreateUObject(this, &UEMSAsyncWait::ForceProceed), WaitTime, false);
+	StartWaitTask();
+}
+
+void UEMSAsyncWait::StartWaitTask()
+{
+	UWorld* World = EMS ? EMS->GetWorld() : nullptr;
+	if (!World || bTimeoutTriggered)
+	{
+		CompleteWaitTask();
+		return;
+	}
+
+	//Framerate independent wait
+	double ElapsedTime = World->GetTimeSeconds() - StartTime;
+	const float WaitTime = GetWaitTime();
+
 	//Single Actor check
 	if (!TargetActor.ToSoftObjectPath().IsNull())
 	{
-		//Try to get the pointer 
 		AActor* ResolvedActor = TargetActor.Get();
 		if (ResolvedActor && UEMSFunctionLibrary::IsLoadedState(ResolvedActor))
 		{
@@ -65,43 +82,59 @@ void UEMSAsyncWait::StartWaitTask()
 			return;
 		}
 
-		//If it's not loaded yet OR not finished processing, check again next tick
+		//If the actor never reaches its loaded state, give up. Instead of waiting forever. 
+		if (ElapsedTime >= WaitTime)
+		{
+			bTimeoutTriggered = true;
+			CompleteWaitTask();
+			return;
+		}
+
+		//If not loaded yet OR not finished processing, check again next tick
 		EMS->GetTimerManager().SetTimerForNextTick(this, &UEMSAsyncWait::StartWaitTask);
 		return;
 	}
 
-	//Check for World Partition Init
+	//Check for World Partition Init, irrelevant for player only mode
 	bool bWorldPartitionInitalizing = false;
-	if (Type != EAsyncCheckType::CT_Save)
+	if (!UEMSObject::SkipInitialWorldPartitionLoad() && LoadMode != ESaveGameMode::MODE_Player)
 	{
 		bWorldPartitionInitalizing = EMS->AutoSaveLoadWorldPartition() && !EMS->WorldPartitionLoadComplete();
 	}
 
-	const bool bIsTaskActive = EMS->IsAsyncSaveOrLoadTaskActive(ESaveGameMode::MODE_All, Type, false);
+	//Does not catch Tasks started before the node, but also waits during pause
+	const bool bIsTaskActive = FAsyncSaveHelpers::IsAsyncLoadTaskActive(LoadMode, false) || World->IsPaused();
 
 	//Wait as long as the current async operation is completed.
 	if (bIsTaskActive || bWorldPartitionInitalizing)
 	{
 		EMS->GetTimerManager().SetTimerForNextTick(this, &UEMSAsyncWait::StartWaitTask);
-		bSaveOrLoadTaskWasActive = true;
+		bLoadTaskWasActive = true;
 	}
 	else
 	{
-		//Without save data or an already completed WP-init, we will proceed  
-		const bool bSaveFileExists = EMS->DoesSaveSlotExist(EMS->GetCurrentSaveGameName());
-		const bool bHasLevel = EMS->WasCurrentLevelSaved();
-		const bool bWorldPartitionAlreadyComplete = EMS->WorldPartitionLoadComplete();
+		//Make sure WP is finished
+		const bool bWorldPartitionDone =
+			LoadMode == ESaveGameMode::MODE_Player
+			|| !EMS->AutoSaveLoadWorldPartition()
+			|| EMS->WorldPartitionLoadComplete();
 
-		if (!bSaveFileExists || !bHasLevel || bWorldPartitionAlreadyComplete)
+		if (!bCachedSaveFileExists || !bCachedHasLevel || bWorldPartitionDone)
 		{
-			//Wait a few frames, due to the async nature of Save and Load operations
+			//Wait a few ticks due to the latent nature of Save and Load operations
 			if (++CheckCounter > EMS::MinAsyncWaitFrames)
 			{
-				bSaveOrLoadTaskWasActive = true;
+				bLoadTaskWasActive = true;
 			}
 		}
+		else if (ElapsedTime >= WaitTime)
+		{
+			//Backstop for the timing race where an async task was expected but never observed active. 
+			bTimeoutTriggered = true;
+			bLoadTaskWasActive = true;
+		}
 
-		if (bSaveOrLoadTaskWasActive)
+		if (bLoadTaskWasActive)
 		{
 			CompleteWaitTask();
 		}
@@ -109,7 +142,7 @@ void UEMSAsyncWait::StartWaitTask()
 		{
 			EMS->GetTimerManager().SetTimerForNextTick(this, &UEMSAsyncWait::StartWaitTask);
 		}
-	}	
+	}
 }
 
 void UEMSAsyncWait::ForceProceed()
@@ -130,6 +163,12 @@ void UEMSAsyncWait::CompleteWaitTask()
 	if (EMS)
 	{
 		EMS->GetTimerManager().ClearAllTimersForObject(this);
+	}
+
+	//bTimeoutTriggered is set by ForceProceed() and by the frame based backstops
+	if (bTimeoutTriggered)
+	{
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("AsyncWaitForOperation completed via timeout/backstop rather than a clean detection."));
 	}
 
 	OnCompleted.Broadcast();

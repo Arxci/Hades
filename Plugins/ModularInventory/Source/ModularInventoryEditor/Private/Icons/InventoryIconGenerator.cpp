@@ -66,7 +66,8 @@ namespace
 	{
 		Texture.Source.Init(Size.X, Size.Y, 1, 1, TSF_BGRA8, reinterpret_cast<const uint8*>(Pixels.GetData()));
 		Texture.CompressionSettings = TC_EditorIcon;
-		Texture.MipGenSettings = TMGS_NoMipmaps;
+		// Icons are also drawn far smaller than this, such as in shortcut slots, and only shrink cleanly with mips.
+		Texture.MipGenSettings = TMGS_SimpleAverage;
 		Texture.LODGroup = TEXTUREGROUP_UI;
 		Texture.SRGB = true;
 

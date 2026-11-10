@@ -21,8 +21,6 @@ public:
 
 	static bool IsDynamicLevelStreaming();
 
-	static bool IsMemoryOnlySave();
-
 	static bool IsConsoleFileSystem();
 
 	static bool IsMultiThreadSaving();
@@ -30,6 +28,8 @@ public:
 	static bool IsDeferredLoading();
 
 	static uint32 GetLoadBatchSize();
+
+	static bool IsSaveReportEnabled();
 };
 
 class EASYMULTISAVE_API FAsyncSaveHelpers
@@ -40,13 +40,18 @@ public:
 	template<class T>
 	static bool CheckLoadIterator(const T& It, const ESaveGameMode Mode, const bool bLog, const FString& DebugString);
 
-	static bool IsAsyncSaveOrLoadTaskActive(const UWorld* InWorld, const ESaveGameMode Mode, const EAsyncCheckType CheckType, const bool bLog);
+	static bool IsAsyncLoadTaskActive(const ESaveGameMode Mode, const bool bLog);
+	static bool IsAsyncTaskActive(const ESaveGameMode Mode = ESaveGameMode::MODE_All, const bool bLog = false);
+	static bool IsAsyncTaskActiveWithPause(const UWorld* InWorld, const ESaveGameMode Mode, const bool bLog);
+
 	static bool IsStreamAutoLoadActive(const ULevel* InLevel);
 	static void DestroyStreamAutoLoadTask(const ULevel* InLevel = nullptr);
 	static void DestroyAsyncLoadTask();
 	static void DestroyAsyncSaveTask();
 
+	static bool IsWorldTearingDown(const UWorld* World);
 	static bool ShouldCancelSaveTask(const UObject* InObject);
 
 	static ESaveGameMode GetMode(const int32 Data);
 };
+

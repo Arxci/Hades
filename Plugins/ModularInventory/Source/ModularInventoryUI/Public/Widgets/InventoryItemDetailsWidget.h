@@ -39,12 +39,17 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Details")
 	void OnItemChanged();
 
-	/** Shows whatever the player hovers with the mouse or focuses with a gamepad. Leave off for tooltips. */
+	/** Shows whatever the player hovers with the mouse or focuses with a gamepad, or the item being moved while one is held. Leave off for tooltips. */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Details")
 	bool bFollowHoveredItem = false;
 
+	/** With Follow Hovered Item, keeps showing the last item while nothing is hovered, until it leaves the inventory. */
+	UPROPERTY(EditAnywhere, Category = "Inventory|Details", meta = (EditCondition = "bFollowHoveredItem"))
+	bool bKeepLastItem = false;
+
+	/** Hidden rather than collapsed, so it keeps its size and nothing around it moves. */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Details")
-	bool bCollapseWithoutItem = true;
+	bool bHideWithoutItem = true;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Details", meta = (BindWidgetOptional))
 	TObjectPtr<UImage> Icon;
@@ -62,6 +67,9 @@ protected:
 private:
 	UFUNCTION()
 	void HandleHoveredItemChanged(FInventoryItemHandle HoveredItem);
+
+	UFUNCTION()
+	void FollowInteraction();
 
 	void HandleRegistryChanged(const FInventoryChangeSet& Changes);
 	void Refresh();

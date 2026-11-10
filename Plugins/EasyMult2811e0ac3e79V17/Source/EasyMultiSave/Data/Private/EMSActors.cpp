@@ -44,10 +44,10 @@ FString FActorHelpers::GetActorLevelName(const AActor* Actor)
 
 	/*
 	This supports multiple streaming levels and instances(Also in streaming levels) of the same type. 
-	Every streaming level and instance is a ULevelStreamingDynamic. 
+	Every streaming level and instance is a ULevelStreamingDynamic. Not for World Partition.
 	For level instances, this will return the full unique ID. For levels in the 'Levels' list, this appends an index.
 	*/
-	if (FSettingHelpers::IsDynamicLevelStreaming() && !FStreamHelpers::AutoSaveLoadWorldPartition(World))
+	if (FSettingHelpers::IsDynamicLevelStreaming() && !World->IsPartitionedWorld())
 	{
 		const FString InstString = FLevelHelpers::GetLevelInstanceNameAsString(Actor);
 		const FString FixedInstString = FEditorPaths::StripLevelPIEPrefix(World, InstString);
@@ -65,14 +65,21 @@ FString FActorHelpers::GetActorLevelName(const AActor* Actor)
 
 FString FActorHelpers::GetFullActorName(const AActor* Actor)
 {
+	if (!Actor)
+	{
+		return FString();
+	}
+
 	const FString ActorName = Actor->GetName();
 
-	//This is only valid for placed Actors. Runtime Actors are always in the persistent.
-	//Can't use GetActorType here, since it would crash Multi-Thread loading.
+	/*
+	This is only valid for placed Actors. Runtime Actors are always in the persistent.
+	Can't use GetActorType here, since it would crash Multi-Thread loading.
+	*/
 	if (IsPlacedActor(Actor))
 	{
 		const FString LevelString = GetActorLevelName(Actor);
-		const bool bAlreadyHas = ActorName.Contains(LevelString);
+		const bool bAlreadyHas = ActorName.StartsWith(LevelString);
 		const FString FinalString = bAlreadyHas ? ActorName : (LevelString + EMS::UnderscoreInt + ActorName);
 
 		return FinalString;
@@ -83,7 +90,7 @@ FString FActorHelpers::GetFullActorName(const AActor* Actor)
 
 FString FActorHelpers::GetComponentName(const AActor* Actor, const UActorComponent* Comp)
 {
-	if (!Actor)
+	if (!Actor || !Comp)
 	{
 		return FString();
 	}
@@ -206,36 +213,6 @@ bool FActorHelpers::IsLevelScript(const EActorType Type)
 	return Type == EActorType::AT_LevelScript;
 }
 
-void FActorHelpers::SortLevelActors(TArray<FActorSaveData>& ToSort, const APlayerController* PC)
-{
-	const bool bShouldSort = FSettingHelpers::IsMultiThreadLoading() || FSettingHelpers::IsDeferredLoading();
-	if (!bShouldSort)
-	{
-		return;
-	}
-
-	if (PC)
-	{
-		ToSort.Sort([PC](const FActorSaveData& A, const FActorSaveData& B)
-		{
-			return FActorHelpers::CompareDistance(A.Transform.GetLocation(), B.Transform.GetLocation(), PC);
-		});
-	}
-}
-
-bool FActorHelpers::CompareDistance(const FVector& VecA, const FVector& VecB, const APlayerController* PC)
-{
-	if (PC && PC->PlayerCameraManager)
-	{
-		const FVector CameraLoc = PC->PlayerCameraManager->GetCameraLocation();
-		const float DistA = FVector::Dist(VecA, CameraLoc);
-		const float DistB = FVector::Dist(VecB, CameraLoc);
-		return DistA < DistB;
-	}
-
-	return false;
-}
-
 EActorType FActorHelpers::GetActorType(const AActor* Actor)
 {
 	//Runtime spawned
@@ -281,15 +258,47 @@ EActorType FActorHelpers::GetActorType(const AActor* Actor)
 	return EActorType::AT_Runtime;
 }
 
-void FActorHelpers::PruneSavedActors(const TMap<FActorByteKey, TWeakObjectPtr<AActor>>& InActorMap, TArray<FActorSaveData>& OutSaved)
+void FActorHelpers::SortLevelActors(TArray<FActorSaveData>& ToSort, const APlayerController* PC)
 {
-	if (OutSaved.IsEmpty())
+	const bool bShouldSort = FSettingHelpers::IsMultiThreadLoading() || FSettingHelpers::IsDeferredLoading();
+	if (!bShouldSort)
 	{
 		return;
 	}
 
-	const int32 NumElements = OutSaved.Num();
-	const int32 RemovedCount = OutSaved.RemoveAll([&InActorMap](const FActorSaveData& ActorData)
+	if (PC)
+	{
+		ToSort.Sort([PC](const FActorSaveData& A, const FActorSaveData& B)
+		{
+			return FActorHelpers::CompareDistance(A.Transform.GetLocation(), B.Transform.GetLocation(), PC);
+		});
+	}
+}
+
+bool FActorHelpers::CompareDistance(const FVector& VecA, const FVector& VecB, const APlayerController* PC)
+{
+	if (PC && PC->PlayerCameraManager)
+	{
+		const FVector CameraLoc = PC->PlayerCameraManager->GetCameraLocation();
+		const float DistA = FVector::Dist(VecA, CameraLoc);
+		const float DistB = FVector::Dist(VecB, CameraLoc);
+		return DistA < DistB;
+	}
+
+	return false;
+}
+
+void FActorHelpers::PruneSavedActors(const TMap<FActorByteKey, TWeakObjectPtr<AActor>>& InActorMap, TArray<FActorSaveData>& AllSaved)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("UEMS::PruneSavedActors"));
+
+	if (AllSaved.IsEmpty())
+	{
+		return;
+	}
+
+	const int32 NumElements = AllSaved.Num();
+	const int32 RemovedCount = AllSaved.RemoveAll([&InActorMap](const FActorSaveData& ActorData)
 	{
 		const EActorType Type = static_cast<EActorType>(ActorData.Type);
 		if (!FActorHelpers::IsLevelActor(Type, false))
@@ -320,7 +329,7 @@ void FActorHelpers::PruneSavedActors(const TMap<FActorByteKey, TWeakObjectPtr<AA
 	if (RemovedCount > 0)
 	{
 		UE_LOG(LogEasyMultiSave, Verbose, TEXT("PruneSavedActors: Pruned %d actors (from %d to %d)"),
-			RemovedCount, NumElements, OutSaved.Num());
+			RemovedCount, NumElements, AllSaved.Num());
 	}
 	else
 	{
@@ -331,6 +340,25 @@ void FActorHelpers::PruneSavedActors(const TMap<FActorByteKey, TWeakObjectPtr<AA
 bool FActorHelpers::AreWorldActorsInitialized(const UWorld* InWorld)
 {
 	return InWorld && InWorld->AreActorsInitialized();
+}
+
+bool FActorHelpers::ShouldSkipLoadForActorList(const FActorInitContext& Init, const EActorType Type)
+{
+	//Used by Prepare Actors to skip already-loaded Actors on non-full-reload loads.
+
+	if (!Init.bIsLoading || Init.bFullReload)
+	{
+		return false;
+	}
+
+	const AActor* Actor = Init.Actor;
+	if (!Actor)
+	{
+		return false;
+	}
+
+	//Runtime Actors must be in the list to know they were already Spawned(See FEMSLevelLoader::ProcessActor).
+	return IsLoaded(Actor) && !IsRuntime(Type);
 }
 
 /**
@@ -372,33 +400,44 @@ UClass* FSpawnHelpers::ResolveSpawnClass(const FString& InClass)
 	return SpawnClass;
 }
 
-static FName MakeActorName(const FActorSaveData& ActorArray)
-{
-	return FName(FSaveHelpers::StringFromBytes(ActorArray.Name));
-}
-
 FActorSpawnParameters FSpawnHelpers::GetSpawnParams(const UObject* WorldContext, const FActorSaveData& ActorArray)
 {
 	FActorSpawnParameters SpawnParams;
 
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	SpawnParams.Name = MakeActorName(ActorArray);
-	SpawnParams.NameMode = FActorSpawnParameters::ESpawnActorNameMode::Requested;
+	SpawnParams.Name = FName(FSaveHelpers::StringFromBytes(ActorArray.Name));
+	SpawnParams.NameMode = FActorSpawnParameters::ESpawnActorNameMode::Required_ErrorAndReturnNull;
 
 	return SpawnParams;
 }
 
-AActor* FSpawnHelpers::CheckForExistingActor(const UWorld* InWorld, const FActorSaveData& ActorArray)
+AActor* FSpawnHelpers::CheckForExistingActor(const UWorld* InWorld, const FName& ActorName)
 {
-	if (InWorld && InWorld->PersistentLevel)
+	if (!InWorld || !InWorld->PersistentLevel || ActorName.IsNone())
 	{
-		const FName LoadedActorName = MakeActorName(ActorArray);
-		AActor* NewLevelActor = Cast<AActor>(StaticFindObjectFast(nullptr, InWorld->PersistentLevel, LoadedActorName));
-		if (NewLevelActor)
-		{
-			return NewLevelActor;
-		}
+		return nullptr;
 	}
 
-	return nullptr;
+#if EMS_ENGINE_MIN_UE57
+	//UE 5.7 and newer 
+	UObject* Found = StaticFindObjectFast(
+		AActor::StaticClass(),
+		InWorld->PersistentLevel,
+		ActorName,
+		EFindObjectFlags::None,
+		RF_NoFlags,
+		EInternalObjectFlags::Garbage | EInternalObjectFlags::Unreachable);
+#else
+	//UE 5.6 and older
+	UObject* Found = StaticFindObjectFast(
+		AActor::StaticClass(),
+		InWorld->PersistentLevel,
+		ActorName,
+		false,
+		RF_NoFlags,
+		EInternalObjectFlags::Garbage | EInternalObjectFlags::Unreachable);
+#endif
+
+	AActor* Actor = Cast<AActor>(Found);
+	return (Actor && IsValid(Actor)) ? Actor : nullptr;
 }

@@ -1,6 +1,7 @@
 ﻿#include "HadesActivatableWidget.h"
 
 #include "Editor/WidgetCompilerLog.h"
+#include "Input/CommonUIInputTypes.h"
 
 #include "Hades/Player/HadesPlayerController.h"
 
@@ -19,6 +20,18 @@ TOptional<FUIInputConfig> UHadesActivatableWidget::GetDesiredInputConfig() const
 	case EHadesWidgetInputMode::Default:
 	default:
 		return TOptional<FUIInputConfig>();
+	}
+}
+
+void UHadesActivatableWidget::NativeOnInitialized()
+{
+	Super::NativeOnInitialized();
+
+	if (!ConfirmAction.IsNull())
+	{
+		FBindUIActionArgs ConfirmArgs(ConfirmAction, true, FSimpleDelegate::CreateWeakLambda(this, [] {}));
+		ConfirmArgs.bConsumeInput = false;
+		RegisterUIActionBinding(ConfirmArgs);
 	}
 }
 

@@ -4,7 +4,9 @@
 
 #include "Data/InventoryContainerLayout.h"
 #include "InventorySubsystem.h"
+#include "InventoryUISubsystem.h"
 #include "InventoryWidgetHelpers.h"
+#include "Widgets/InventoryDragDropOperation.h"
 #include "Widgets/InventorySlotWidget.h"
 
 void UInventoryListWidget::NativeConstruct()
@@ -55,7 +57,8 @@ void UInventoryListWidget::Refresh()
 	{
 		const int32 Capacity = Record->Layout->Capacity;
 		const bool bHasRoom = Capacity == 0 || Record->Items.Num() < Capacity;
-		NumEntries = Record->Items.Num() + (bHasRoom ? 1 : 0);
+		const bool bEmptyEntry = bShowEmptyEntry && bHasRoom && !Record->Layout->bReadOnlyInUI;
+		NumEntries = Record->Items.Num() + (bEmptyEntry ? 1 : 0);
 	}
 
 	while (Entries.Num() < NumEntries)
@@ -73,4 +76,50 @@ void UInventoryListWidget::Refresh()
 	{
 		Entries[Index]->SetContainerPlacement(Container, FInventoryPlacement::AtIndex(Index));
 	}
+}
+
+// Mouse drops between and after the entries, which take drops on themselves
+UInventoryUISubsystem* UInventoryListWidget::GetDropInteraction(const UDragDropOperation* Operation) const
+{
+	return Cast<UInventoryDragDropOperation>(Operation) && Container.IsSet() ? UInventoryUISubsystem::Get(GetOwningLocalPlayer()) : nullptr;
+}
+
+FInventoryPlacement UInventoryListWidget::GetEndPlacement() const
+{
+	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
+	const FInventoryContainerRecord* Record = Inventory ? Inventory->GetRegistry().FindContainer(Container) : nullptr;
+	return FInventoryPlacement::AtIndex(Record ? Record->Items.Num() : 0);
+}
+
+bool UInventoryListWidget::NativeOnDragOver(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
+{
+	UInventoryUISubsystem* Interaction = GetDropInteraction(InOperation);
+	if (!Interaction)
+	{
+		return Super::NativeOnDragOver(InGeometry, InDragDropEvent, InOperation);
+	}
+
+	Interaction->SetTarget(Container, GetEndPlacement());
+	return true;
+}
+
+void UInventoryListWidget::NativeOnDragLeave(const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
+{
+	Super::NativeOnDragLeave(InDragDropEvent, InOperation);
+
+	UInventoryUISubsystem* Interaction = GetDropInteraction(InOperation);
+	if (Interaction && !Interaction->bSnapHeldItem && Interaction->GetTargetContainer() == Container)
+	{
+		Interaction->ClearTarget();
+	}
+}
+
+bool UInventoryListWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
+{
+	UInventoryUISubsystem* Interaction = GetDropInteraction(InOperation);
+	if (!Interaction)
+	{
+		return Super::NativeOnDrop(InGeometry, InDragDropEvent, InOperation);
+	}
+	return Interaction->PlaceHeld(Container, GetEndPlacement());
 }

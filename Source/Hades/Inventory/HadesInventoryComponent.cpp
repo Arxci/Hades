@@ -21,12 +21,6 @@
 namespace
 {
 	constexpr double DropDistance = 60.0;
-
-	FText GetItemName(const UInventorySubsystem& InventorySubsystem, FInventoryItemHandle Item)
-	{
-		const UInventoryItemDefinition* Definition = InventorySubsystem.GetItemDefinition(Item);
-		return Definition ? Definition->DisplayName : FText::GetEmpty();
-	}
 }
 
 // Hands
@@ -44,34 +38,16 @@ bool UHadesInventoryComponent::DrawItem(FInventoryItemHandle Item)
 		return false;
 	}
 
+	StowItem(GetItemInHand());
 	EInventoryError Error;
-	if (Equipment->EquipItem(Item, Hand, Error))
-	{
-		return true;
-	}
-	if (Error == EInventoryError::NoSpace)
-	{
-		AHadesPlayerController::ShowMessageTo(GetOwner(), LOCTEXT("NoRoomForHands", "No room to put away what's in your hands."));
-	}
-	return false;
+	return Equipment->EquipInPlace(Item, Hand, Error);
 }
 
 bool UHadesInventoryComponent::StowItem(FInventoryItemHandle Item)
 {
 	UInventoryEquipmentComponent* Equipment = UInventoryEquipmentComponent::FindEquipmentComponent(GetOwner());
-	const UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
-	if (!Equipment || !InventorySubsystem || !IsInHand(Item))
-	{
-		return false;
-	}
-
 	EInventoryError Error;
-	if (Equipment->UnequipItem(Item, Error))
-	{
-		return true;
-	}
-	AHadesPlayerController::ShowMessageTo(GetOwner(), FText::Format(LOCTEXT("NoRoomToStow", "No room to put away the {0}."), GetItemName(*InventorySubsystem, Item)));
-	return false;
+	return Equipment && IsInHand(Item) && Equipment->UnequipItem(Item, Error);
 }
 
 bool UHadesInventoryComponent::CanDraw(FInventoryItemHandle Item) const
@@ -81,9 +57,19 @@ bool UHadesInventoryComponent::CanDraw(FInventoryItemHandle Item) const
 
 bool UHadesInventoryComponent::IsInHand(FInventoryItemHandle Item) const
 {
-	const UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
-	const FInventoryContainerHandle Hands = GetContainer(HadesGameplayTags::Container_Hands);
-	return InventorySubsystem && Hands.IsSet() && InventorySubsystem->GetItemContainer(Item) == Hands;
+	return Item.IsSet() && GetItemInHand() == Item;
+}
+
+FInventoryItemHandle UHadesInventoryComponent::GetItemInHand() const
+{
+	const UInventoryEquipmentComponent* Equipment = UInventoryEquipmentComponent::FindEquipmentComponent(GetOwner());
+	if (!Equipment)
+	{
+		return FInventoryItemHandle();
+	}
+
+	const FInventoryItemHandle Right = Equipment->GetEquippedItem(HadesGameplayTags::Equipment_Slot_Hand_Right);
+	return Right.IsSet() ? Right : Equipment->GetEquippedItem(HadesGameplayTags::Equipment_Slot_Hand_Left);
 }
 
 FGameplayTag UHadesInventoryComponent::ChooseHand(FInventoryItemHandle Item) const
@@ -91,30 +77,14 @@ FGameplayTag UHadesInventoryComponent::ChooseHand(FInventoryItemHandle Item) con
 	const UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
 	const UInventoryItemDefinition* Definition = InventorySubsystem ? InventorySubsystem->GetItemDefinition(Item) : nullptr;
 	const UInventoryEquipRules* Rules = Definition ? Definition->EquipRules.Get() : nullptr;
-	if (!Rules)
-	{
-		return FGameplayTag();
-	}
-
-	// An empty hand first, so a knife that fits either hand leaves the pistol in the right one.
-	const FInventoryContainerHandle Hands = GetContainer(HadesGameplayTags::Container_Hands);
-	FGameplayTag Chosen;
 	for (const FGameplayTag& Hand : { FGameplayTag(HadesGameplayTags::Equipment_Slot_Hand_Right), FGameplayTag(HadesGameplayTags::Equipment_Slot_Hand_Left) })
 	{
-		if (!Rules->AllowsSlot(Hand))
-		{
-			continue;
-		}
-		if (!InventorySubsystem->GetItemInSlot(Hands, Hand).IsSet())
+		if (Rules && Rules->AllowsSlot(Hand))
 		{
 			return Hand;
 		}
-		if (!Chosen.IsValid())
-		{
-			Chosen = Hand;
-		}
 	}
-	return Chosen;
+	return FGameplayTag();
 }
 
 // Item actions
@@ -197,7 +167,20 @@ FTransform UHadesInventoryComponent::FindDropTransform() const
 bool UHadesInventoryComponent::CanCombine(FInventoryItemHandle Item) const
 {
 	const UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
-	if (!InventorySubsystem || !CombineRecipes || !OwnsItem(Item))
+	if (!InventorySubsystem || !OwnsItem(Item))
+	{
+		return false;
+	}
+
+	const bool bHasGunPartner = FindItems(FInventoryItemQuery()).ContainsByPredicate([&](const FInventoryItemHandle& Other)
+	{
+		return FindGunLoadedBy(Item, Other).IsSet();
+	});
+	if (bHasGunPartner)
+	{
+		return true;
+	}
+	if (!CombineRecipes)
 	{
 		return false;
 	}
@@ -218,6 +201,17 @@ bool UHadesInventoryComponent::CanCombine(FInventoryItemHandle Item) const
 
 bool UHadesInventoryComponent::CombineItems(FInventoryItemHandle Item, FInventoryItemHandle Other)
 {
+	const FInventoryItemHandle Gun = FindGunLoadedBy(Item, Other);
+	if (Gun.IsSet())
+	{
+		if (ReloadGun(Gun))
+		{
+			return true;
+		}
+		AHadesPlayerController::ShowMessageTo(GetOwner(), LOCTEXT("GunFull", "It's already fully loaded."));
+		return false;
+	}
+
 	UInventoryRecipe* Recipe = FindCombineRecipe(Item, Other);
 	if (!Recipe)
 	{
@@ -235,6 +229,85 @@ bool UHadesInventoryComponent::CombineItems(FInventoryItemHandle Item, FInventor
 		? LOCTEXT("NoRoomToCombine", "Not enough space.")
 		: LOCTEXT("CantCombineNow", "You can't combine those right now."));
 	return false;
+}
+
+// Guns
+int32 UHadesInventoryComponent::GetLoadedRounds(FInventoryItemHandle Gun) const
+{
+	const UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
+	const FHadesGun* GunData = FindGun(Gun);
+	if (!InventorySubsystem || !GunData)
+	{
+		return 0;
+	}
+
+	// Kept on the gun once it has been fired or loaded. Until then it has its starting rounds.
+	const FGameplayTag Rounds = HadesGameplayTags::Item_Stat_Rounds;
+	return InventorySubsystem->HasTagValue(Gun, Rounds)
+		? FMath::RoundToInt32(InventorySubsystem->GetTagValue(Gun, Rounds))
+		: FMath::Min(GunData->StartingRounds, GunData->Capacity);
+}
+
+int32 UHadesInventoryComponent::GetCapacity(FInventoryItemHandle Gun) const
+{
+	const FHadesGun* GunData = FindGun(Gun);
+	return GunData ? GunData->Capacity : 0;
+}
+
+int32 UHadesInventoryComponent::GetSpareRounds(FInventoryItemHandle Gun) const
+{
+	const FHadesGun* GunData = FindGun(Gun);
+	return GunData && GunData->Ammo ? CountItems(MakeAmmoQuery(*GunData)) : 0;
+}
+
+bool UHadesInventoryComponent::ReloadGun(FInventoryItemHandle Gun)
+{
+	UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
+	const FHadesGun* GunData = FindGun(Gun);
+	const int32 Loaded = GetLoadedRounds(Gun);
+	if (!InventorySubsystem || !GunData || !GunData->Ammo || !OwnsItem(Gun) || Loaded >= GunData->Capacity)
+	{
+		return false;
+	}
+
+	const int32 Taken = RemoveItems(MakeAmmoQuery(*GunData), GunData->Capacity - Loaded);
+	return Taken > 0 && InventorySubsystem->SetTagValue(Gun, HadesGameplayTags::Item_Stat_Rounds, Loaded + Taken);
+}
+
+bool UHadesInventoryComponent::SpendRounds(FInventoryItemHandle Gun, int32 Count)
+{
+	UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
+	const int32 Loaded = GetLoadedRounds(Gun);
+	if (!InventorySubsystem || !FindGun(Gun) || Count <= 0 || Count > Loaded)
+	{
+		return false;
+	}
+	return InventorySubsystem->SetTagValue(Gun, HadesGameplayTags::Item_Stat_Rounds, Loaded - Count);
+}
+
+const FHadesGun* UHadesInventoryComponent::FindGun(FInventoryItemHandle Item) const
+{
+	const UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
+	const UInventoryItemDefinition* Definition = InventorySubsystem ? InventorySubsystem->GetItemDefinition(Item) : nullptr;
+	return Definition ? Definition->FindFragment<FHadesGun>() : nullptr;
+}
+
+FInventoryItemQuery UHadesInventoryComponent::MakeAmmoQuery(const FHadesGun& Gun) const
+{
+	FInventoryItemQuery Query;
+	Query.Definitions.Add(Gun.Ammo);
+	return Query;
+}
+
+FInventoryItemHandle UHadesInventoryComponent::FindGunLoadedBy(FInventoryItemHandle Item, FInventoryItemHandle Other) const
+{
+	const UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
+	auto Loads = [&](FInventoryItemHandle Gun, FInventoryItemHandle Ammo)
+	{
+		const FHadesGun* GunData = FindGun(Gun);
+		return InventorySubsystem && GunData && GunData->Ammo && InventorySubsystem->GetItemDefinition(Ammo) == GunData->Ammo;
+	};
+	return Loads(Item, Other) ? Item : Loads(Other, Item) ? Other : FInventoryItemHandle();
 }
 
 UInventoryRecipe* UHadesInventoryComponent::FindCombineRecipe(FInventoryItemHandle Item, FInventoryItemHandle Other) const

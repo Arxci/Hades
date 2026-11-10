@@ -1,6 +1,9 @@
 #include "Widgets/InventorySlotWidget.h"
 
+#include "Components/TextBlock.h"
+
 #include "Data/InventoryContainerLayout.h"
+#include "Data/InventoryItemDefinition.h"
 #include "InventorySubsystem.h"
 #include "InventoryUISubsystem.h"
 #include "InventoryWidgetHelpers.h"
@@ -64,8 +67,15 @@ void UInventorySlotWidget::Refresh()
 	const FInventoryItemHandle Item = GetItem();
 	if (ItemWidget)
 	{
+		// Hidden, not collapsed: a Size Box whose only child is collapsed shrinks to nothing, overrides and all.
 		ItemWidget->SetItem(Item);
-		ItemWidget->SetVisibility(Item.IsSet() ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		ItemWidget->SetVisibility(Item.IsSet() ? ESlateVisibility::Visible : ESlateVisibility::Hidden);
+	}
+	if (NameText)
+	{
+		const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
+		const UInventoryItemDefinition* Definition = Inventory ? Inventory->GetItemDefinition(Item) : nullptr;
+		NameText->SetText(Definition ? Definition->DisplayName : FText::GetEmpty());
 	}
 
 	if (Item != ShownItem)
@@ -111,7 +121,7 @@ void UInventorySlotWidget::NativeOnDragLeave(const FDragDropEvent& InDragDropEve
 {
 	Super::NativeOnDragLeave(InDragDropEvent, InOperation);
 
-	if (IsTargeted())
+	if (IsTargeted() && !GetInteraction()->bSnapHeldItem)
 	{
 		GetInteraction()->ClearTarget();
 	}

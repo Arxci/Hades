@@ -66,7 +66,7 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character|Interaction")
 	TObjectPtr<UHadesInteractorComponent> InteractorComponent;
 
-	/** Set its containers in the Blueprint: Container.Pockets (grid), Container.KeyItems (list) and Container.Hands (equipment slots). */
+	/** Set its containers in the Blueprint: Container.Pockets (grid) and Container.KeyItems (list). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character|Inventory")
 	TObjectPtr<UHadesInventoryComponent> InventoryComponent;
 

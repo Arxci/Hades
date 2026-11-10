@@ -1,5 +1,7 @@
 #include "Widgets/InventoryGridWidget.h"
 
+#include "CommonInputSubsystem.h"
+#include "CommonInputTypeEnum.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 
@@ -7,6 +9,7 @@
 #include "InventorySubsystem.h"
 #include "InventoryUISubsystem.h"
 #include "InventoryWidgetHelpers.h"
+#include "ModularInventory.h"
 #include "Widgets/InventoryCellWidget.h"
 #include "Widgets/InventoryDragDropOperation.h"
 #include "Widgets/InventoryItemWidget.h"
@@ -17,6 +20,7 @@ namespace
 	constexpr int32 CellZOrder = 0;
 	constexpr int32 ItemZOrder = 1;
 	constexpr int32 PreviewZOrder = 2;
+	constexpr int32 HeldZOrder = 3;
 }
 
 UInventoryGridWidget::UInventoryGridWidget(const FObjectInitializer& ObjectInitializer)
@@ -80,6 +84,11 @@ UInventoryCellWidget* UInventoryGridWidget::GetCellWidget(FIntPoint Cell) const
 	return bInside && Cells.IsValidIndex(CellIndex) ? Cells[CellIndex].Get() : nullptr;
 }
 
+UInventoryItemWidget* UInventoryGridWidget::GetItemWidget(FInventoryItemHandle Item) const
+{
+	return ItemWidgets.FindRef(Item).Get();
+}
+
 UInventoryUISubsystem* UInventoryGridWidget::GetInteraction() const
 {
 	return UInventoryUISubsystem::Get(GetOwningLocalPlayer());
@@ -124,6 +133,13 @@ void UInventoryGridWidget::RebuildCells(FIntPoint GridSize)
 				Cells.Add(Cell);
 			}
 		}
+
+		// Common UI only builds a button around designer content.
+		if (!Cells.IsEmpty() && !Cells[0]->GetRootWidget())
+		{
+			UE_LOG(LogInventory, Warning, TEXT("[Inventory UI] %s: %s has nothing in its designer, so its cells draw nothing and can't be clicked. Give it any root widget, such as an empty Overlay."),
+				*GetPathNameSafe(this), *GetNameSafe(CellClass));
+		}
 	}
 
 	// The same cells serve whichever container of this size is shown.
@@ -150,6 +166,8 @@ void UInventoryGridWidget::RefreshItems()
 		{
 			ItemWidget = ItemPool.GetOrCreateInstance<UInventoryItemWidget>(ItemClass);
 			GridCanvas->AddChildToCanvas(ItemWidget)->SetZOrder(ItemZOrder);
+			// User widgets ignore the mouse by default, and items are dragged and right-clicked.
+			ItemWidget->SetVisibility(ESlateVisibility::Visible);
 			Entry = ItemWidget;
 		}
 
@@ -183,19 +201,47 @@ void UInventoryGridWidget::RefreshPreview()
 	const UInventoryUISubsystem* Interaction = GetInteraction();
 	const bool bAimedHere = Interaction && Interaction->IsHolding() && Container.IsSet() && Interaction->GetTargetContainer() == Container;
 
+	// Clipped to the grid: anything hanging off the edge would grow the canvas and shift the layout mid-drag.
+	const FIntPoint LandingCell = bAimedHere ? Interaction->GetLandingPlacement().Cell : FIntPoint::ZeroValue;
+	const FIntPoint Start = LandingCell.ComponentMax(FIntPoint::ZeroValue).ComponentMin(BuiltGridSize);
+	const FIntPoint End = bAimedHere ? (LandingCell + Interaction->GetHeldSize()).ComponentMin(BuiltGridSize).ComponentMax(Start) : Start;
+
+	const bool bShowHeld = bAimedHere && Interaction->bSnapHeldItem && ItemClass;
+	if (bShowHeld && !HeldVisual)
+	{
+		HeldVisual = CreateWidget<UInventoryItemWidget>(this, ItemClass);
+		GridCanvas->AddChildToCanvas(HeldVisual)->SetZOrder(HeldZOrder);
+	}
 	if (PlacementPreview)
 	{
 		PlacementPreview->SetVisibility(bAimedHere ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
-		UCanvasPanelSlot* PreviewSlot = Cast<UCanvasPanelSlot>(PlacementPreview->Slot);
-		if (bAimedHere && PreviewSlot)
+	}
+	if (HeldVisual)
+	{
+		HeldVisual->SetVisibility(bShowHeld ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+	if (bShowHeld)
+	{
+		HeldVisual->ShowHeldItem(CellSize);
+	}
+
+	// Sizes change at once. Positions glide there in Native Tick, except when the preview first shows.
+	for (UWidget* Widget : { PlacementPreview.Get(), Cast<UWidget>(HeldVisual.Get()) })
+	{
+		if (UCanvasPanelSlot* PreviewSlot = Widget && bAimedHere ? Cast<UCanvasPanelSlot>(Widget->Slot) : nullptr)
 		{
-			// Clipped to the grid: a preview hanging off the edge would grow the canvas and shift the layout mid-drag.
-			const FIntPoint TargetCell = Interaction->GetTargetPlacement().Cell;
-			const FIntPoint Start = TargetCell.ComponentMax(FIntPoint::ZeroValue).ComponentMin(BuiltGridSize);
-			const FIntPoint End = (TargetCell + Interaction->GetHeldSize()).ComponentMin(BuiltGridSize).ComponentMax(Start);
-			PreviewSlot->SetPosition(FVector2D(Start) * CellSize);
 			PreviewSlot->SetSize(FVector2D(End - Start) * CellSize);
 		}
+	}
+	PreviewTargetPosition = FVector2D(Start) * CellSize;
+	if (!bAimedHere)
+	{
+		PreviewPosition.Reset();
+	}
+	else if (!PreviewPosition.IsSet() || PreviewGlideSpeed <= 0.0f)
+	{
+		PreviewPosition = PreviewTargetPosition;
+		PlacePreview(PreviewTargetPosition);
 	}
 
 	const EInventoryDropAction Action = bAimedHere ? Interaction->GetTargetAction() : EInventoryDropAction::None;
@@ -203,6 +249,28 @@ void UInventoryGridWidget::RefreshPreview()
 	{
 		PreviewAction = Action;
 		OnPlacementPreviewChanged(Action);
+	}
+}
+
+void UInventoryGridWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	if (PreviewPosition.IsSet() && !PreviewPosition->Equals(PreviewTargetPosition, 0.1))
+	{
+		PreviewPosition = FMath::Vector2DInterpTo(PreviewPosition.GetValue(), PreviewTargetPosition, InDeltaTime, PreviewGlideSpeed);
+		PlacePreview(PreviewPosition.GetValue());
+	}
+}
+
+void UInventoryGridWidget::PlacePreview(const FVector2D& Position)
+{
+	for (UWidget* Widget : { PlacementPreview.Get(), Cast<UWidget>(HeldVisual.Get()) })
+	{
+		if (UCanvasPanelSlot* PreviewSlot = Widget ? Cast<UCanvasPanelSlot>(Widget->Slot) : nullptr)
+		{
+			PreviewSlot->SetPosition(Position);
+		}
 	}
 }
 
@@ -230,7 +298,20 @@ void UInventoryGridWidget::HandleRegistryChanged(const FInventoryChangeSet& Chan
 	}
 }
 
-// Mouse drops
+// Mouse
+FReply UInventoryGridWidget::NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	// Cells under items never see the mouse, so a held item follows the mouse from here. Gamepad focus aims for itself.
+	UInventoryUISubsystem* Interaction = GetInteraction();
+	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
+	const bool bGamepad = Input && Input->GetCurrentInputType() == ECommonInputType::Gamepad;
+	if (Interaction && Interaction->IsHolding() && Container.IsSet() && !bGamepad)
+	{
+		Interaction->SetTarget(Container, GetDropPlacement(InMouseEvent.GetScreenSpacePosition()));
+	}
+	return Super::NativeOnMouseMove(InGeometry, InMouseEvent);
+}
+
 bool UInventoryGridWidget::IsDropOperation(const UDragDropOperation* Operation) const
 {
 	return Operation && Operation->IsA<UInventoryDragDropOperation>() && Container.IsSet() && GetInteraction();
@@ -266,7 +347,7 @@ void UInventoryGridWidget::NativeOnDragLeave(const FDragDropEvent& InDragDropEve
 
 	DragScreenPosition.Reset();
 	UInventoryUISubsystem* Interaction = GetInteraction();
-	if (Interaction && Interaction->GetTargetContainer() == Container)
+	if (Interaction && !Interaction->bSnapHeldItem && Interaction->GetTargetContainer() == Container)
 	{
 		Interaction->ClearTarget();
 	}

@@ -5,7 +5,6 @@
 #include "EMSData.h"
 #include "EMSMisc.h"
 #include "EMSLevel.h"
-#include "EMSVersion.h"
 #include "CoreMinimal.h"
 #include "Engine/Engine.h"
 #include "HAL/ThreadSafeBool.h"
@@ -26,19 +25,19 @@ struct FLoaderInitData
 
 public:
 
-    bool bIsWorldPartition;
+    bool bIsStreaming;
     TArray<FActorSaveData> InActorData;
 
     UPROPERTY()
     TMap<FActorByteKey, TWeakObjectPtr<AActor>> InActorMap;
 
     FLoaderInitData()
-        : bIsWorldPartition(false)
+        : bIsStreaming(false)
     {
     }
 
-    FLoaderInitData(bool bInIsWorldPartition, const TArray<FActorSaveData>& InData, const TMap<FActorByteKey, TWeakObjectPtr<AActor>>& InMap)
-        : bIsWorldPartition(bInIsWorldPartition), InActorData(InData), InActorMap(InMap)
+    FLoaderInitData(bool bInStreaming, const TArray<FActorSaveData>& InData, const TMap<FActorByteKey, TWeakObjectPtr<AActor>>& InMap)
+        : bIsStreaming(bInStreaming), InActorData(InData), InActorMap(InMap)
     {
     }
 };
@@ -58,6 +57,8 @@ public:
     //Start loading
     void Start();
     FOnLoaderComplete OnComplete;
+
+    void Destroy();
 
 private:
 
@@ -97,8 +98,6 @@ private:
 
     bool CheckActorLimits(int32& IterationCount);
 
-    void Destroy();
-
     const bool HasValidWorld() const;
     bool CheckCancel();
 
@@ -108,7 +107,6 @@ private:
 private:
 
     //Actor Load limits, likely never reached
-    static constexpr int32 MAX_ACTORS_PER_ITERATION = 100000;
     static constexpr int32 MAX_TOTAL_ACTORS = 1000000;
 
     int32 TotalProcessedCount = 0;
@@ -122,10 +120,10 @@ private:
 
     FCriticalSection LoadActorScope;
 
-    FThreadSafeBool bCanceled = false;
-    FThreadSafeBool bCompleted = false;
+    std::atomic<bool> bCanceled = false;
+    std::atomic<bool> bCompleted = false;
 
-    bool bIsWorldPartitionLoader = false;
+    bool bIsStreamingLoader = false;
 
     int32 CurrentIndex = 0;
     int32 BatchSize = 0;

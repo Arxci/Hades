@@ -11,6 +11,7 @@ struct FActorSpawnParameters;
 struct FActorSaveData;
 struct FRawObjectSaveData;
 struct FActorByteKey;
+struct FActorInitContext;
 
 class UWorld;
 class AActor;
@@ -35,16 +36,13 @@ public:
 
 	/*Includes Persistent Actors*/
 	static bool IsRuntime(const EActorType Type);
-
 	static bool IsMultiLevelStreamRelevant(const EActorType Type);
 
 	/*Only Persistent Actors*/
 	static bool IsPersistent(const EActorType Type);
-
 	static bool IsLevelScript(const EActorType Type);
 
 	static EActorType GetActorType(const AActor* Actor);
-
 	static FString GetActorLevelName(const AActor* Actor);
 	static FString GetFullActorName(const AActor* Actor);
 	static FString GetComponentName(const AActor* Actor/*ToSave*/, const UActorComponent* Comp);
@@ -56,9 +54,10 @@ public:
 	static void SortLevelActors(TArray<FActorSaveData>& ToSort, const APlayerController* PC);
 	static bool CompareDistance(const FVector& VecA, const FVector& VecB, const APlayerController* PC);
 
-	static void PruneSavedActors(const TMap<FActorByteKey, TWeakObjectPtr<AActor>>& InActorMap, TArray<FActorSaveData>& OutSaved);
-
+	static void PruneSavedActors(const TMap<FActorByteKey, TWeakObjectPtr<AActor>>& InActorMap, TArray<FActorSaveData>& AllSaved);
 	static bool AreWorldActorsInitialized(const UWorld* InWorld);
+
+	static bool ShouldSkipLoadForActorList(const FActorInitContext& Init, const EActorType Type);
 };
 
 class EASYMULTISAVE_API FSpawnHelpers
@@ -69,6 +68,6 @@ public:
 	static UClass* StaticLoadSpawnClass(const FString& Class);
 	static UClass* ResolveSpawnClass(const FString& InClass);
 	static FActorSpawnParameters GetSpawnParams(const UObject* WorldContext, const FActorSaveData& ActorArray);
-	static AActor* CheckForExistingActor(const UWorld* InWorld, const FActorSaveData& ActorArray);
+	static AActor* CheckForExistingActor(const UWorld* InWorld, const FName& ActorName);
 };
 

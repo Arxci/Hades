@@ -93,6 +93,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FInventoryEquipmentSignature, FInve
  * Applies whatever sits in the owner's equipment slots: ability system grants scaled by item level, spawned pieces and linked anim layers.
  * Items in an equipped item's equipment containers, such as weapon attachments, are applied too and their pieces attach to the parent's.
  * Needs an inventory component on the same actor; the equipment slots are its containers with equipment layouts.
+ * Items can also be equipped in place, staying wherever they are in the inventory, as the RE games do with the weapon in hand.
  */
 UCLASS(Blueprintable, ClassGroup = (Inventory), meta = (BlueprintSpawnableComponent))
 class MODULARINVENTORY_API UInventoryEquipmentComponent : public UActorComponent
@@ -112,7 +113,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Equipment")
 	bool EquipItem(FInventoryItemHandle Item, FGameplayTag Slot, EInventoryError& OutError);
 
-	/** Moves the item from its slot to a free spot in the owner's storage. */
+	/**
+	 * Equips an item the owner carries without moving it. Its equip rules must allow the slot; use a slot no equipment container has.
+	 * Whatever was equipped in place in that slot stops being equipped. The item stays equipped until unequipped or until it leaves the inventory.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Equipment")
+	bool EquipInPlace(FInventoryItemHandle Item, FGameplayTag Slot, EInventoryError& OutError);
+
+	/** Moves the item from its slot to a free spot in the owner's storage. An item equipped in place just stops being equipped. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Equipment")
 	bool UnequipItem(FInventoryItemHandle Item, EInventoryError& OutError);
 
@@ -193,6 +201,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UInventoryComponent> Inventory;
+
+	/** Slot to item, for items equipped in place. */
+	TMap<FGameplayTag, FInventoryItemHandle> InPlaceItems;
 
 	TWeakObjectPtr<UInventorySubsystem> Subsystem;
 	bool bRefreshing = false;

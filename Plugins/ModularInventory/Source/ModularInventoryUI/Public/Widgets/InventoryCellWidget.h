@@ -38,6 +38,8 @@ public:
 protected:
 	//~ Begin UUserWidget Interface
 	virtual void NativeOnInitialized() override;
+	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
 	virtual void NativeOnAddedToFocusPath(const FFocusEvent& InFocusEvent) override;
 	virtual void NativeOnRemovedFromFocusPath(const FFocusEvent& InFocusEvent) override;
 	//~ End UUserWidget Interface
@@ -45,11 +47,19 @@ protected:
 	UInventoryUISubsystem* GetInteraction() const;
 	bool IsTargeted() const;
 
+	/** Used instead of Style while an item is held, such as one without a hover outline, as the held item shows where it goes. */
+	UPROPERTY(EditAnywhere, Category = "Inventory|Cell")
+	TSubclassOf<UCommonButtonStyle> HoldingStyle;
+
 private:
+	UFUNCTION()
+	void HandleHeldItemChanged();
+
 	void Aim();
 	void StopAiming();
 	void HandleClicked();
 
 	FInventoryContainerHandle Container;
 	FInventoryPlacement Placement;
+	TSubclassOf<UCommonButtonStyle> IdleStyle;
 };

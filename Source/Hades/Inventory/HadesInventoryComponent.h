@@ -10,6 +10,7 @@
 class AHadesItemPickup;
 class UGameplayEffect;
 class UInventoryContainerLayout;
+class UInventoryItemDefinition;
 class UInventoryRecipe;
 class UInventoryRecipeBook;
 
@@ -26,10 +27,30 @@ struct FHadesItemUse
 };
 
 
+/** Add to a gun's item definition's Fragments. Each gun keeps its own rounds. Combining a gun with its ammo loads it, as in the RE games. */
+USTRUCT(BlueprintType)
+struct FHadesGun
+{
+	GENERATED_BODY()
+
+	/** Rounds it holds when full. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gun", meta = (ClampMin = "1"))
+	int32 Capacity = 10;
+
+	/** Rounds in it when it's found, up to Capacity. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gun", meta = (ClampMin = "0"))
+	int32 StartingRounds = 10;
+
+	/** The item it loads, such as Handgun Ammo. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gun")
+	TObjectPtr<UInventoryItemDefinition> Ammo;
+};
+
+
 /**
- * The player's inventory with the game's rules on top: two hands, using, discarding and combining items, and pouches that grow the pockets.
- * Expects a Container.Pockets grid, a Container.KeyItems list and a Container.Hands equipment layout with Equipment.Slot.Hand.Right and Left,
- * plus an Inventory Equipment Component on the same actor.
+ * The player's inventory with the game's rules on top: one item in hand, using, discarding and combining items, and pouches that grow the pockets.
+ * The item in hand stays where it is in the pockets, as in the RE games. Its equip rules decide which hand slot it is equipped to.
+ * Expects a Container.Pockets grid and a Container.KeyItems list, plus an Inventory Equipment Component on the same actor.
  */
 UCLASS(ClassGroup = (Inventory), meta = (BlueprintSpawnableComponent))
 class HADES_API UHadesInventoryComponent : public UInventoryComponent
@@ -38,7 +59,7 @@ class HADES_API UHadesInventoryComponent : public UInventoryComponent
 
 public:
 	// Hands
-	/** Takes the item in the hand its equip rules allow, putting away whatever is in the way. Fails when that has no room. */
+	/** Takes the item in hand, putting away whatever was held. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Hands")
 	bool DrawItem(FInventoryItemHandle Item);
 
@@ -50,6 +71,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Inventory|Hands")
 	bool IsInHand(FInventoryItemHandle Item) const;
+
+	UFUNCTION(BlueprintPure, Category = "Inventory|Hands")
+	FInventoryItemHandle GetItemInHand() const;
 
 	// Item actions
 	UFUNCTION(BlueprintPure, Category = "Inventory|Actions")
@@ -67,16 +91,37 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Actions")
 	bool DiscardItem(FInventoryItemHandle Item);
 
-	/** Whether any of Combine Recipes uses the item. */
+	/** Whether any of Combine Recipes uses the item, or it's a gun or ammo whose partner is in the inventory. */
 	UFUNCTION(BlueprintPure, Category = "Inventory|Actions")
 	bool CanCombine(FInventoryItemHandle Item) const;
 
-	/** Crafts the first of Combine Recipes made from these two items, telling the player when it can't. */
+	/** Loads a gun from its ammo, or crafts the first of Combine Recipes made from these two items, telling the player when it can't. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Actions")
 	bool CombineItems(FInventoryItemHandle Item, FInventoryItemHandle Other);
 
 	UFUNCTION(BlueprintPure, Category = "Inventory|Actions")
 	bool IsKeyItem(FInventoryItemHandle Item) const;
+
+	// Guns
+	/** Rounds in a gun. Anything without a Hades Gun fragment has none. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Guns")
+	int32 GetLoadedRounds(FInventoryItemHandle Gun) const;
+
+	/** Rounds a gun holds when full, or 0 for anything that isn't a gun. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Guns")
+	int32 GetCapacity(FInventoryItemHandle Gun) const;
+
+	/** Rounds for a gun in the inventory, not counting those in it. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Guns")
+	int32 GetSpareRounds(FInventoryItemHandle Gun) const;
+
+	/** Fills a gun from its ammo in the inventory. False if it's full or there's none. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Guns")
+	bool ReloadGun(FInventoryItemHandle Gun);
+
+	/** Takes rounds out of a gun, such as when it fires. False, taking none, if it hasn't that many. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Guns")
+	bool SpendRounds(FInventoryItemHandle Gun, int32 Count = 1);
 
 	// Pockets
 	/** Moves the pockets on to the next of Pocket Upgrades. False once they are the biggest. */
@@ -102,6 +147,11 @@ protected:
 
 private:
 	FGameplayTag ChooseHand(FInventoryItemHandle Item) const;
+	const FHadesGun* FindGun(FInventoryItemHandle Item) const;
+	FInventoryItemQuery MakeAmmoQuery(const FHadesGun& Gun) const;
+
+	/** Whichever of the two is a gun the other one loads. */
+	FInventoryItemHandle FindGunLoadedBy(FInventoryItemHandle Item, FInventoryItemHandle Other) const;
 	UInventoryRecipe* FindCombineRecipe(FInventoryItemHandle Item, FInventoryItemHandle Other) const;
 	bool IsMadeFrom(const UInventoryRecipe& Recipe, FInventoryItemHandle Item, FInventoryItemHandle Other) const;
 	FTransform FindDropTransform() const;

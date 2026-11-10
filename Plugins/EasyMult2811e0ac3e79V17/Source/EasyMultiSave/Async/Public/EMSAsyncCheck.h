@@ -32,7 +32,7 @@ public:
 	UPROPERTY(BlueprintAssignable, meta = (DisplayName = "Invalid Files"))
 	FCheckFailedPin OnFailed;
 
-	/** Files exist and are loadable, but the saved version does NOT match the configured game version (requires bComplexCheck = true). */
+	/** Files exist and are loadable, but the saved version does NOT match the configured game version (requires 'Check Version' to be true). */
 	UPROPERTY(BlueprintAssignable, meta = (DisplayName = "Version Mismatch"))
 	FCheckVersionMismatchPin OnVersionMismatch;
 
@@ -44,8 +44,6 @@ private:
 	ESaveFileCheckType Type;
 	FString SaveFileName;
 
-	uint8 bCheckGameVersion : 1;
-
 	EIntegrityCheckResult CheckResult;
 
 public:
@@ -54,11 +52,11 @@ public:
 	* Check the integrity of available files for the current Save Slot. See log for further output information.
 	* 
 	* @param CheckType - The type of integrity check to perform.
-	* @param CustomSaveName - Only relevant when checking for a Custom Save Game.
+	* @param CustomSaveName - Only relevant when checking for a Custom Save Object.
 	* @param bComplexCheck - Compares save files against 'Save Game Version' from the plugin settings.  
 	*/
-	UFUNCTION(BlueprintCallable, Category = "Easy Multi Save | Files", meta = (DisplayName = "Check Save File Integrity", BlueprintInternalUseOnly = "true", WorldContext = "WorldContextObject", AdvancedDisplay = "CustomSaveName, bComplexCheck"))
-	static UEMSAsyncCheck* CheckSaveFiles(UObject* WorldContextObject, ESaveFileCheckType CheckType, FString CustomSaveName, UPARAM(DisplayName = "Check Version") bool bComplexCheck);
+	UFUNCTION(BlueprintCallable, Category = "Easy Multi Save | Files", meta = (DisplayName = "Check Save File Integrity", BlueprintInternalUseOnly = "true", WorldContext = "WorldContextObject"))
+	static UEMSAsyncCheck* CheckSaveFiles(UObject* WorldContextObject, ESaveFileCheckType CheckType, FString CustomSaveName);
 
 	void Activate() override;
 

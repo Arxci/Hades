@@ -2,12 +2,13 @@
 
 #include "EMSAsyncSaveGame.h"
 #include "EMSObject.h"
-#include "EMSData.h"
 #include "EMSMisc.h"
+#include "UObject/Package.h"
 #include "Modules/ModuleManager.h"
 #include "Engine/Engine.h"
 #include "Async/Async.h"
 #include "TimerManager.h"
+#include "Kismet/GameplayStatics.h"
 
 /**
 Init
@@ -22,6 +23,7 @@ UEMSAsyncSaveGame::UEMSAsyncSaveGame()
 	bHasFailed = false;
 	bAutoSaveLevel = false;
 	bMemoryOnly = false;
+	bWasPaused = false;
 }
 
 UWorld* UEMSAsyncSaveGame::GetWorld() const
@@ -41,23 +43,36 @@ Activation
 
 UEMSAsyncSaveGame* UEMSAsyncSaveGame::AsyncSaveActors(UObject* WorldContextObject, int32 Data)
 {
+	//Check for game unpause on manual save so the async op can continue
+	const bool bPaused = UGameplayStatics::IsGamePaused(WorldContextObject);
+	if (bPaused)
+	{
+		UGameplayStatics::SetGamePaused(WorldContextObject, false);
+	}
+
 	if (UEMSObject* EMSObject = UEMSObject::Get(WorldContextObject))
 	{
 		const ESaveGameMode Mode = FAsyncSaveHelpers::GetMode(Data);
 
-		if (EMSObject->IsAsyncSaveOrLoadTaskActive(Mode))
+		//Make sure not running another task
+		if (!EMSObject->IsAsyncTaskActiveWithPause(Mode))
 		{
-			return nullptr;
+			UEMSAsyncSaveGame* SaveTask = NewObject<UEMSAsyncSaveGame>(GetTransientPackage());
+			if (SaveTask)
+			{
+				SaveTask->EMS = EMSObject;
+				SaveTask->Data = Data;
+				SaveTask->Mode = Mode;
+				SaveTask->bWasPaused = bPaused;
+				return SaveTask;
+			}
 		}
+	}
 
-		UEMSAsyncSaveGame* SaveTask = NewObject<UEMSAsyncSaveGame>(GetTransientPackage());
-		if (SaveTask)
-		{
-			SaveTask->EMS = EMSObject;
-			SaveTask->Data = Data;
-			SaveTask->Mode = Mode;
-			return SaveTask;
-		}	
+	//Return to pause
+	if (bPaused)
+	{
+		UGameplayStatics::SetGamePaused(WorldContextObject, true);
 	}
 
 	return nullptr;
@@ -72,7 +87,10 @@ void UEMSAsyncSaveGame::AutoSaveLevelActors(UEMSObject* EMSObject)
 		SaveTask->Data = TOFLAG(ESaveTypeFlags::SF_Level);
 		SaveTask->Mode = ESaveGameMode::MODE_Level;
 		SaveTask->bAutoSaveLevel = true;
-		SaveTask->bMemoryOnly = FSettingHelpers::IsMemoryOnlySave();
+
+		//Streaming/WP autosaves always store to memory. Disk writes require a manual save.
+		SaveTask->bMemoryOnly = true;
+
 		SaveTask->RegisterWithGameInstance(EMSObject);
 		SaveTask->Activate();
 	}
@@ -85,7 +103,7 @@ void UEMSAsyncSaveGame::Activate()
 	{
 		UE_LOG(LogEasyMultiSave, Warning, TEXT("Save Game Actors has no Data Flags selected."));
 		bHasFailed = true;
-		CompleteSavingTask();
+		FinishSaving();
 		return;
 	}
 
@@ -101,7 +119,14 @@ void UEMSAsyncSaveGame::Activate()
 
 		bIsActive = true;
 
-		//For World Partition auto-saving, we will only save placed Actors in the cells, prepare is also very costly
+		//Save Slot Info. Auto-saves are memory only and never write the slot.
+		if (!bAutoSaveLevel)
+		{
+			//Save current slot and force update for Level name
+			EMS->SaveSlotInfoObject(EMS->GetCurrentSaveGameName(), true);
+		}
+
+		//For streaming auto-saving, we will only save placed Actors in the sublevel, prepare is also very costly
 		if (!bAutoSaveLevel)
 		{
 			EMS->PrepareLoadAndSaveActors(Data, EAsyncCheckType::CT_Save, EPrepareType::PT_Default);
@@ -117,13 +142,6 @@ void UEMSAsyncSaveGame::StartSaving()
 
 	if (EMS)
 	{
-		const bool bSaveToMemory = bAutoSaveLevel && bMemoryOnly;
-		if (!bSaveToMemory)
-		{
-			//Save current slot
-			EMS->SaveSlotInfoObject(EMS->GetCurrentSaveGameName());
-		}
-
 		EMS->GetTimerManager().SetTimerForNextTick(this, &UEMSAsyncSaveGame::SavePlayer);
 	}
 }
@@ -138,6 +156,9 @@ void UEMSAsyncSaveGame::SavePlayer()
 
 	if (EMS)
 	{
+		//Snapshot on the game thread before dispatching
+		CachedPlayerController = EMS->GetPlayerController();
+
 		if (FSettingHelpers::IsMultiThreadSaving())
 		{
 			CurrentSaveTask = FFunctionGraphTask::CreateAndDispatchWhenReady([this]()
@@ -157,9 +178,18 @@ void UEMSAsyncSaveGame::SavePlayer()
 
 void UEMSAsyncSaveGame::InternalSavePlayer()
 {
+	//Possibly on worker thread
+	if (!EMS)
+	{
+		bHasFailed = true;
+		bFinishedStep = true;
+		return;
+	}
+
 	if (EMSFLAG::IsPlayer(Data))
 	{
-		if (!EMS->SavePlayerActors(EMS->GetPlayerController(), EMS->PlayerSaveFile()))
+		APlayerController* PlayerController = CachedPlayerController.Get();
+		if (!EMS->SavePlayerActors(PlayerController, EMS->PlayerSaveFile()))
 		{
 			bHasFailed = true;
 		}
@@ -178,11 +208,34 @@ void UEMSAsyncSaveGame::SaveLevel()
 
 	if (EMS)
 	{
+		//Snapshot on the game thread before dispatching, to avoid races during background save
+		if (EMSFLAG::IsLevel(Data))
+		{
+			ActorSnapshot = EMS->CaptureActorSnapshot(bAutoSaveLevel);
+		}
+
 		if (FSettingHelpers::IsMultiThreadSaving())
 		{
-			CurrentSaveTask = FFunctionGraphTask::CreateAndDispatchWhenReady([this]()
+			/*
+			Can pause game thread and continue to write and parse data in the background
+			Player-only saves have no level step here, so pausing would just be a flicker
+			*/
+			const bool bPauseForSave = bWasPaused && EMSFLAG::IsLevel(Data);
+			if (bPauseForSave)
+			{
+				UGameplayStatics::SetGamePaused(EMS, true);
+			}
+
+			const TWeakObjectPtr<UEMSObject> WeakEMS(EMS);
+			CurrentSaveTask = FFunctionGraphTask::CreateAndDispatchWhenReady([this, WeakEMS, bPauseForSave]()
 			{
 				InternalSaveLevel();
+
+				//Reset pause on the game thread only, so the step machine can continue
+				if (bPauseForSave)
+				{
+					ResetPauseOnGameThread(WeakEMS);
+				}
 
 			}, TStatId(), nullptr, ENamedThreads::AnyNormalThreadNormalTask);
 		}
@@ -197,17 +250,19 @@ void UEMSAsyncSaveGame::SaveLevel()
 
 void UEMSAsyncSaveGame::InternalSaveLevel()
 {
+	//Possibly on worker thread
+	if (!EMS)
+	{
+		bHasFailed = true;
+		bFinishedStep = true;
+		return;
+	}
+
 	if (EMSFLAG::IsLevel(Data))
 	{
-		const bool bPrevHasFailed = bHasFailed;
-
-		if(EMS->SaveLevelActors(bMemoryOnly))
+		if (!EMS->SaveLevelActors(bMemoryOnly, ActorSnapshot))
 		{
-			bHasFailed = false;
-		}
-		else
-		{
-			bHasFailed = bPrevHasFailed;
+			bHasFailed = true;
 		}
 	}
 
@@ -231,11 +286,23 @@ void UEMSAsyncSaveGame::CompleteSavingTask()
 {
 	if (bHasFailed)
 	{
+		//Return streamed-out actor states so the next save attempt can still write them
+		if (EMS && !ActorSnapshot.StreamingActors.IsEmpty())
+		{
+			EMS->RestoreStreamingActors(ActorSnapshot.StreamingActors);
+		}
+
 		OnFailed.Broadcast();
 	}
 	else
 	{
 		OnCompleted.Broadcast();
+	}
+
+	//Global delegate mirrors the node pins below. Not fired for automatic streaming saves.
+	if (EMS && !bAutoSaveLevel)
+	{
+		EMS->BroadcastOnActorsSaved(Mode, !bHasFailed);
 	}
 
 	SetReadyToDestroy();
@@ -331,7 +398,7 @@ bool UEMSAsyncSaveGame::CheckLevelStreaming()
 	}
 
 	//Early out
-	if (!EMS->HasStreamingLevels() || !EMSFLAG::IsLevel(Data))
+	if (!EMS->HasAnyLevelStreaming() || !EMSFLAG::IsLevel(Data))
 	{
 		return false;
 	}
@@ -371,13 +438,31 @@ bool UEMSAsyncSaveGame::CheckLevelStreaming()
 	return false;
 }
 
-void UEMSAsyncSaveGame::BeginDestroy()
+void UEMSAsyncSaveGame::ResetPauseOnGameThread(const TWeakObjectPtr<UEMSObject> InWeakEMS)
 {
-	if (EMS)
+	AsyncTask(ENamedThreads::GameThread, [InWeakEMS]()
 	{
+		if (const UEMSObject* StrongEMS = InWeakEMS.Get())
+		{
+			UGameplayStatics::SetGamePaused(StrongEMS, false);
+		}
+	});
+}
+
+void UEMSAsyncSaveGame::SetReadyToDestroy()
+{
+	ActorSnapshot = FLevelSnapshot();
+
+	if (EMS)
+	{	
+		//Re-enable pause 
+		if (bWasPaused)
+		{
+			UGameplayStatics::SetGamePaused(EMS, true);
+		}
+
 		EMS->GetTimerManager().ClearAllTimersForObject(this);
 	}
 
-	Super::BeginDestroy();
+	Super::SetReadyToDestroy();
 }
-

@@ -33,6 +33,37 @@ void UInventoryCellWidget::NativeOnInitialized()
 	OnHovered().AddUObject(this, &ThisClass::Aim);
 	OnUnhovered().AddUObject(this, &ThisClass::StopAiming);
 	OnClicked().AddUObject(this, &ThisClass::HandleClicked);
+	IdleStyle = GetStyle() ? GetStyle()->GetClass() : nullptr;
+}
+
+void UInventoryCellWidget::NativeConstruct()
+{
+	Super::NativeConstruct();
+
+	if (UInventoryUISubsystem* Interaction = GetInteraction())
+	{
+		Interaction->OnHeldItemChanged.AddUniqueDynamic(this, &ThisClass::HandleHeldItemChanged);
+	}
+	HandleHeldItemChanged();
+}
+
+void UInventoryCellWidget::NativeDestruct()
+{
+	if (UInventoryUISubsystem* Interaction = GetInteraction())
+	{
+		Interaction->OnHeldItemChanged.RemoveDynamic(this, &ThisClass::HandleHeldItemChanged);
+	}
+
+	Super::NativeDestruct();
+}
+
+void UInventoryCellWidget::HandleHeldItemChanged()
+{
+	const UInventoryUISubsystem* Interaction = GetInteraction();
+	if (HoldingStyle && IdleStyle)
+	{
+		SetStyle(Interaction && Interaction->IsHolding() ? HoldingStyle : IdleStyle);
+	}
 }
 
 // Gamepads aim by focus. Hover alone isn't enough: an item drawn over a grid cell takes the cell's hover.
@@ -59,7 +90,9 @@ void UInventoryCellWidget::Aim()
 
 void UInventoryCellWidget::StopAiming()
 {
-	if (IsTargeted())
+	// A snapped held item stays on the last cells aimed at.
+	const UInventoryUISubsystem* Interaction = GetInteraction();
+	if (IsTargeted() && !(Interaction->bSnapHeldItem && Interaction->IsHolding()))
 	{
 		GetInteraction()->ClearTarget();
 	}

@@ -23,7 +23,10 @@ namespace InventoryWidgets
 		LoadHandle.Reset();
 	}
 
-	/** Puts the definition's icon in Image, loading it first if needed. Hidden while loading, collapsed when there is none. */
+	/**
+	 * Puts the definition's icon in Image, loading it first if needed. Hidden while loading, collapsed when there is none.
+	 * The image takes the texture's size, so icons keep their shape; a Scale Box fits them to a slot.
+	 */
 	inline void ShowIcon(UImage* Image, const UInventoryItemDefinition* Definition, TSharedPtr<FStreamableHandle>& LoadHandle)
 	{
 		CancelLoad(LoadHandle);
@@ -42,7 +45,7 @@ namespace InventoryWidgets
 
 		if (UTexture2D* Loaded = IconAsset.Get())
 		{
-			Image->SetBrushResourceObject(Loaded);
+			Image->SetBrushFromTexture(Loaded, /*bMatchSize*/ true);
 			Image->SetVisibility(ESlateVisibility::HitTestInvisible);
 			return;
 		}
@@ -53,7 +56,7 @@ namespace InventoryWidgets
 		{
 			if (UImage* LoadedInto = WeakImage.Get())
 			{
-				LoadedInto->SetBrushResourceObject(IconAsset.Get());
+				LoadedInto->SetBrushFromTexture(IconAsset.Get(), /*bMatchSize*/ true);
 				LoadedInto->SetVisibility(ESlateVisibility::HitTestInvisible);
 			}
 		}));

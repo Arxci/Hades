@@ -4,10 +4,10 @@
 #include "EMSMisc.h"
 #include "EMSData.h"
 #include "EMSPluginSettings.h"
-#include "HAL/FileManager.h"
-#include "HAL/PlatformFileManager.h"
 #include "Misc/Paths.h"
 #include "Engine/World.h"
+#include "HAL/FileManager.h"
+#include "HAL/PlatformFileManager.h"
 #include "Serialization/BufferArchive.h"
 #include "Kismet/KismetRenderingLibrary.h"
 #include "ImageUtils.h"
@@ -78,6 +78,12 @@ FString FSavePaths::GetBackupFileName(const FString& BaseName)
 	return BaseName + EMS::UnderscoreFile + EMS::BackupTag;
 }
 
+FString FSavePaths::GetBaseSavePath(const FString& FullSavePath)
+{	
+	//This mirrors the path from ISaveSystem
+	return FPaths::ProjectSavedDir() + EMS::SaveGamesFolder + FullSavePath + EMS::SaveType;
+}
+
 TArray<FString> FSavePaths::GetSortedSaveSlots(TArray<FSaveSlotInfo>& SaveSlots)
 {
 	SaveSlots.Sort([](const FSaveSlotInfo& A, const FSaveSlotInfo& B)
@@ -88,8 +94,8 @@ TArray<FString> FSavePaths::GetSortedSaveSlots(TArray<FSaveSlotInfo>& SaveSlots)
 	TArray<FString> SaveSlotNames;
 	for (const FSaveSlotInfo& SlotInfo : SaveSlots)
 	{
-		//Skip backup tag and user dir
-		if (SlotInfo.Name.Contains(EMS::BackupTag) || SlotInfo.Name.Contains(EMS::UserDir))
+		//Skip backup files/folders and the user dir
+		if (IsSlotNameReserved(SlotInfo.Name))
 		{
 			continue;
 		}
@@ -100,42 +106,104 @@ TArray<FString> FSavePaths::GetSortedSaveSlots(TArray<FSaveSlotInfo>& SaveSlots)
 	return SaveSlotNames;
 }
 
+static const TArray<FString> GetDefaultSuffixes() 
+{
+	static const TArray<FString> DefaultSuffixes =
+	{
+		EMS::PlayerSuffix,
+		EMS::ActorSuffix,
+		EMS::SlotSuffix,
+		EMS::ThumbSuffix
+	};
+
+	return DefaultSuffixes;
+};
+
+bool FSavePaths::IsFileNameReserved(const FString& SaveGameName)
+{
+	for (const FString& Reserved : GetDefaultSuffixes())
+	{
+		if (SaveGameName.Equals(Reserved, ESearchCase::IgnoreCase))
+		{
+			UE_LOG(LogEasyMultiSave, Error, TEXT("Save name '%s' is reserved and its recommended to change it into something else!"), *SaveGameName);
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool FSavePaths::IsSlotNameReserved(const FString& SlotName)
+{
+	/*
+	These names belong to the User folder and the backup scheme, a Slot must never resolve onto them.
+	Static because this runs on every resolved Save path through GetCurrentSaveGameName
+	*/
+	static const FString BakSuffix = EMS::UnderscoreFile + EMS::BackupTag;
+	static const FString BakPrefix = EMS::BackupTag + EMS::UnderscoreFile;
+
+	return SlotName.Equals(EMS::UserDir, ESearchCase::IgnoreCase)
+		|| SlotName.Equals(EMS::BackupTag, ESearchCase::IgnoreCase)
+		|| SlotName.EndsWith(BakSuffix, ESearchCase::IgnoreCase)
+		|| SlotName.StartsWith(BakPrefix, ESearchCase::IgnoreCase);
+}
+
 FString FSavePaths::ValidateSaveName(const FString& SaveGameName)
 {
 	FString CurrentSave = SaveGameName;
+	CurrentSave.TrimStartAndEndInline();
 
-	//Advanced file checks for console
+	//Legitimately empty input must stay empty
+	if (CurrentSave.IsEmpty())
+	{
+		return FString();
+	}
+
+	//Strip path separators up-front
+	CurrentSave.ReplaceInline(TEXT("/"), *EMS::UnderscoreFile);
+	CurrentSave.ReplaceInline(TEXT("\\"), *EMS::UnderscoreFile);
+
+	//Remove default suffixes
 	if (FSettingHelpers::IsConsoleFileSystem())
 	{
-		//Get default suffixes 
-		const TArray<FString> DefaultSuffixes =
+		
+		/*
+		Sort of idempotent, because Level(Actor), Player, Slot, Thumb
+		Suffixes are the LAST thing added before the path is used to write the file
+		See FullSaveDir
+		*/
+		for (const FString& Suffix : GetDefaultSuffixes())
 		{
-			EMS::PlayerSuffix,
-			EMS::ActorSuffix,
-			EMS::SlotSuffix,
-			EMS::ThumbSuffix
-		};
-
-		//Check and remove default suffixex(case-insensitive)
-		for (const FString& Suffix : DefaultSuffixes)
-		{
-			if (CurrentSave.Contains(Suffix, ESearchCase::IgnoreCase))
+			if (CurrentSave.EndsWith(Suffix, ESearchCase::IgnoreCase))
 			{
 				UE_LOG(LogEasyMultiSave, Warning, TEXT("Save name '%s' contains reserved suffix '%s' "), *SaveGameName, *Suffix);
-				break;
+				CurrentSave.RemoveFromEnd(*Suffix);
 			}
 		}
 
 		CurrentSave.TrimEndInline();
 
-		//Special case where we replace all underscores for file name on PS
-		CurrentSave = CurrentSave.Replace(TEXT("_"), *EMS::UnderscoreFile);
+		//Replaces _ with alnum 
+		CurrentSave.ReplaceInline(TEXT("_"), *EMS::UnderscoreFile);
 	}
 
-	CurrentSave = CurrentSave.Replace(TEXT(" "), *EMS::UnderscoreFile);
-	CurrentSave = CurrentSave.Replace(TEXT("."), *EMS::UnderscoreFile);
+	CurrentSave.ReplaceInline(TEXT(" "), *EMS::UnderscoreFile);
+	CurrentSave.ReplaceInline(TEXT("."), *EMS::UnderscoreFile);
+	CurrentSave.ReplaceInline(TEXT("-"), *EMS::UnderscoreFile);
+	CurrentSave.ReplaceInline(TEXT("@"), *EMS::UnderscoreFile);
 
-	return FPaths::MakeValidFileName(*CurrentSave);
+	//@TODO On Mac/linux folders are case sensitive, we still need to guard against MySlot and myslot on actual creation. maybe defer for now. 
+
+	const FString Result = FPaths::MakeValidFileName(*CurrentSave);
+
+	//Total guarantee: never an empty path.
+	if (Result.IsEmpty())
+	{
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("Save name '%s' sanitized to empty, using fallback."), *SaveGameName);
+		return EMS::FallbackName;
+	}
+
+	return Result;
 }
 
 FString FSavePaths::GetThumbnailFormat()
@@ -146,16 +214,6 @@ FString FSavePaths::GetThumbnailFormat()
 	}
 
 	return EMS::ImgFormatJPG;
-}
-
-FString FSavePaths::GetThumbnailFileExtension()
-{
-	if (FSettingHelpers::IsConsoleFileSystem())
-	{
-		return EMS::SaveType;
-	}
-
-	return TEXT(".") + GetThumbnailFormat();
 }
 
 void FSavePaths::CheckForReadOnly(const FString& FullSavePath)
@@ -177,7 +235,7 @@ TArray<FString> FSavePaths::GetConsoleSlotFiles(const TArray<FString>& SaveGameN
 	TArray<FString> SlotNames;
 	for (const FString& ActualFileName : SaveGameNames)
 	{
-		const bool bIsActualSlot = ActualFileName.Contains(FullSlotSuffix);
+		const bool bIsActualSlot = ActualFileName.EndsWith(FullSlotSuffix);
 		if (bIsActualSlot)
 		{
 			//Get actual name without suffix
@@ -193,14 +251,76 @@ TArray<FString> FSavePaths::GetConsoleSlotFiles(const TArray<FString>& SaveGameN
 	return SlotNames;
 }
 
+bool FSavePaths::IsSafeToDelete(const FString& AbsoluteBaseDir, const FString& InputFolder)
+{
+	//Reject empty or whitespace-only names
+	if (EMS::StringEmpty(InputFolder))
+	{
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("IsSafeToDelete: input name is empty"));
+		return false;
+	}
+
+	//Reject names that contain path separators
+	if (InputFolder.Contains(TEXT("/")) || InputFolder.Contains(TEXT("\\")) || InputFolder == TEXT(".") || InputFolder == TEXT(".."))
+	{
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("IsSafeToDelete: input name contains path separator: %s"), *InputFolder);
+		return false;
+	}
+
+	//Verify resolved path stays inside the save root
+	FString Collapsed = FPaths::Combine(AbsoluteBaseDir, InputFolder);
+	FPaths::CollapseRelativeDirectories(Collapsed);
+
+	//Explicit make sure it never deletes the root
+	if (Collapsed.Equals(AbsoluteBaseDir, ESearchCase::IgnoreCase))
+	{
+		UE_LOG(LogEasyMultiSave, Error, TEXT("IsSafeToDelete: path resolves to save root itself: %s"), *Collapsed);
+		return false;
+	}
+
+	if (!FPaths::IsUnderDirectory(Collapsed, AbsoluteBaseDir))
+	{
+		UE_LOG(LogEasyMultiSave, Error, TEXT("IsSafeToDelete: path escapes save root: %s"), *Collapsed);
+		return false;
+	}
+
+	return true;
+}
+
+bool FSavePaths::DeleteSaveDirectory(const FString& BaseDir, const FString& InputName, const FString& Context)
+{
+	//Important safety check
+	if (!IsSafeToDelete(BaseDir, InputName))
+	{
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("Aborted deletion: Path is not safe to delete for %s: %s"), *Context, *InputName);
+		return false;
+	}
+
+	const FString FullPath = FPaths::Combine(BaseDir, InputName);
+	IFileManager& FileManager = IFileManager::Get();
+
+	//Check if it actually exists
+	if (FileManager.DirectoryExists(*FullPath))
+	{
+		if (FileManager.DeleteDirectory(*FullPath, true, true))
+		{
+			UE_LOG(LogEasyMultiSave, Log, TEXT("%s data successfully removed for: %s"), *Context, *InputName);
+			return true;
+		}
+
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("Failed to delete existing %s folder for: %s"), *Context, *InputName);
+		return false;
+	}
+
+	//It didnt exist, so nothing was deleted
+	UE_LOG(LogEasyMultiSave, Log, TEXT("%s data for %s was not found."), *Context, *InputName);
+
+	return false;
+}
+
 /**
 Thumbnail Functions
 **/
-
-bool FSaveThumbnails::HasRenderTargetResource(UTextureRenderTarget2D* TextureRenderTarget)
-{
-	return TextureRenderTarget->GetResource() != nullptr;
-}
 
 bool FSaveThumbnails::CompressImage(const FImage& Image, FArchive& Ar)
 {
@@ -231,8 +351,10 @@ FString FEditorPaths::StripLevelPIEPrefix(const UWorld* InWorld, const FString& 
 
 	FString FixedLevelName = InWorld->RemovePIEPrefix(LevelName);
 
-	//Support legacy saves that only stripped "PIE_<id>" leaving "UED_" behind.
-	//That's why this function is not editor only.
+	/*
+	Support legacy saves that only stripped "PIE_<id>" leaving "UED_" behind
+	Thats why this function is not editor only
+	*/
 	if (FixedLevelName.StartsWith(TEXT("UED_")))
 	{
 		FixedLevelName.RightChopInline(4);
@@ -245,11 +367,16 @@ FString FEditorPaths::StripLevelPIEPrefix(const UWorld* InWorld, const FString& 
 void FEditorPaths::StripRefPIEPrefix(FString& PathString)
 {
 	//Improves compatibility between editor and packaged saves
+
 	if (!FPackageName::GetLongPackageAssetName(PathString).StartsWith(PLAYWORLD_PACKAGE_PREFIX))
 	{
 		return;
 	}
-	if (!PathString.Contains(TEXT("UEDPIE_"), ESearchCase::CaseSensitive))
+
+	// UEDPIE_ 
+	static const FString PIEHandle = FString::Printf(TEXT("%s_"), PLAYWORLD_PACKAGE_PREFIX);
+
+	if (!PathString.Contains(*PIEHandle, ESearchCase::CaseSensitive))
 	{
 		return;
 	}
@@ -261,16 +388,25 @@ void FEditorPaths::StripRefPIEPrefix(FString& PathString)
 #endif
 
 	//Best effort: strip with the reported id (common case)
-	const FString PIEPrefix = FString::Printf(TEXT("%s_%d_"), PLAYWORLD_PACKAGE_PREFIX, PieId);
+	const FString PIEPrefix = FString::Printf(TEXT("%s%d_"), *PIEHandle, PieId);
 	const int32 BeforeLen = PathString.Len();
 
 	PathString.ReplaceInline(*PIEPrefix, TEXT(""), ESearchCase::CaseSensitive);
 
 	//If unchanged and still contains a PIE marker, strip practical fallbacks
-	if (PathString.Len() == BeforeLen && PathString.Contains(TEXT("UEDPIE_"), ESearchCase::CaseSensitive))
+	if (PathString.Len() == BeforeLen && PathString.Contains(PIEHandle, ESearchCase::CaseSensitive))
 	{
-		PathString.ReplaceInline(TEXT("UEDPIE_-1_"), TEXT(""), ESearchCase::CaseSensitive);
-		PathString.ReplaceInline(TEXT("UEDPIE_0_"), TEXT(""), ESearchCase::CaseSensitive);
+		/*
+		Fallback cleanup for common PIE instance prefixes
+		Covers typical multiplayer testing setups (up to 5 PIE worlds)
+		*/
+		for (int32 PIEIndex = -2; PIEIndex <= 4; ++PIEIndex)
+		{
+			PathString.ReplaceInline(
+				*FString::Printf(TEXT("%s%d_"), *PIEHandle, PIEIndex),
+				TEXT(""),
+				ESearchCase::CaseSensitive);
+		}
 	}
 }
 #endif
@@ -282,7 +418,7 @@ FRedirectHelpers
 template<typename MapType>
 inline FString FRedirectHelpers::ResolveRedirect(const FString& Input, const MapType& RedirectMap)
 {
-	if (Input.IsEmpty() || EMS::ArrayEmpty(RedirectMap))
+	if (Input.IsEmpty() || RedirectMap.IsEmpty())
 	{
 		return Input;
 	}
@@ -308,7 +444,7 @@ FString FRedirectHelpers::ResolveWorldLevel(const FString& LevelPath)
 {
 	//Reversed paths
 	const TMap<FString, FString>& Redirectors = UEMSPluginSettings::Get()->ReverseLevelRedirects;
-	if (EMS::ArrayEmpty(Redirectors))
+	if (Redirectors.IsEmpty())
 	{
 		return LevelPath;
 	}
@@ -322,7 +458,7 @@ FString FRedirectHelpers::ResolveActorLevel(const FString& ActorLevelName)
 {
 	//Reversed short names
 	const TMap<FString, FString>& Redirectors = UEMSPluginSettings::Get()->ReverseShortLevelRedirects;
-	if (EMS::ArrayEmpty(Redirectors))
+	if (Redirectors.IsEmpty())
 	{
 		return ActorLevelName;
 	}
@@ -394,26 +530,34 @@ FSoftObjectPath FRedirectHelpers::ResolveLevelPath(const FSoftObjectPath& Path)
 	{
 		const FString SubPath = Path.GetSubPathString();
 
-		//Example scenario:
-		//Old: /Game/OldMap.OldMap:PersistentLevel.Actor
-		//Redirected Package: /Game/NewMap
+		/*
+		Example scenario:
+		Old: /Game/OldMap.OldMap:PersistentLevel.Actor
+		Redirected Package: /Game/NewMap
+		*/
 
 		if (!SubPath.IsEmpty())
 		{
-			//We need to construct: /Game/NewMap.NewMap:PersistentLevel.Actor
-			//Get the pure map name from the package (e.g. "NewMap" from "/Game/NewMap")
+			/*
+			We need to construct: /Game/NewMap.NewMap:PersistentLevel.Actor
+			Get the pure map name from the package (eg. "NewMap" from "/Game/NewMap")
+			*/
 			const FString NewMapName = FPaths::GetBaseFilename(*RedirectedPackage);
 
-			//Construct the full path... 0_o
-			//Note the structure: Package + Dot + MapName + Colon + SubPath
-			//The colon is still there, separating the Asset (Map) from the SubPath (Actor).
+			/*
+			Construct the full path...
+			Note the structure: Package + Dot + MapName + Colon + SubPath
+			The colon is still there, separating the Asset (Map) from the SubPath (Actor).
+			*/
 			const FString NewPath = FString::Printf(TEXT("%s.%s:%s"), **RedirectedPackage, *NewMapName, *SubPath);
 
 			return FSoftObjectPath(NewPath);
 		}
 
-		//If there is no subpath, just point to the map asset itself
-		// "/Game/NewMap.NewMap"
+		/*
+		If there is no subpath, just point to the map asset itself
+		"/Game/NewMap.NewMap"
+		*/
 		const FString NewMapName = FPaths::GetBaseFilename(*RedirectedPackage);
 		return FSoftObjectPath(FString::Printf(TEXT("%s.%s"), **RedirectedPackage, *NewMapName));
 	}

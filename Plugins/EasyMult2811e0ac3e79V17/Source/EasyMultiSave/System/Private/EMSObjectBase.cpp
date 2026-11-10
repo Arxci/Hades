@@ -4,6 +4,8 @@
 #include "EMSPaths.h"
 #include "EMSCustomSaveGame.h"
 #include "EMSInfoSaveGame.h"
+#include "EMSCore.h"
+#include "EMSDebug.h"
 #include "Engine/World.h"
 #include "Engine/GameInstance.h"
 #include "ImageUtils.h"
@@ -19,7 +21,6 @@
 #include "UObject/Class.h"
 #include "Kismet/BlueprintAsyncActionBase.h"
 #include "HAL/FileManager.h"
-#include "HAL/PlatformFileManager.h"
 #include "PlatformFeatures.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Async/TaskGraphInterfaces.h"
@@ -31,12 +32,21 @@ Init
 
 UEMSObjectBase::UEMSObjectBase()
 {
-	LastSlotSaveTime = 0.f;
 }
 
 void UEMSObjectBase::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+
+	CurrentSaveGameName = ValidateSaveName(CurrentSaveGameName);
+	CurrentSaveUserName = ValidateSaveName(CurrentSaveUserName);
+
+	//A config written before the reserved-name rule existed. Clear it so the getter fallback applies.
+	if (FSavePaths::IsSlotNameReserved(CurrentSaveGameName))
+	{
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("Reserved Slot name in config was discarded: %s"), *CurrentSaveGameName);
+		CurrentSaveGameName.Empty();
+	}
 
 	const FString VersionNum = VERSION_STRINGIFY(EMS_VERSION_NUMBER);
 	UE_LOG(LogEasyMultiSave, Log, TEXT("Easy Multi Save Initialized | Version: %s | Current Save Game Slot: %s"),
@@ -44,9 +54,17 @@ void UEMSObjectBase::Initialize(FSubsystemCollectionBase& Collection)
 		*GetCurrentSaveGameName());
 }
 
+void UEMSObjectBase::Deinitialize()
+{
+	Super::Deinitialize();
+
+	CommitSaveReportOnShutdown();
+}
+
 UWorld* UEMSObjectBase::GetWorld() const
 {
-	return GetGameInstance()->GetWorld();
+	const UGameInstance* GameInstance = GetGameInstance();
+	return GameInstance ? GameInstance->GetWorld() : nullptr;
 }
 
 /**
@@ -87,9 +105,19 @@ TSaveGame* UEMSObjectBase::CreateNewSaveObject(const FString& FullSavePath, cons
 		return nullptr;
 	}
 
-	//Load the archive, integrity check is done there
-	const FLoadArchiveContext Context = FLoadArchiveContext(FullSavePath, EDataLoadType::DATA_Object, FSaveObjects(SaveGameObject));
-	LoadBinaryArchive(Context);
+	/*
+	Load the archive, warn if corrupt
+	@TODO This can in theory overwrite valid data with corrupt data, but it almost will never happen
+	*/
+	if (DoesFileExist(FullSavePath))
+	{
+		const FLoadArchiveContext Context = FLoadArchiveContext(FullSavePath, EDataLoadType::DATA_Object, FSaveObjects(SaveGameObject));
+		if (!LoadBinaryArchive(Context))
+		{
+			UE_LOG(LogEasyMultiSave, Error, TEXT("Save Game Object data is invalid. Please overwrite the file with proper data: %s"), *FullSavePath);
+			return SaveGameObject;   
+		}
+	}
 
 	return SaveGameObject;
 }
@@ -98,7 +126,13 @@ TSaveGame* UEMSObjectBase::CreateNewSaveObject(const FString& FullSavePath, cons
 Custom Save Objects
 **/
 
-UEMSCustomSaveGame* UEMSObjectBase::GetCustomSave(const TSubclassOf<UEMSCustomSaveGame>& SaveGameClass, const FString& InSlotName, const FString& InFileName)
+static FName MakeCachedCustomSaveName(const FString& CustomSaveName, const FString& SlotName)
+{
+	return EMS::ToCanonicalFName(CustomSaveName + EMS::CustomSaveTag + SlotName);
+}
+
+UEMSCustomSaveGame* UEMSObjectBase::GetCustomSave(const TSubclassOf<UEMSCustomSaveGame>& SaveGameClass,
+	const FString& InSlotName, const FString& InFileName, const bool bCacheResult)
 {
 	if (!SaveGameClass || SaveGameClass->HasAnyClassFlags(CLASS_Abstract))
 	{
@@ -116,25 +150,38 @@ UEMSCustomSaveGame* UEMSObjectBase::GetCustomSave(const TSubclassOf<UEMSCustomSa
 		return nullptr;
 	}
 
-	//Allow for custom file names
-	const FString CustomSaveName = [InFileName, CustomClass]() -> FString
+	//Resolve the final save name (custom override or fallback class name. Never empty)
+	const FString ResolvedSaveName = [InFileName, CustomClass]() -> FString
 	{
-		if (InFileName.IsEmpty())
+		if (EMS::StringEmpty(InFileName))
 		{
-			return CustomClass->SaveGameName.IsEmpty() ? CustomClass->GetName() : CustomClass->SaveGameName;
+			return EMS::StringEmpty(CustomClass->SaveGameName) ? CustomClass->GetName() : CustomClass->SaveGameName;
 		}
-		else
-		{
-			return InFileName;
-		}
+
+		return InFileName;
+
 	}();
 
 	const bool bUseSlot = CustomClass->bUseSaveSlot;
-	const bool bCustomSlotName = bUseSlot && !InSlotName.IsEmpty();
-
+	const bool bCustomSlotName = bUseSlot && !EMS::StringEmpty(InSlotName);
 	const FString ActualSlot = bCustomSlotName ? InSlotName : GetCurrentSaveGameName();
-	const FString SlotName = bUseSlot ? ActualSlot : FString();
-	const FString CachedRefName = CustomSaveName + SlotName;
+	const FString SlotName = bUseSlot ? ValidateSaveName(ActualSlot) : FString();
+
+	//Only a caller supplied Slot has to be checked, the Current Slot can never be reserved.
+	if (bCustomSlotName && FSavePaths::IsSlotNameReserved(SlotName))
+	{
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("Reserved Slot name rejected for Custom Save: %s"), *SlotName);
+		return nullptr;
+	}
+
+	//Make sure the name is not invalid, regardless of bUseSlot
+	const FString ValidCustomSaveName = ValidateSaveName(ResolvedSaveName);
+	const FString CustomSaveName =
+		IsFileNameReserved(ValidCustomSaveName) ?
+		CustomClass->GetName() :
+		ValidCustomSaveName;
+
+	const FName CachedRefName = MakeCachedCustomSaveName(CustomSaveName, SlotName);
 
 	if (UEMSCustomSaveGame* CachedObject = CachedCustomSaves.FindRef(CachedRefName))
 	{
@@ -145,13 +192,22 @@ UEMSCustomSaveGame* UEMSObjectBase::GetCustomSave(const TSubclassOf<UEMSCustomSa
 	const FString SaveFile = CustomSaveFile(CustomSaveName, SlotName);
 	const FSoftClassPath SaveClass = CustomClass->GetClass();
 
+	//Lazy create
 	if (UEMSCustomSaveGame* NewObject = CreateNewSaveObject<UEMSCustomSaveGame>(SaveFile, SaveClass))
 	{
 		NewObject->SaveGameName = CustomSaveName;
 		NewObject->SlotName = SlotName;
-		CachedCustomSaves.Add(CachedRefName, NewObject);
+
+		if (bCacheResult)
+		{
+			CachedCustomSaves.Add(CachedRefName, NewObject);
+			UE_LOG(LogEasyMultiSave, Verbose, TEXT("Cached Custom Save added: %s"), *CachedRefName.ToString());
+		}
+
 		return NewObject;
 	}
+
+	UE_LOG(LogEasyMultiSave, Error, TEXT("Custom Save access failed: %s"), *CustomSaveName);
 
 	return nullptr;
 }
@@ -163,33 +219,110 @@ bool UEMSObjectBase::SaveCustom(UEMSCustomSaveGame* SaveGame)
 		return false;
 	}
 
+	//Names here are validated from the Getter
 	const bool bUseSlot = SaveGame->bUseSaveSlot;
 	const FString SlotName = bUseSlot ? SaveGame->SlotName : FString();
+
 	const FString CustomSaveName = SaveGame->SaveGameName;
+	if (EMS::StringEmpty(CustomSaveName))
+	{
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("Save Custom with invalid SaveGameName. Aborting!"));
+		return false;
+	}
 
 	if (SaveObject(*CustomSaveFile(CustomSaveName, SlotName), SaveGame))
 	{
 		if (bUseSlot)
 		{
 			SaveSlotInfoObject(SlotName);
-			UE_LOG(LogEasyMultiSave, Log, TEXT("Custom Save Game saved: %s for Slot: %s"), *CustomSaveName, *SlotName);
+			UE_LOG(LogEasyMultiSave, Log, TEXT("Custom Save Object saved: %s for Slot: %s"), *CustomSaveName, *SlotName);
 		}
 		else
 		{
-			UE_LOG(LogEasyMultiSave, Log, TEXT("Custom Save Game saved: %s"), *CustomSaveName);
+			UE_LOG(LogEasyMultiSave, Log, TEXT("Custom Save Object saved: %s"), *CustomSaveName);
 		}
 
 		return true;
 	}
 
-	UE_LOG(LogEasyMultiSave, Warning, TEXT("Failed to save Custom Save Game: %s"), *CustomSaveName);
+	UE_LOG(LogEasyMultiSave, Warning, TEXT("Failed to save Custom Save Object: %s"), *CustomSaveName);
 
+	return false;
+}
+
+bool UEMSObjectBase::TransferCustom(UEMSCustomSaveGame* SaveGame, const FString& InTargetSlot)
+{
+	if (!IsValid(SaveGame) || !SaveGame->bUseSaveSlot)
+	{
+		return false;
+	}
+
+	const FString TargetSlot = ValidateSaveName(InTargetSlot);
+	if (EMS::StringEmpty(TargetSlot) || FSavePaths::IsSlotNameReserved(TargetSlot))
+	{
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("Invalid Target Slot for Custom Save transfer: %s"), *InTargetSlot);
+		return false;
+	}
+
+	const FString CustomSaveName = SaveGame->SaveGameName;
+	const FString SourceSlot = SaveGame->SlotName;
+	if (EMS::StringEmpty(CustomSaveName) || EMS::StringEmpty(SourceSlot))
+	{
+		return false;
+	}
+
+	//A Target that resolves to the Source is an ordinary Save, which needs no existing source file
+	if (SourceSlot.Equals(TargetSlot, ESearchCase::IgnoreCase))
+	{
+		return SaveCustom(SaveGame);
+	}
+
+	//Nothing to transfer, would otherwise write a default object over the Target
+	if (!DoesCustomSaveExist(SourceSlot, CustomSaveName))
+	{
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("Custom Save transfer skipped, no source data: %s in Slot: %s"),
+			*CustomSaveName, *SourceSlot);
+		return false;
+	}
+
+	if (CheckSaveGameIntegrity(CustomSaveFile(CustomSaveName, SourceSlot)) == EIntegrityCheckResult::Invalid)
+	{
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("Custom Save transfer skipped, source data is invalid: %s in Slot: %s"),
+			*CustomSaveName, *SourceSlot);
+		return false;
+	}
+
+	const FString TargetFile = CustomSaveFile(CustomSaveName, TargetSlot);
+	if (SaveObject(*TargetFile, SaveGame))
+	{
+		//The Target primary changed, so never retain a cached pre-transfer object.
+		ClearCachedCustomSave(TargetSlot, CustomSaveName);
+
+		//Same metadata semantics as Copy Custom Only and Cloud CustomSlot.
+		if (!StampSlotInfo(TargetSlot, TEXT("Custom Save transfer")))
+		{
+			return false;
+		}
+
+		//Same as Copy and Cloud, a replaced primary starts a new Target history.
+		if (!RemoveStaleBackup(TargetFile, TEXT("Custom Save transfer")))
+		{
+			return false;
+		}
+
+		UE_LOG(LogEasyMultiSave, Log, TEXT("Custom Save Object transferred: %s from Slot: %s to Slot: %s"),
+			*CustomSaveName, *SourceSlot, *TargetSlot);
+		return true;
+	}
+
+	UE_LOG(LogEasyMultiSave, Warning, TEXT("Failed to transfer Custom Save Object: %s"), *CustomSaveName);
 	return false;
 }
 
 bool UEMSObjectBase::SaveAllCustomObjects()
 {
-	bool bSuccess = false;
+	bool bAllSuccess = true;
+	bool bAnyAttempted = false;
 
 	for (auto& CustomObjectPair : CachedCustomSaves)
 	{
@@ -202,18 +335,21 @@ bool UEMSObjectBase::SaveAllCustomObjects()
 		//It can only auto-save objects in the current slot, but you can still manually save in other slots
 		if (SaveGame->bUseSaveSlot)
 		{
-			if (SaveGame->SlotName != GetCurrentSaveGameName())
+			//Skip slot-bound custom saves cached for a different slot, save those explicitly
+			if (!EMS::StringEmpty(SaveGame->SlotName)
+				&& !SaveGame->SlotName.Equals(GetCurrentSaveGameName(), ESearchCase::IgnoreCase))
 			{
 				continue;
 			}
 		}
 
-		bSuccess |= SaveCustom(SaveGame);
+		bAnyAttempted = true;
+		bAllSuccess &= SaveCustom(SaveGame);
 	}
 
-	return bSuccess;
+	//Nothing to save is not a success, only true when all attempted saves succeeded
+	return bAnyAttempted && bAllSuccess;
 }
-
 
 FCustomSaveInfo UEMSObjectBase::GetCustomSaveInfo(const UEMSCustomSaveGame* SaveGame) const 
 {
@@ -227,10 +363,10 @@ FCustomSaveInfo UEMSObjectBase::GetCustomSaveInfo(const UEMSCustomSaveGame* Save
 
 	Info.bValid = true;
 	Info.bUseSlot = SaveGame->bUseSaveSlot;
-	Info.CustomSaveName = SaveGame->SaveGameName;
-	Info.SlotName = Info.bUseSlot ? SaveGame->SlotName : FString();
+	Info.CustomSaveName = ValidateSaveName(SaveGame->SaveGameName);
+	Info.SlotName = Info.bUseSlot ? ValidateSaveName(SaveGame->SlotName) : FString();
 	Info.SaveFile = CustomSaveFile(Info.CustomSaveName, Info.SlotName);
-	Info.CachedRefName = Info.bUseSlot ? Info.CustomSaveName + Info.SlotName : Info.CustomSaveName;
+	Info.CachedRefName = MakeCachedCustomSaveName(Info.CustomSaveName, Info.SlotName);
 
 	return Info;
 }
@@ -246,7 +382,15 @@ void UEMSObjectBase::DeleteCustomSave(UEMSCustomSaveGame* SaveGame)
 	if (DeleteSaveFile(Info.SaveFile))
 	{
 		ClearCustomSaveByRef(Info.CachedRefName);
-		UE_LOG(LogEasyMultiSave, Log, TEXT("Custom Save Game deleted: %s"), *Info.CustomSaveName);
+
+		if (Info.bUseSlot)
+		{
+			UE_LOG(LogEasyMultiSave, Log, TEXT("Custom Save Object deleted: %s from Slot: %s"), *Info.CustomSaveName, *Info.SlotName);
+		}
+		else
+		{
+			UE_LOG(LogEasyMultiSave, Log, TEXT("Custom Save Object deleted: %s"), *Info.CustomSaveName);
+		}
 	}
 }
 
@@ -258,11 +402,22 @@ void UEMSObjectBase::ResetCustomSave(UEMSCustomSaveGame* SaveGame, const EResetC
 		return;
 	}
 
+	/*
+	The file identity is resolved by GetCustomSave, not by the class defaults.
+	A reset must never redirect later saves to a different file, or to no file at all.
+	*/
+	auto ResetToDefaults = [SaveGame]()
+	{
+		const FString ResolvedName = SaveGame->SaveGameName;
+		FSaveHelpers::ResetObjectToDefaults(SaveGame, false);
+		SaveGame->SaveGameName = ResolvedName;
+	};
+
 	switch (Type)
 	{
 	case EResetCustomSaveType::Full:
 		ClearCustomSaveByRef(Info.CachedRefName);
-		FSaveHelpers::ResetObjectToDefaults(SaveGame, false);
+		ResetToDefaults();
 		break;
 
 	case EResetCustomSaveType::ClearMemory:
@@ -270,21 +425,35 @@ void UEMSObjectBase::ResetCustomSave(UEMSCustomSaveGame* SaveGame, const EResetC
 		break;
 
 	case EResetCustomSaveType::ResetDefault:
-		FSaveHelpers::ResetObjectToDefaults(SaveGame, false);
+		ResetToDefaults();
 		break;
 	}
 
-	UE_LOG(LogEasyMultiSave, Log, TEXT("Custom Save Game reset: %s with option %d"), *Info.CustomSaveName, uint8(Type));
+	UE_LOG(LogEasyMultiSave, Log, TEXT("Custom Save Object reset: %s with option %d"), *Info.CustomSaveName, uint8(Type));
 }
 
-void UEMSObjectBase::ClearCustomSaveByRef(const FString& CachedRefName)
+void UEMSObjectBase::ClearCustomSaveByRef(const FName& CachedRefName)
 {
-	if (CachedRefName.IsEmpty())
+	if (CachedRefName.IsNone())
 	{
 		return;
 	}
 
+	//Validated and used MakeCached...  already
 	CachedCustomSaves.Remove(CachedRefName);
+	UE_LOG(LogEasyMultiSave, Verbose, TEXT("Cached Custom Save removed: %s"), *CachedRefName.ToString());
+}
+
+void UEMSObjectBase::ClearCachedCustomSave(const FString& InSlotName, const FString& InFileName)
+{
+	if (EMS::StringEmpty(InFileName))
+	{
+		return;
+	}
+
+	//Used by Save Slot Copy. Must match the key GetCustomSave cached the object under.
+	const FName CachedRefName = MakeCachedCustomSaveName(ValidateSaveName(InFileName), ValidateSaveName(InSlotName));
+	ClearCustomSaveByRef(CachedRefName);
 }
 
 void UEMSObjectBase::ClearCachedCustomSaves()
@@ -301,32 +470,44 @@ void UEMSObjectBase::ClearCustomSavesDesktop(const FString& SaveGameName)
 
 void UEMSObjectBase::ClearCustomSavesConsole(const FString& SaveGameName, const bool bAddFiles, TArray<FString>& OutFiles)
 {
-	TMap<FString, TObjectPtr<UEMSCustomSaveGame>> TempCustomSaves = CachedCustomSaves;
+	auto TempCustomSaves = CachedCustomSaves;
 
 	for (auto It = TempCustomSaves.CreateIterator(); It; ++It)
 	{
-		if (It->Key.Contains(SaveGameName))
+		const TObjectPtr<UEMSCustomSaveGame> CustomSaveGame = It->Value;
+		if (!CustomSaveGame)
 		{
-			const TObjectPtr<UEMSCustomSaveGame> CustomSaveGame = It->Value;
-			if (CustomSaveGame)
-			{
-				//@TODO cannot delete if the slot is not cached, non-cached custom saves must be removed manually on console.
-				//We cannot iterate the files, so we need another solution.
-				if (bAddFiles)
-				{
-					//Used to delete custom saves for a slot with the console file system
-					const FString CustomName = SaveGameName + EMS::UnderscoreInt + CustomSaveGame->SaveGameName;
-					OutFiles.Add(CustomName);
-				}
-
-				CachedCustomSaves.Remove(It->Key);
-			}
+			continue;
 		}
+
+		//Match slot directly. Slot1 and Slot10 must never be confused with each other
+		if (!CustomSaveGame->SlotName.Equals(SaveGameName, ESearchCase::IgnoreCase))
+		{
+			continue;
+		}
+
+		/*
+		Cannot delete if the slot is not cached, non-cached custom saves must be removed manually on console.
+		We cannot iterate the files on console!
+		*/
+		if (bAddFiles)
+		{
+			const FString CustomName = SaveGameName + EMS::UnderscoreFile + ValidateSaveName(CustomSaveGame->SaveGameName);
+			OutFiles.Add(CustomName);
+		}
+
+		CachedCustomSaves.Remove(It->Key);
 	}
 }
 
 bool UEMSObjectBase::DoesCustomSaveExist(const FString& InSlotName, const FString& InFileName) const
 {
+	if (IsFileNameReserved(InFileName, true))
+	{
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("Custom Save with reserved file name cannot exist: %s"), *InFileName);
+		return false;
+	}
+
 	return DoesFileExist(CustomSaveFile(InFileName, InSlotName));
 }
 
@@ -334,32 +515,49 @@ bool UEMSObjectBase::DoesCustomSaveExist(const FString& InSlotName, const FStrin
 Save Slots
 **/
 
+static FName MakeCachedSlotName(const FString& SlotName)
+{
+	return EMS::ToCanonicalFName(SlotName);
+}
+
 FString UEMSObjectBase::GetCurrentSaveGameName() const
 {
-	const FString DefaultName = UEMSPluginSettings::Get()->DefaultSaveGameName;
+	const FString SlotName = EMS::StringEmpty(CurrentSaveGameName)
+		? ValidateSaveName(UEMSPluginSettings::Get()->DefaultSaveGameName)
+		: CurrentSaveGameName;
 
-	if (CurrentSaveGameName.IsEmpty())
-	{
-		return DefaultName;
-	}
-
-	return CurrentSaveGameName;
+	return EMS::StringEmpty(SlotName) || FSavePaths::IsSlotNameReserved(SlotName)
+		? EMS::FallbackName
+		: SlotName;
 }
 
 void UEMSObjectBase::SetCurrentSaveGameName(const FString& SaveGameName)
 {
-	if (EMS::EqualString(SaveGameName, EMS::UserDir))
+	const FString NewName = ValidateSaveName(SaveGameName);
+
+	if (NewName.IsEmpty() || FSavePaths::IsSlotNameReserved(NewName))
 	{
-		UE_LOG(LogEasyMultiSave, Warning, TEXT("Slot name cannot be 'Users'. Keeping current slot name: %s"), *CurrentSaveGameName);
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("Invalid or reserved slot name rejected. Keeping: %s"), *GetCurrentSaveGameName());
 		return;
 	}
 
-	if (CurrentSaveGameName != SaveGameName)
+	if (!CurrentSaveGameName.Equals(NewName, ESearchCase::IgnoreCase))
 	{
+		if (IsAsyncTaskActive(false))
+		{
+			return;
+		}
+
+		/*
+		Do NOT clear MultiSaveLevels here. Multi-Level session state
+		(LevelArchiveList + MultiSaveLevels) is reset together manually via ClearMultiLevelSave
+		So names stay in sync with the actual archive data.
+		*/
+
 		//When switching slots, we want to always load from disk
 		ClearLoadFromMemory();
 
-		CurrentSaveGameName = FSavePaths::ValidateSaveName(SaveGameName);
+		CurrentSaveGameName = NewName;
 		SaveConfig();
 
 		UE_LOG(LogEasyMultiSave, Log, TEXT("New Current Save Game Slot is: %s"), *CurrentSaveGameName);
@@ -392,7 +590,10 @@ TArray<FString> UEMSObjectBase::GetAllSaveGames() const
 
 	//Might not be available on all platforms
 	ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem();
-	SaveSystem->GetSaveGameNames(SaveGameNames, PlayerIndex);
+	if (SaveSystem)
+	{
+		SaveSystem->GetSaveGameNames(SaveGameNames, PlayerIndex);
+	}
 
 	return SaveGameNames;
 }
@@ -416,23 +617,27 @@ TArray<FSaveSlotInfo> UEMSObjectBase::GetSlotInfos(const TArray<FString>& SaveGa
 
 UEMSInfoSaveGame* UEMSObjectBase::GetSlotInfoObject(const FString& SaveGameName)
 {
-	const FString ValidSaveName = FSavePaths::ValidateSaveName(SaveGameName);
+	const FString ValidSaveName = EMS::StringEmpty(SaveGameName)
+		? GetCurrentSaveGameName()
+		: ValidateSaveName(SaveGameName);
 
 	//Try to get a cached slot or create a new one
-	UEMSInfoSaveGame* Slot = CachedSaveSlots.FindRef(ValidSaveName);
+	UEMSInfoSaveGame* Slot = CachedSaveSlots.FindRef(MakeCachedSlotName(ValidSaveName));
 	if (!Slot)
 	{
 		Slot = MakeSlotInfoObject(ValidSaveName);
 		if (!Slot)
 		{
+			UE_LOG(LogEasyMultiSave, Error, TEXT("Slot access failed: %s"), *SaveGameName);
 			return nullptr;
 		}
 
-		CachedSaveSlots.Add(ValidSaveName, Slot);
+		CachedSaveSlots.Add(MakeCachedSlotName(ValidSaveName), Slot);
 	}
 
 	//Keep level list when switching slots
-	if (IsStackBasedMultiLevelSave())
+	if (IsStackBasedMultiLevelSave()
+		&& ValidSaveName.Equals(GetCurrentSaveGameName(), ESearchCase::IgnoreCase))
 	{
 		Slot->KeepMultiLevelSave(MultiSaveLevels);
 	}
@@ -455,29 +660,26 @@ UEMSInfoSaveGame* UEMSObjectBase::MakeSlotInfoObject(const FString& SaveGameName
 	return CreateNewSaveObject<UEMSInfoSaveGame>(SaveSlotFile, SaveSlotClass);
 }
 
-void UEMSObjectBase::SaveSlotInfoObject(const FString& SaveGameName)
+void UEMSObjectBase::SaveSlotInfoObject(const FString& InSaveGameName, const bool bOverrideLevelData)
 {
-	if (SaveGameName.IsEmpty())
+	if (InSaveGameName.IsEmpty())
 	{
 		UE_LOG(LogEasyMultiSave, Warning, TEXT("Trying to save slot with an empty name"));
 		return;
 	}
 
-	//Prevent redundant operations 
-	if (!HasSlotSaveTimePassed(EMS::ShortDelay))
+	const FString SaveGameName = ValidateSaveName(InSaveGameName);
+
+	//Custom saves (bOverrideLevelData=false) can be prevented from redundant calls
+	if (!bOverrideLevelData && !HasSlotSaveTimePassed(SaveGameName, EMS::ShortDelay))
 	{
 		return;
 	}
 
-	if (!VerifyOrCreateDirectory(SaveGameName))
-	{
-		UE_LOG(LogEasyMultiSave, Error, TEXT("Failed to verify or create directory for: %s"), *SaveGameName);
-		return;
-	}
+	//VerifyOrCreateDirectory was removed, as it was a no-op. ISaveSystem->SaveGame handles this.
 
 	//Retrieve or create save object
 	UEMSInfoSaveGame* SaveGame = GetSlotInfoObject(SaveGameName);
-
 	if (!SaveGame)
 	{
 		UE_LOG(LogEasyMultiSave, Warning, TEXT("Invalid Save Object for: %s"), *SaveGameName);
@@ -485,35 +687,85 @@ void UEMSObjectBase::SaveSlotInfoObject(const FString& SaveGameName)
 	}
 
 	//Update save info
+	const FSaveSlotInfo PrevInfo = SaveGame->SlotInfo;
 	SaveGame->SlotInfo.Name = SaveGameName;
 	SaveGame->SlotInfo.TimeStamp = FDateTime::Now();
 
-	const FName LevelName = GetSavedSlotLevelName();
-	SaveGame->SlotInfo.Level = LevelName;
-
-	//Maintain list of all saved level names
-	if (IsStackBasedMultiLevelSave())
+	//Custom Saves will update slot info (date) but never write Level Name or World data like Actors
+	if (bOverrideLevelData)
 	{
-		SaveGame->UpdateMultiLevelSave(LevelName, MultiSaveLevels);
+		const FName LevelName = GetSavedSlotLevelName();
+		SaveGame->SlotInfo.Level = LevelName;
+
+		//Maintain list of all saved level names
+		if (IsStackBasedMultiLevelSave())
+		{
+			SaveGame->UpdateMultiLevelSave(LevelName, MultiSaveLevels);
+		}
+
+		TArray<FString> PlayerNames;
+		FSaveHelpers::ExtractPlayerNames(GetWorld(), PlayerNames);
+		SaveGame->SlotInfo.Players = PlayerNames;
 	}
-
-	TArray<FString> PlayerNames;
-	FSaveHelpers::ExtractPlayerNames(GetWorld(), PlayerNames);
-	SaveGame->SlotInfo.Players = PlayerNames;
-
-	//Update cache, otherwise it will never overwrite the data during a session
-	CachedSaveSlots.Add(SaveGameName, SaveGame);
 
 	//Save object
 	if (SaveObject(*SlotInfoSaveFile(SaveGameName), SaveGame))
 	{
 		UE_LOG(LogEasyMultiSave, Log, TEXT("Slot Info saved: %s"), *SaveGameName);
-		LastSlotSaveTime = FPlatformTime::Seconds(); //On actual write
+		SaveGame->LastSaveAttemptTime = FPlatformTime::Seconds(); //On actual write
 	}
 	else
 	{
+		//Just keep previous one
+		SaveGame->SlotInfo = PrevInfo; 
 		UE_LOG(LogEasyMultiSave, Warning, TEXT("Slot Info could not be saved: %s"), *SaveGameName);
 	}
+}
+
+
+/*
+Shared Target Slot mutation helpers.
+A Target that received new data must show a fresh write, and its old backup must not outlive the replaced primary.
+*/
+
+bool UEMSObjectBase::StampSlotInfo(const FString& TargetSlot, const TCHAR* Operation)
+{
+	//The ordinary Slot Info save keeps Target metadata intact, forced past the short throttle to stamp the write.
+	UEMSInfoSaveGame* TargetSlotInfo = GetSlotInfoObject(TargetSlot);
+	if (!TargetSlotInfo)
+	{
+		UE_LOG(LogEasyMultiSave, Error, TEXT("%s: Failed to load Target Slot Info: %s"), Operation, *TargetSlot);
+		return false;
+	}
+
+	TargetSlotInfo->LastSaveAttemptTime = -EMS::ShortDelay;
+	SaveSlotInfoObject(TargetSlot);
+
+	//Only an actual write stamps a positive time
+	if (TargetSlotInfo->LastSaveAttemptTime < 0.0)
+	{
+		UE_LOG(LogEasyMultiSave, Error, TEXT("%s: Failed to update Target Slot Info: %s"), Operation, *TargetSlot);
+		return false;
+	}
+
+	return true;
+}
+
+bool UEMSObjectBase::RemoveStaleBackup(const FString& TargetPath, const TCHAR* Operation) const
+{
+	const FFileContext BackupContext(PlayerIndex, FSavePaths::GetBackupSavePath(TargetPath));
+	if (!FSaveFileIntegrity::DoesSaveExist(BackupContext))
+	{
+		return true;
+	}
+
+	if (FSaveFileIntegrity::DeleteSaveFile(BackupContext))
+	{
+		return true;
+	}
+
+	UE_LOG(LogEasyMultiSave, Error, TEXT("%s: Failed to remove stale Target backup: %s"), Operation, *BackupContext.Path);
+	return false;
 }
 
 bool UEMSObjectBase::WasCurrentLevelSaved() 
@@ -540,9 +792,20 @@ void UEMSObjectBase::ClearMultiSaveLevels()
 	}
 }
 
-bool UEMSObjectBase::HasSlotSaveTimePassed(const double InTime) const
+bool UEMSObjectBase::HasSlotSaveTimePassed(const FString& SaveGameName, const double InTime) const
 {
-	return (FPlatformTime::Seconds() - LastSlotSaveTime) >= InTime;
+	if (EMS::StringEmpty(SaveGameName))
+	{
+		return true;
+	}
+
+	const FName ValidCacheName = MakeCachedSlotName(ValidateSaveName(SaveGameName));
+	if (const UEMSInfoSaveGame* SaveGame = CachedSaveSlots.FindRef(ValidCacheName))
+	{
+		return (FPlatformTime::Seconds() - SaveGame->LastSaveAttemptTime) >= InTime;
+	}
+
+	return true;
 }
 
 bool UEMSObjectBase::DoesSaveSlotExist(const FString& SaveGameName) const
@@ -559,15 +822,50 @@ bool UEMSObjectBase::DoesFullSaveGameExist(const FString& SaveGameName) const
 	return bHasSlotFile && bHasPlayerFile && bHasLevelFile;
 }
 
-void UEMSObjectBase::DeleteAllSaveDataForSlot(const FString& SaveGameName)
+void UEMSObjectBase::ClearCachedSaveSlot(const FString& SlotName)
 {
-	bool bSuccess = false;
+	if (EMS::StringEmpty(SlotName))
+	{
+		return;
+	}
+
+	//Must match the canonical key used by GetSlotInfoObject.
+	CachedSaveSlots.Remove(MakeCachedSlotName(ValidateSaveName(SlotName)));
+}
+
+void UEMSObjectBase::DeleteAllSaveDataForSlot(const FString& InSaveGameName)
+{
+	if (EMS::StringEmpty(InSaveGameName))
+	{
+		return;
+	}
+
+	//A running task may be writing these files right now
+	if (IsAsyncTaskActive())
+	{
+		return;
+	}
+
+	/*
+	Multi-Level save is explicitly not cleared when level slot data is removed
+	If you switch slots, then delete one etc. you dont want all level data to be gone
+	*/
+
+	const FString SaveGameName = ValidateSaveName(InSaveGameName);
+
+	//Never let a reserved name resolve onto the User folder or a backup path and delete it
+	if (FSavePaths::IsSlotNameReserved(SaveGameName))
+	{
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("Reserved Slot name rejected for deletion: %s"), *SaveGameName);
+		return;
+	}
 
 	//Console uses files and not folders
 	if (IsConsoleFileSystem())
 	{
 		//Hardcoded default files, since we cannot iterate through them
 		TArray<FString> AllFiles = FSavePaths::GetDefaultSaveFiles(SaveGameName);
+		bool bSuccess = false;
 
 		//Parse the custom save objects and clear their cache
 		ClearCustomSavesConsole(SaveGameName, true, AllFiles);
@@ -575,10 +873,7 @@ void UEMSObjectBase::DeleteAllSaveDataForSlot(const FString& SaveGameName)
 		//Use native delete 
 		for (const FString& FileName : AllFiles)
 		{
-			if (*FileName)
-			{		
-				bSuccess = DeleteSaveFile(FileName);
-			}
+			bSuccess |= DeleteSaveFile(FileName);
 		}
 
 		if (bSuccess)
@@ -586,41 +881,65 @@ void UEMSObjectBase::DeleteAllSaveDataForSlot(const FString& SaveGameName)
 			UE_LOG(LogEasyMultiSave, Log, TEXT("Save Game Data removed for: %s"), *SaveGameName);
 		}
 	}
+	//Folders
 	else
 	{
-		const FString SaveFile = FPaths::Combine(BaseSaveDir(), SaveGameName);
-		bSuccess = IFileManager::Get().DeleteDirectory(*SaveFile, true, true);
-
-		if (bSuccess)
-		{
-			UE_LOG(LogEasyMultiSave, Log, TEXT("Save Game Data removed for: %s"), *SaveGameName);
-		}
+		FSavePaths::DeleteSaveDirectory(BaseSaveDir(), SaveGameName, "Save Slot");
 
 		//Delete the cached custom save objects
 		ClearCustomSavesDesktop(SaveGameName);
 	}
 
-	//Remove Cached Slot
-	CachedSaveSlots.Remove(SaveGameName);
+	//Keep in sync with disk, or a later save re-writes the deleted data
+	CachedSaveSlots.Remove(MakeCachedSlotName(SaveGameName));
+	if (SaveGameName.Equals(GetCurrentSaveGameName(), ESearchCase::IgnoreCase))
+	{
+		ClearLoadFromMemory();
+	}
 }
 
-void UEMSObjectBase::DeleteDataFromSlot(const FString& SaveGameName, const EDeleteSlotType InData)
+void UEMSObjectBase::DeleteDataFromSlot(const FString& InSaveGameName, const EDeleteSlotType InData)
 {
 	if (InData == EDeleteSlotType::Full)
+	{
+		//Handled in Blueprint lib with DeleteAllSaveDataForSlot
+		return;
+	}
+
+	if (EMS::StringEmpty(InSaveGameName))
 	{
 		return;
 	}
 
+	//A running task may be writing these files right now
+	if (IsAsyncTaskActive())
+	{
+		return;
+	}
+
+	const FString ValidName = ValidateSaveName(InSaveGameName);
+	if (FSavePaths::IsSlotNameReserved(ValidName))
+	{
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("Reserved Slot name rejected for deletion: %s"), *ValidName);
+		return;
+	}
+
 	const bool bIsPlayer = InData == EDeleteSlotType::Player;
-	const FString SlotFile = bIsPlayer ? PlayerSaveFile(SaveGameName) : ActorSaveFile(SaveGameName);
+	const FString SlotFile = bIsPlayer ? PlayerSaveFile(ValidName) : ActorSaveFile(ValidName);
 	const bool bSuccess = DeleteSaveFile(SlotFile);
 
 	if (bSuccess)
 	{
+		//Keep in sync with disk, or a later save re-writes the deleted data
+		CachedSaveSlots.Remove(MakeCachedSlotName(ValidName));
+		if (ValidName.Equals(GetCurrentSaveGameName(), ESearchCase::IgnoreCase))
+		{
+			ClearLoadFromMemory();
+		}
+
 		const FString DataType = bIsPlayer ? TEXT("Player") : TEXT("Level");
-		UE_LOG(LogEasyMultiSave, Log, TEXT("%s Data removed for: %s"), *DataType, *SaveGameName);
+		UE_LOG(LogEasyMultiSave, Log, TEXT("%s Data removed for: %s"), *DataType, *ValidName);
 	}
-	
 }
 
 void UEMSObjectBase::ClearCachedSlots()
@@ -652,6 +971,11 @@ void UEMSObjectBase::SetCurrentSaveUserName(const FString& UserName)
 	{
 		if (!CurrentSaveUserName.IsEmpty())
 		{
+			if (IsAsyncTaskActive(false))
+			{
+				return;
+			}
+
 			ClearUserData();
 			CurrentSaveUserName.Reset();
 			SaveConfig();
@@ -667,10 +991,14 @@ void UEMSObjectBase::SetCurrentSaveUserName(const FString& UserName)
 		return;
 	}
 
-	const FString NewName = FSavePaths::ValidateSaveName(UserName);
-
-	if (CurrentSaveUserName != NewName)
+	const FString NewName = ValidateSaveName(UserName);
+	if (!CurrentSaveUserName.Equals(NewName, ESearchCase::IgnoreCase))
 	{
+		if (IsAsyncTaskActive(false))
+		{
+			return;
+		}
+
 		ClearUserData();
 		CurrentSaveUserName = NewName;
 		SaveConfig();
@@ -681,24 +1009,26 @@ void UEMSObjectBase::SetCurrentSaveUserName(const FString& UserName)
 
 void UEMSObjectBase::DeleteAllSaveDataForUser(const FString& UserName)
 {
-	ClearUserData();
-
-	const FString UserSaveFile = SaveUserDir() + UserName;
-	bool bSuccess = false;
-
-	//Try removing folder	
-	bSuccess = IFileManager::Get().DeleteDirectory(*UserSaveFile, true, true);
-	if (bSuccess)
+	if (EMS::StringEmpty(UserName))
 	{
-		UE_LOG(LogEasyMultiSave, Log, TEXT("Save Game User Data removed for: %s"), *UserName);
+		return;
 	}
+
+	if (IsAsyncTaskActive(false))
+	{
+		return;
+	}
+
+	FSavePaths::DeleteSaveDirectory(SaveUserDir(), ValidateSaveName(UserName), "Save User");
+
+	//We only clear all to be super-safe here not just for the current user
+	ClearUserData();
 }
 
 TArray<FString> UEMSObjectBase::GetAllSaveUsers() const
 {
 	TArray<FString> SaveUserNames;
 	IFileManager::Get().FindFiles(SaveUserNames, *FPaths::Combine(SaveUserDir(), TEXT("*")), false, true);
-
 	return SaveUserNames;
 }
 
@@ -721,91 +1051,41 @@ bool UEMSObjectBase::SaveBinaryArchive(const FString& FullSavePath, FBufferArchi
 	FSavePaths::CheckForReadOnly(FullSavePath);
 #endif
 
+	//Handle automatic backup before overwriting existing data
+	if (UEMSPluginSettings::Get()->bAutoBackup)
+	{
+		const FFileContext Context = FFileContext(PlayerIndex, FullSavePath);
+		FSaveFileIntegrity::PerformAutoBackup(Context);
+	}
+
 	return SaveBinaryData(FullSavePath, MoveTemp(BinaryData));
 }
 
 bool UEMSObjectBase::SaveBinaryData(const FString& FullSavePath, TArray<uint8> InData) const
 {
-	//Handle automatic backup before overwriting existing data
-	if (UEMSPluginSettings::Get()->bAutoBackup)
-	{
-		//Prevent early 'slot only' backup on first save, when SaveSlot() info is called twice in a row
-		if (HasSlotSaveTimePassed(EMS::ShortDelay) || !FullSavePath.Contains(EMS::SlotSuffix))
-		{
-			const FFileContext Context = FFileContext(PlayerIndex, FullSavePath);
-			FSaveFileIntegrity::PerformAutoBackup(Context);
-		}
-	}
+	//Save data now will always compress regardless of the file system.
 
 	//Compression Logic
 	TArray<uint8> DataToSave;
-	if (!IsConsoleFileSystem())
-	{
-		FArchiveSaveCompressedProxy Compressor(DataToSave, NAME_Oodle);
-		if (Compressor.GetError())
-		{
-			UE_LOG(LogEasyMultiSave, Error, TEXT("Compression failed for: %s"), *FullSavePath);
-			return false;
-		}
+	FArchiveSaveCompressedProxy Compressor(DataToSave, NAME_Oodle);
 
-		Compressor << InData;
-		Compressor.Flush();
-		Compressor.Close();
-	}
-	else
+	if (Compressor.GetError() || Compressor.IsCriticalError())
 	{
-		//On consoles, we move the data directly without compression
-		DataToSave = MoveTemp(InData);
+		UE_LOG(LogEasyMultiSave, Error, TEXT("Compression failed for: %s"), *FullSavePath);
+		return false;
+	}
+
+	Compressor << InData;
+	Compressor.Flush();
+
+	if (!Compressor.Close() || Compressor.IsCriticalError())
+	{
+		UE_LOG(LogEasyMultiSave, Error, TEXT("Compression failed during serialization for: %s"), *FullSavePath);
+		return false;
 	}
 
 	//Actual File IO
-	return SaveBinaryDataAtomic(FullSavePath, DataToSave);
-}
-
-bool UEMSObjectBase::SaveBinaryDataAtomic(const FString& FullSavePath, const TArray<uint8>& FinalData) const
-{
-
-#if EMS_PLATFORM_DESKTOP
-
-	if (!IsConsoleFileSystem())
-	{
-		//Desktop: Use atomic write with temp file (Crash Protection)
-		const FString TempSavePath = FullSavePath + EMS::TempType;
-		const auto CleanupTempFile = [this, &TempSavePath]()
-		{
-			DeleteSaveFile(TempSavePath);
-		};
-
-		//Clean up old temp files first
-		CleanupTempFile();
-
-		//Write to TEMP file first
-		if (!CheckAndSaveFile(*TempSavePath, FinalData))
-		{
-			UE_LOG(LogEasyMultiSave, Error, TEXT("Failed to save temp file: %s"), *TempSavePath);
-			CleanupTempFile();
-			return false;
-		}
-
-		//Atomic Move(Rename) on same volume
-		const FString SrcPath = BaseSavePath(TempSavePath);
-		const FString DestPath = BaseSavePath(FullSavePath);
-		if (IFileManager::Get().Move(*DestPath, *SrcPath, true, true, false, true))
-		{
-			//Move succeeded - temp file was renamed, no cleanup needed
-			//Steam cloud etc. usually do not sync during file write and when running
-			return true;
-		}
-
-		//Move failed - clean up and fall through to direct write
-		UE_LOG(LogEasyMultiSave, Warning, TEXT("Atomic Move failed for %s. Falling back to explicit write."), *FullSavePath);
-		CleanupTempFile();
-	}
-
-#endif
-
-	//Console/Fallback: Direct write (Platform handles integrity)
-	const bool bSaveSuccess = CheckAndSaveFile(*FullSavePath, FinalData);
+	const bool bSaveSuccess = CheckAndSaveFile(*FullSavePath, DataToSave);
 	if (!bSaveSuccess)
 	{
 		UE_LOG(LogEasyMultiSave, Error, TEXT("Failed to save file: %s"), *FullSavePath);
@@ -856,7 +1136,7 @@ bool UEMSObjectBase::ParseArchiveData(const FLoadArchiveContext& Context, const 
 	{
 		//This only means level does not match etc. By this time, the files are valid
 		UE_LOG(LogEasyMultiSave, Log,
-			TEXT("Data is valid, but was not parsed for logical reasons like being in a different Level without (Persistent or Full) Multi-Level Saving. File: %s"),
+			TEXT("Data is valid, but was not parsed for logical reasons. Usually a different Level without (Persistent or Full) Multi-Level Saving. File: %s"),
 			*FullSavePath);
 	}
 
@@ -865,7 +1145,7 @@ bool UEMSObjectBase::ParseArchiveData(const FLoadArchiveContext& Context, const 
 
 bool UEMSObjectBase::LoadBinaryArchive(const FLoadArchiveContext& Context)
 {
-	const FString& FullSavePath = Context.SavePath; // Use Reference
+	const FString& FullSavePath = Context.SavePath; //Use Reference
 	if (FullSavePath.IsEmpty())
 	{
 		UE_LOG(LogEasyMultiSave, Error, TEXT("Load Binary Archive has empty path!"));
@@ -918,17 +1198,28 @@ bool UEMSObjectBase::LoadBinaryData(const FString& FullSavePath, TArray<uint8>& 
 {
 	//Initial File Load and Integrity Check
 	TArray<uint8> RawFileData;
-	OutResult = CheckAndLoadFile(FullSavePath, RawFileData);
+	FSaveHeader FileHeader;
+	OutResult = CheckAndLoadFile(FullSavePath, RawFileData, FileHeader);
+
 	if (OutResult != EFileValidity::FILE_VALID)
 	{
 		return false;
 	}
 
+	/*
+	Newer headers have a compression flag for consoles(so old uncompressed data is supported)
+	Desktop files have always been compressed in every version. 
+	In the new code, it will compress all files on save, regardless of the system.
+	OODLE is platform agnostic and due to file limitations on console it makes sense. 
+	*/
+	const bool bIsFileDecompressionAllowed = FileHeader.IsDataCompressed() || !IsConsoleFileSystem();
+
 	//Decompression logic
-	if (!IsConsoleFileSystem())
+	if (bIsFileDecompressionAllowed)
 	{
 		FArchiveLoadCompressedProxy Decompressor(RawFileData, NAME_Oodle);
-		if (Decompressor.GetError())
+
+		if (Decompressor.GetError() || Decompressor.IsCriticalError())
 		{
 			UE_LOG(LogEasyMultiSave, Error, TEXT("Decompression failed for: %s"), *FullSavePath);
 			return false;
@@ -936,14 +1227,19 @@ bool UEMSObjectBase::LoadBinaryData(const FString& FullSavePath, TArray<uint8>& 
 
 		TArray<uint8> DecompressedBuffer;
 		Decompressor << DecompressedBuffer;
-		Decompressor.Close();
+
+		if (!Decompressor.Close() || Decompressor.IsCriticalError())
+		{
+			UE_LOG(LogEasyMultiSave, Error, TEXT("Decompression failed during serialization for: %s"), *FullSavePath);
+			return false;
+		}
 
 		//Transfer data without copying the entire array
 		OutBinaryData = MoveTemp(DecompressedBuffer);
 	}
 	else
 	{
-		//Direct move on consoles where no compression is applied
+		//Direct move on console legacy files, when no compression is applied
 		OutBinaryData = MoveTemp(RawFileData);
 	}
 
@@ -955,12 +1251,10 @@ File I/O functions
 Integrated with Versioning
 **/
 
-EFileValidity UEMSObjectBase::CheckAndLoadFile(const FString& FullSavePath, TArray<uint8>& OutData) const
+EFileValidity UEMSObjectBase::CheckAndLoadFile(const FString& FullSavePath, TArray<uint8>& OutData, FSaveHeader& OutHeader) const
 {
-	FSaveHeader Header;
-
 	const FFileContext Context = FFileContext(PlayerIndex, FullSavePath);
-	const EFileValidity File = FSaveFileIntegrity::CheckAndLoadFile(Context, OutData, Header);
+	const EFileValidity File = FSaveFileIntegrity::CheckAndLoadFile(Context, OutData, OutHeader);
 	const bool bIsValid = File == EFileValidity::FILE_VALID;
 
 	if (!bIsValid)
@@ -969,14 +1263,20 @@ EFileValidity UEMSObjectBase::CheckAndLoadFile(const FString& FullSavePath, TArr
 	}
 
 	//Early check for incompatible multi level modes, which can cause a crash. New files only.
-	const bool bMultiLevelCompat = FSaveFileIntegrity::HasMultiLevelCompatibility(Context, Header);
+	const bool bMultiLevelCompat = FSaveFileIntegrity::HasMultiLevelCompatibility(Context, OutHeader);
 	if (!bMultiLevelCompat)
 	{
 		return EFileValidity::FILE_INCOMPATIBLE;
 	}
 
-	//Assign last read version, its required to keep this global for all Readers 
-	Header.InitVersionInfo(LastFileVersion);
+	/*
+	Init last read version. We keep this global because we assume that all files are from the same version anyway.
+	But if not, it is always correctly scoped to "the file currently being parsed"
+	Each read-header-then-deserialize cycle fully completes before the next.
+	Reading Custom/Collection concurrent to Multi-Thread load could in theory overwrite it.
+	But as stated above, files are mostly from the same version.
+	*/
+	OutHeader.InitVersionInfo(LastFileVersion, LastGameVersion);
 
 	return File;
 }
@@ -1003,10 +1303,10 @@ bool UEMSObjectBase::DeleteSaveFile(const FString& FullSavePath) const
 Versioning Functions
 **/
 
-EIntegrityCheckResult UEMSObjectBase::CheckSaveGameIntegrity(const FString& FullSavePath, const bool bCheckVersion) const
+EIntegrityCheckResult UEMSObjectBase::CheckSaveGameIntegrity(const FString& FullSavePath) const
 {
 	const FFileContext Context = FFileContext(PlayerIndex, FullSavePath);
-	return FSaveFileIntegrity::CheckSaveGameIntegrity(Context, bCheckVersion);
+	return FSaveFileIntegrity::CheckSaveGameIntegrity(Context);
 }
 
 void UEMSObjectBase::ApplyLastFileVersion(FMemoryReader& MemoryReader, const bool bHandleLegacy) const
@@ -1018,6 +1318,12 @@ void UEMSObjectBase::ApplyLastFileVersion(FMemoryReader& MemoryReader, const boo
 	}
 
 	FSaveVersion::ApplyFileVersionInfo(LastFileVersion, MemoryReader);
+}
+
+void UEMSObjectBase::GetGameVersion(int32& SaveFileVersion, int32& SettingsVersion) const
+{
+	SettingsVersion = FSaveVersion::GetSettingsGameVersionAsInt();
+	SaveFileVersion = LastGameVersion.GetGameVal();
 }
 
 /**
@@ -1034,8 +1340,7 @@ bool UEMSObjectBase::SaveObject(const FString& FullSavePath, UObject* SaveGameOb
 
 	//Serialize with version into Data
 	TArray<uint8> Data;
-	FMemoryWriter MemoryWriter(Data, true);
-	SerializeObjectWithVersion(SaveGameObject, MemoryWriter, ESaveObjectType::CompleteObject);
+	SerializeToBinary(SaveGameObject, Data, FSerializeMeta::CompleteObject());
 
 	//Now wrap the filled Data with buffer archive
 	FBufferArchive Archive;
@@ -1054,17 +1359,22 @@ bool UEMSObjectBase::LoadObject(FMemoryReader& FromBinary, UObject* SaveGameObje
 {
 	if (!SaveGameObject)
 	{
-		UE_LOG(LogEasyMultiSave, Warning, TEXT("Load Object: Invalid Object"));
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("Load Object: Invalid object"));
 		return false;
 	}
 
 	//Unwrap from buffer archive
-	FBufferArchive ObjectArchive;
-	FromBinary << ObjectArchive;
+	FBufferArchive Archive;
+	FromBinary << Archive;
 
-	//Deserialize with version
-	FMemoryReader MemoryReader(ObjectArchive, true);
-	DeserializeObjectWithVersion(SaveGameObject, MemoryReader, ESaveObjectType::CompleteObject);
+	if (FromBinary.IsError() || FromBinary.IsCriticalError())
+	{
+		UE_LOG(LogEasyMultiSave, Error, TEXT("Load Object: Archive error"));
+		return false;
+	}
+
+	//Deserialize
+	SerializeFromBinary(SaveGameObject, Archive, FSerializeMeta::CompleteObject());
 
 	return true;
 }
@@ -1073,38 +1383,54 @@ bool UEMSObjectBase::LoadObject(FMemoryReader& FromBinary, UObject* SaveGameObje
 Base Game-Object Serialize Functions
 **/
 
-void UEMSObjectBase::SerializeToBinary(const UObject* Object, TArray<uint8>& OutData) const
+void UEMSObjectBase::SerializeToBinary(const UObject* Object, TArray<uint8>& OutData, const FSerializeMeta& Meta) const
 {
 	FMemoryWriter MemoryWriter(OutData, true);
 	UObject* ObjectRef = const_cast<UObject*>(Object);
-	SerializeObjectWithVersion(ObjectRef, MemoryWriter, ESaveObjectType::SaveGameOnly);
+	SerializeObjectWithVersion(ObjectRef, MemoryWriter, Meta.Type);
+
+	if (UEMSPluginSettings::Get()->bDebugDataSize)
+	{
+		FSaveLogDebug::DebugLogDataSize(Object, OutData);
+	}
+
+	if (!Meta.bSkipDebug)
+	{
+		WriteSaveReport(FSaveReportContext::ForObject(Object, Meta.Type, false));
+	}
 }
 
-void UEMSObjectBase::SerializeFromBinary(UObject* Object, const TArray<uint8>& InData) const
+void UEMSObjectBase::SerializeFromBinary(UObject* Object, const TArray<uint8>& InData, const FSerializeMeta& Meta) const
 {
 	FMemoryReader MemoryReader(InData, true);
-	DeserializeObjectWithVersion(Object, MemoryReader, ESaveObjectType::SaveGameOnly);
+	DeserializeObjectWithVersion(Object, MemoryReader, Meta.Type);
+
+	if (!Meta.bSkipDebug)
+	{
+		WriteSaveReport(FSaveReportContext::ForObject(Object, Meta.Type, true));
+	}
 }
 
 /**
 Core Serialize Helpers
 **/
-
-void UEMSObjectBase::SerializeObjectWithVersion(UObject* Object, FMemoryWriter& Writer, ESaveObjectType SaveType) const
+ 
+void UEMSObjectBase::SerializeObjectWithVersion(UObject* Object, FMemoryWriter& Writer, const ESaveObjectType Type)
 {
-	uint32 ObjectTag = EMS::OBJECT_DATA_TAG;
-	uint32 ObjectVer = EMS::OBJECT_DATA_VERSION;
+	uint32 ObjectTag = EMS::OBJECT_INST_TAG;
+	uint32 ObjectVer = EMS::OBJECT_INST_VERSION_LATEST;
 	FPackageFileVersion ObjectFileVersion = GPackageFileUEVersion;
 
 	Writer << ObjectTag;
 	Writer << ObjectVer;
 	Writer << ObjectFileVersion;
 
-	FSaveGameArchive Ar(Writer, SaveType, ObjectVer);
+	const FCoreArchiveContext Context = FCoreArchiveContext(Type, ObjectVer, Object);
+	FCoreSaveArchive Ar(Writer, Context);
 	Object->Serialize(Ar);
 }
 
-void UEMSObjectBase::DeserializeObjectWithVersion(UObject* Object, FMemoryReader& Reader, ESaveObjectType SaveType) const
+void UEMSObjectBase::DeserializeObjectWithVersion(UObject* Object, FMemoryReader& Reader, const ESaveObjectType Type) const
 {
 	//Generic engine and file version
 	ApplyLastFileVersion(Reader);
@@ -1115,12 +1441,12 @@ void UEMSObjectBase::DeserializeObjectWithVersion(UObject* Object, FMemoryReader
 	Reader << ObjectTag;
 
 	//Newer data with version header
-	if (ObjectTag == EMS::OBJECT_DATA_TAG)
+	if (ObjectTag == EMS::OBJECT_INST_TAG)
 	{
 		Reader << ObjectVer;
 
-		//Newest
-		if (ObjectVer >= EMS::OBJECT_DATA_VERSION)
+		//From here on, we add the actual version
+		if (ObjectVer >= EMS::OBJECT_INST_VERSION_2)
 		{
 			FPackageFileVersion ObjectFileVersion;
 			Reader << ObjectFileVersion;
@@ -1132,36 +1458,77 @@ void UEMSObjectBase::DeserializeObjectWithVersion(UObject* Object, FMemoryReader
 	{
 		Reader.Seek(0);
 
-		//This is only valid for 177 where Complete Objects dont have the data version
-		if (SaveType != ESaveObjectType::CompleteObject)
+		//This is only valid for files from 177 where Complete Objects dont have the data version yet
+		if (Type != ESaveObjectType::CompleteObject)
 		{
 			Reader.SetUEVer(LastFileVersion.GetLegacyVer()); 
 		}
 	}
 
-	FSaveGameArchive Ar(Reader, SaveType, ObjectVer);
+	const FCoreArchiveContext Context = FCoreArchiveContext(Type, ObjectVer, Object);
+	FCoreSaveArchive Ar(Reader, Context);
 	Object->Serialize(Ar);
 }
+
+/**
+Advanced Save Report
+**/
+
+#if EMS_BUILD_DEVELOPER
+void UEMSObjectBase::WriteSaveReport(const FSaveReportContext& Context) const
+{
+	if (FSettingHelpers::IsSaveReportEnabled())
+	{
+		//Create the context
+		FSaveReportContext DebugContext = Context;
+
+		DebugContext.SlotName = GetCurrentSaveGameName();
+		DebugContext.UserName = GetCurrentSaveUserName();
+
+		const bool bLoad = Context.bIsLoading;
+		DebugContext.PluginVersion =
+			bLoad ? LastGameVersion.GetPluginVer() : FSaveVersion::GetStaticPluginVersion();
+		DebugContext.GameVersion =
+			bLoad ? LastGameVersion.GetGameVer() : FSaveVersion::GetSettingsGameVersion();
+
+		//In case we are using Multi-Thread saving/loading we need to pass it to the GameThread
+		if (!IsInGameThread())
+		{
+			AsyncTask(ENamedThreads::GameThread, [DebugContext]()
+			{
+				if (IsValid(DebugContext.TargetObject))
+				{
+					FSaveReport::WriteSaveReport(DebugContext);
+				}
+			});
+		}
+		else
+		{
+			FSaveReport::WriteSaveReport(DebugContext);
+		}
+	}
+}
+
+void UEMSObjectBase::CommitSaveReportOnShutdown() const
+{
+	//Write debug info and evict cache
+	FSaveReport::CommitSaveReport();
+	FSaveReport::ClearReportCache();
+}
+
+void UEMSObjectBase::ClearReportCache(const bool bFullClear) const
+{
+	FSaveReport::ClearReportCache(bFullClear);
+}
+#endif
 
 /**
 File System
 **/
 
-bool UEMSObjectBase::VerifyOrCreateDirectory(const FString& NewDir) const
+FString UEMSObjectBase::ValidateSaveName(const FString& SaveGameName) const
 {
-	//Not required for console
-	if (IsConsoleFileSystem())
-	{
-		return true;
-	}
-
-	const FString SaveFile = FPaths::Combine(BaseSaveDir(), NewDir);
-	if (IFileManager::Get().DirectoryExists(*SaveFile))
-	{
-		return true;
-	}
-
-	return IFileManager::Get().MakeDirectory(*SaveFile, true);
+	return FSavePaths::ValidateSaveName(SaveGameName);
 }
 
 FString UEMSObjectBase::SaveUserDir() const
@@ -1169,17 +1536,22 @@ FString UEMSObjectBase::SaveUserDir() const
 	return FPaths::ProjectSavedDir() + EMS::SaveGamesFolder + EMS::UserDir + EMS::Slash;
 }
 
+FString UEMSObjectBase::ValidatedUserName() const
+{
+	return ValidateSaveName(GetCurrentSaveUserName());
+}
+
 FString UEMSObjectBase::UserSubDir() const
 {
 	//Takes into account the already defined path from ISaveGame
-	return EMS::UserDir + EMS::Slash + GetCurrentSaveUserName() + EMS::Slash;
+	return EMS::UserDir + EMS::Slash + ValidatedUserName() + EMS::Slash;
 }
 
 FString UEMSObjectBase::BaseSaveDir() const
 {
 	if (HasSaveUserName())
 	{
-		return SaveUserDir() + GetCurrentSaveUserName() + EMS::Slash;
+		return SaveUserDir() + ValidatedUserName() + EMS::Slash;
 	}
 
 	return FPaths::ProjectSavedDir() + EMS::SaveGamesFolder;
@@ -1187,9 +1559,11 @@ FString UEMSObjectBase::BaseSaveDir() const
 
 FString UEMSObjectBase::BaseSavePath(const FString& FullSavePath) const
 {
-	//FullSavePath already will have user included. Like ActorSaveFile(). 
-	//So we don't use BaseSaveDir here
-	return FPaths::ProjectSavedDir() + EMS::SaveGamesFolder + FullSavePath + EMS::SaveType;
+	/*
+	FullSavePath already will have user included. Like ActorSaveFile().
+	So we don't use BaseSaveDir here
+	*/
+	return FSavePaths::GetBaseSavePath(FullSavePath);
 }
 
 FString UEMSObjectBase::GetThumbnailFormat() const
@@ -1208,12 +1582,15 @@ FString UEMSObjectBase::GetFolderOrFile() const
 
 FString UEMSObjectBase::FullSaveDir(const FString& DataType, FString SaveGameName) const
 {
-	if (SaveGameName.IsEmpty())
+	if (EMS::StringEmpty(SaveGameName))
 	{
 		SaveGameName = GetCurrentSaveGameName();
 	}
 
-	// *.sav is added by ISaveInterface
+	//Single canonical point
+	SaveGameName = ValidateSaveName(SaveGameName);
+
+	//sav is added by ISaveInterface
 	const FString FullName = SaveGameName + GetFolderOrFile() + DataType;
 
 	if (HasSaveUserName())
@@ -1224,10 +1601,20 @@ FString UEMSObjectBase::FullSaveDir(const FString& DataType, FString SaveGameNam
 	return FullName;
 }
 
-FString UEMSObjectBase::CustomSaveFile(const FString& CustomSaveName, const FString& SlotName) const
+FString UEMSObjectBase::CustomSaveFile(const FString& InCustomSaveName, const FString& SlotName) const
 {
+	//Becomes the DataType in FullSaveDir, which does not validate it on its own
+	FString CustomSaveName = ValidateSaveName(InCustomSaveName);
+
+	//A custom file must never resolve onto a core slot file (Player/Level/Slot/Thumb)
+	if (IsFileNameReserved(CustomSaveName))
+	{
+		CustomSaveName = EMS::FallbackName + EMS::UnderscoreFile + CustomSaveName;
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("Custom Save File with reserved name was renamed to: %s"), *CustomSaveName);
+	}
+
 	//Bound to a save slot, use default dir.
-	if (!SlotName.IsEmpty())
+	if (!EMS::StringEmpty(SlotName))
 	{
 		return FullSaveDir(CustomSaveName, SlotName);
 	}
@@ -1263,7 +1650,7 @@ FString UEMSObjectBase::ThumbnailSaveFile(const FString& SaveGameName) const
 
 FString UEMSObjectBase::SlotFilePath(const FString& SaveGameName) const
 {
-	//This is only used for sorting.
+	//SlotFilePath only used for sorting.
 	return BaseSavePath(SlotInfoSaveFile(SaveGameName));
 }
 
@@ -1274,6 +1661,16 @@ FName UEMSObjectBase::GetSavedSlotLevelName() const
 	return FName(WorldLevel);
 }
 
+bool UEMSObjectBase::IsFileNameReserved(const FString& SaveGameName, const bool bValidate) const
+{
+	if (bValidate)
+	{
+		return FSavePaths::IsFileNameReserved(ValidateSaveName(SaveGameName));
+	}
+
+	return FSavePaths::IsFileNameReserved(SaveGameName);
+}
+
 /**
 Thumbnail Saving
 Export from a 2d scene capture render target source.
@@ -1282,12 +1679,17 @@ No versioning etc. as this would be overkill.
 
 UTexture2D* UEMSObjectBase::ImportSaveThumbnail(const FString& SaveGameName) const
 {
+	if (EMS::StringEmpty(SaveGameName))
+	{
+		return nullptr;
+	}
+
 	TArray<uint8> Buffer;
 	const FString SaveThumbnailName = ThumbnailSaveFile(SaveGameName);
 
 	//Use raw load
 	const FFileContext Context = FFileContext(PlayerIndex, SaveThumbnailName);
-	const bool bLoadThumb = FSaveFileIntegrity::LoadRawSaveData(Context, Buffer) == EFileValidity::FILE_VALID;
+	const bool bLoadThumb = FSaveFileIntegrity::LoadFromFile(Context, Buffer) == EFileValidity::FILE_VALID;
 
 	if (bLoadThumb)
 	{
@@ -1303,12 +1705,21 @@ UTexture2D* UEMSObjectBase::ImportSaveThumbnail(const FString& SaveGameName) con
 	//Try Legacy(saved as image) Thumbnail afterwards
 	if (!IsConsoleFileSystem())
 	{
-		const FString ThumbnailPath = BaseSaveDir() + SaveGameName + GetFolderOrFile();
-		const FString LegacyThumbnailName = ThumbnailPath + EMS::ThumbSuffix + FSavePaths::GetThumbnailFileExtension();
+		const FString ThumbnailPath = BaseSaveDir() + ValidateSaveName(SaveGameName) + GetFolderOrFile();
+		const FString LegacyBaseName = ThumbnailPath + EMS::ThumbSuffix;
 
-		if (FPaths::FileExists(LegacyThumbnailName))
+		//Legacy thumbnails were written with image file ext whose format may differ current ThumbnailFormat setting
+		const bool bPng = GetThumbnailFormat() == EMS::ImgFormatPNG;
+		const FString CurrentExt = TEXT(".") + (bPng ? EMS::ImgFormatPNG : EMS::ImgFormatJPG);
+		const FString AlternateExt = TEXT(".") + (bPng ? EMS::ImgFormatJPG : EMS::ImgFormatPNG);
+
+		for (const FString& Ext : { CurrentExt, AlternateExt })
 		{
-			return FImageUtils::ImportFileAsTexture2D(LegacyThumbnailName);
+			const FString LegacyThumbnailName = LegacyBaseName + Ext;
+			if (FPaths::FileExists(LegacyThumbnailName))
+			{
+				return FImageUtils::ImportFileAsTexture2D(LegacyThumbnailName);
+			}
 		}
 	}
 
@@ -1319,9 +1730,16 @@ UTexture2D* UEMSObjectBase::ImportSaveThumbnail(const FString& SaveGameName) con
 
 void UEMSObjectBase::ExportSaveThumbnail(UTextureRenderTarget2D* TextureRenderTarget, const FString& SaveGameName) const
 {
-	if (!TextureRenderTarget || SaveGameName.IsEmpty())
+	if (!TextureRenderTarget || EMS::StringEmpty(SaveGameName))
 	{
 		UE_LOG(LogEasyMultiSave, Warning, TEXT("Export Save Thumbnail: Null RT or Empty Name."));
+		return;
+	}
+
+	const FString ValidSaveGameName = ValidateSaveName(SaveGameName);
+	if (FSavePaths::IsSlotNameReserved(ValidSaveGameName))
+	{
+		UE_LOG(LogEasyMultiSave, Warning, TEXT("Export Save Thumbnail: Reserved Slot name rejected: %s"), *ValidSaveGameName);
 		return;
 	}
 
@@ -1333,17 +1751,19 @@ void UEMSObjectBase::ExportSaveThumbnail(UTextureRenderTarget2D* TextureRenderTa
 		return;
 	}
 
+	const FString SaveThumbnailPath = ThumbnailSaveFile(ValidSaveGameName);
+
 	//Check if multi-threaded saving is enabled
 	if (FSettingHelpers::IsMultiThreadSaving())
 	{
 		TWeakObjectPtr<const UEMSObjectBase> WeakThis(this);
 
 		AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask,
-		[WeakThis, SaveGameName, Image = MoveTemp(ExportImage)]() mutable
+		[WeakThis, SaveThumbnailPath, Image = MoveTemp(ExportImage)]() mutable
 		{
 			if (const UEMSObjectBase* StrongThis = WeakThis.Get())
 			{
-				StrongThis->ExecuteSaveThumbnail(SaveGameName, Image);
+				StrongThis->ExecuteSaveThumbnail(SaveThumbnailPath, Image);
 			}
 			else
 			{
@@ -1353,21 +1773,19 @@ void UEMSObjectBase::ExportSaveThumbnail(UTextureRenderTarget2D* TextureRenderTa
 	}
 	else
 	{
-		ExecuteSaveThumbnail(SaveGameName, ExportImage);
+		ExecuteSaveThumbnail(SaveThumbnailPath, ExportImage);
 	}
 }
 
-void UEMSObjectBase::ExecuteSaveThumbnail(const FString& InSaveName, FImage& ImageToCompress) const
+void UEMSObjectBase::ExecuteSaveThumbnail(const FString& ThumbnailPath, FImage& ImageToCompress) const
 {
 	FBufferArchive Buffer;
 	if (FSaveThumbnails::CompressImage(ImageToCompress, Buffer))
 	{
-		const FString SaveThumbnailName = ThumbnailSaveFile(InSaveName);
-		const FFileContext Context = FFileContext(PlayerIndex, SaveThumbnailName);
-
-		if (!FSaveFileIntegrity::SaveToFile(Context, Buffer))
+		const FFileContext Context = FFileContext(PlayerIndex, ThumbnailPath);
+		if (!FSaveFileIntegrity::SaveThumbnailToFile(Context, Buffer))
 		{
-			UE_LOG(LogEasyMultiSave, Warning, TEXT("Export Save Thumbnail: SaveBinaryData failed."));
+			UE_LOG(LogEasyMultiSave, Warning, TEXT("Export Save Thumbnail: Save failed."));
 		}
 	}
 }

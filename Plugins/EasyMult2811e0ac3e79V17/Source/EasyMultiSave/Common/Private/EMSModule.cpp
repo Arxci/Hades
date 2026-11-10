@@ -1,53 +1,24 @@
 //Easy Multi Save - Copyright (C) 2026 by Michael Hegemann.  
 
 #include "EMSModule.h"
+#include "EMSTypes.h"
+#include "EMSDebug.h"
 #include "EMSPluginSettings.h"
-#include "Engine/EngineTypes.h"
-#include "Kismet/GameplayStatics.h"
-#include "Developer/Settings/Public/ISettingsModule.h"
-
-#define LOCTEXT_NAMESPACE "FEasyMultiSaveModule"
 
 void FEasyMultiSaveModule::StartupModule()
 {
-	RegisterSettings();
+	UEMSPluginSettings* PluginSettings = GetMutableDefault<UEMSPluginSettings>();
+	if (PluginSettings->SlotInfoSaveGameClass.IsNull())
+	{
+		PluginSettings->SlotInfoSaveGameClass = FSoftClassPath(TEXT("/Script/EasyMultiSave.EMSInfoSaveGame"));
+	}
 }
 
 void FEasyMultiSaveModule::ShutdownModule()
 {
-	if (UObjectInitialized())
-	{
-		UnregisterSettings();
-	}
+#if EMS_BUILD_DEVELOPER
+	FSaveReport::ClearReportCache();
+#endif
 }
-
-void FEasyMultiSaveModule::RegisterSettings()
-{
-	if (ISettingsModule* SettingsModule = FModuleManager::GetModulePtr<ISettingsModule>("Settings"))
-	{
-		UEMSPluginSettings* PluginSettings = GetMutableDefault<UEMSPluginSettings>();
-		
-		SettingsModule->RegisterSettings("Project", "Plugins", "Easy Multi Save",
-			LOCTEXT("RuntimeSettingsName", "Easy Multi Save"),
-			LOCTEXT("RuntimeSettingsDescription", "Configure the Easy Multi Save plugin"),
-			PluginSettings
-		);
-	
-		if (PluginSettings->SlotInfoSaveGameClass.IsNull())
-		{
-			PluginSettings->SlotInfoSaveGameClass = FSoftClassPath(TEXT("/Script/EasyMultiSave.EMSInfoSaveGame"));
-		}
-	}
-}
-
-void FEasyMultiSaveModule::UnregisterSettings()
-{
-	if (ISettingsModule* SettingsModule = FModuleManager::GetModulePtr<ISettingsModule>("Settings"))
-	{
-		SettingsModule->UnregisterSettings("Project", "Plugins", "Easy Multi Save");
-	}
-}
-
-#undef LOCTEXT_NAMESPACE
 	
 IMPLEMENT_MODULE(FEasyMultiSaveModule, EasyMultiSave)

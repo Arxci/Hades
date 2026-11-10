@@ -3,6 +3,7 @@
 #include "EMSActorLoader.h"
 #include "EMSObject.h"
 #include "EMSActors.h"
+#include "EMSDebug.h"
 #include "Async/Async.h"
 #include "TimerManager.h"
 
@@ -17,7 +18,7 @@ FEMSLevelLoader::FEMSLevelLoader(UEMSObject* EMSObject, const FLoaderInitData& I
 
 	SavedActors = InitData.InActorData;
 	ActorMap = InitData.InActorMap;
-	bIsWorldPartitionLoader = InitData.bIsWorldPartition;
+	bIsStreamingLoader = InitData.bIsStreaming;
 
 	BatchSize = FMath::Max(1, int32(FSettingHelpers::GetLoadBatchSize()));
 	CurrentIndex = 0;
@@ -207,7 +208,7 @@ void FEMSLevelLoader::ProcessNextBatch()
 
 	FScopeLock Lock(&LoadActorScope);
 
-	if (bCompleted || EMS::ArrayEmpty(Batches))
+	if (bCompleted || Batches.IsEmpty())
 	{
 		FinishLoading();
 		return;
@@ -221,6 +222,8 @@ void FEMSLevelLoader::ProcessNextBatch()
 
 void FEMSLevelLoader::ProcessActorBatch(const TArray<FActorProcessData>& Batch)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("UEMSActorLoader::ProcessActorBatch"));
+
 	for (const FActorProcessData& Item : Batch)
 	{
 		ProcessActor(Item);
@@ -254,7 +257,7 @@ void FEMSLevelLoader::Tick()
 {
 	SCOPE_CYCLE_COUNTER(STAT_EMSLoader_Tick);
 
-	if (!EMS || bCompleted || EMS::ArrayEmpty(SavedActors))
+	if (!EMS || bCompleted || SavedActors.IsEmpty())
 	{
 		FinishLoading();
 		return;
@@ -318,26 +321,10 @@ void FEMSLevelLoader::EvaluateAndProcess(const FActorSaveData& Data)
 	}
 }
 
-static inline void LogActorLoaded(const FActorSaveData& ActorData)
-{
-	if (!UE_LOG_ACTIVE(LogEasyMultiSave, VeryVerbose))
-	{
-		return;
-	}
-
-	const FString ActorName = FSaveHelpers::StringFromBytes(ActorData.Name);
-	const FString ActorClass = FSaveHelpers::StringFromBytes(ActorData.Class);
-	const FString TypeDisplayName = StaticEnum<EActorType>()->GetNameStringByValue(static_cast<uint8>(ActorData.Type));
-
-	UE_LOG(LogEasyMultiSave, VeryVerbose,
-		TEXT("Actor Loaded - Name: %s | Class: %s | Type: %s "),
-		*ActorName,
-		*ActorClass,
-		*TypeDisplayName);
-}
-
 void FEMSLevelLoader::ProcessActor(const FActorProcessData& ProcessData)
 {
+	ensure(IsInGameThread());
+
 	AActor* Actor = ProcessData.ActorPtr.Get();
 	const FActorSaveData ActorData = ProcessData.Data;
 	const EActorType ActorType = EActorType(ActorData.Type);
@@ -346,25 +333,16 @@ void FEMSLevelLoader::ProcessActor(const FActorProcessData& ProcessData)
 	if (!IsValid(Actor) && FActorHelpers::IsRuntime(ActorType))
 	{
 		EMS->SpawnLevelActor(ActorData);
-
-		LogActorLoaded(ActorData);
-
+		FSaveLogDebug::LogActorOperation(ActorData, true);
 		return;
 	}
 
 	//Placed Actors
 	if (IsValid(Actor) && !FActorHelpers::IsLoaded(Actor))
 	{
-		if (bIsWorldPartitionLoader)
-		{
-			EMS->LoadStreamingActor(Actor, ActorData);
-		}
-		else
-		{
-			EMS->ProcessLevelActor(Actor, ActorData, false);
-		}
-
-		LogActorLoaded(ActorData);
+		//Setup structs for Stream loader only, others got this through PrepareLevelActors
+		EMS->ProcessLevelActor(Actor, ActorData, bIsStreamingLoader);
+		FSaveLogDebug::LogActorOperation(ActorData, true);
 	}
 }
 
@@ -380,14 +358,8 @@ bool FEMSLevelLoader::ShouldEvaluateData(const FActorSaveData& Data, TWeakObject
 
 	//Find Actor
 	const FActorByteKey Key(Data.Name);
-	if (const TWeakObjectPtr<AActor>* Ptr = ActorMap.Find(Key))
-	{
-		OutActorPtr = *Ptr;
-	}
-	else
-	{
-		OutActorPtr = nullptr;
-	}
+	const TWeakObjectPtr<AActor>* Ptr = ActorMap.Find(Key);
+	OutActorPtr = Ptr ? *Ptr : nullptr;
 
 	const bool bValid = OutActorPtr.IsValid();
 
@@ -406,11 +378,7 @@ bool FEMSLevelLoader::ShouldEvaluateData(const FActorSaveData& Data, TWeakObject
 
 bool FEMSLevelLoader::CheckActorLimits(int32& IterationCount)
 {
-    if (IterationCount >= MAX_ACTORS_PER_ITERATION)
-    {
-        UE_LOG(LogEasyMultiSave, Warning, TEXT("Hit actor iteration limit"));
-    }
-
+	//Hard limit
     if (TotalProcessedCount >= MAX_TOTAL_ACTORS)
     {
         UE_LOG(LogEasyMultiSave, Error, TEXT("Hit total actor limit"));

@@ -7,9 +7,11 @@
 
 #include "HadesUIManagerSubsystem.generated.h"
 
+class FNavigationConfig;
+
 /**
  * CommonGame needs a concrete UI manager. Its DefaultUIPolicyClass is set in DefaultGame.ini.
- * Hides the root layout while the player's HUD is hidden.
+ * Hides the root layout while the player's HUD is hidden, and keeps Space from pressing the focused button: it's the inventory's Move key.
  */
 UCLASS()
 class HADES_API UHadesUIManagerSubsystem : public UGameUIManagerSubsystem
@@ -27,4 +29,7 @@ private:
 	void SyncRootLayoutVisibilityToShowHUD();
 
 	FTSTicker::FDelegateHandle TickHandle;
+
+	/** Put back when the game ends, as the editor shares it. */
+	TSharedPtr<FNavigationConfig> PreviousNavigationConfig;
 };
