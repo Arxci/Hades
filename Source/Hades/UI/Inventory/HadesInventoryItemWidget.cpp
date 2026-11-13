@@ -7,6 +7,15 @@
 #include "Hades/Inventory/HadesInventoryComponent.h"
 #include "Hades/Inventory/HadesQuickSlotComponent.h"
 
+namespace
+{
+	bool IsShown(const UWidget* Widget)
+	{
+		const ESlateVisibility Visibility = Widget ? Widget->GetVisibility() : ESlateVisibility::Collapsed;
+		return Visibility != ESlateVisibility::Collapsed && Visibility != ESlateVisibility::Hidden;
+	}
+}
+
 void UHadesInventoryItemWidget::NativeConstruct()
 {
 	APawn* Pawn = GetOwningPlayerPawn();
@@ -39,14 +48,37 @@ void UHadesInventoryItemWidget::NativeOnItemChanged()
 		Background->SetVisibility(IsDragVisual() ? ESlateVisibility::Hidden : ESlateVisibility::HitTestInvisible);
 	}
 	RefreshMarks();
+	RefreshLit();
+}
+
+void UHadesInventoryItemWidget::NativeOnInteractionChanged()
+{
+	Super::NativeOnInteractionChanged();
+
+	RefreshLit();
+}
+
+void UHadesInventoryItemWidget::RefreshLit()
+{
+	// The stand-in for a moved item is never hovered or selected itself, so it never lights up.
+	const bool bLit = !IsDragVisual() && (IsItemHovered() || IsSelected());
+	const ESlateVisibility NewVisiblity = bLit ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden;
+	if (LitBackground)
+	{
+		LitBackground->SetVisibility(NewVisiblity);
+	}
+	if (Glow)
+	{
+		Glow->SetVisibility(NewVisiblity);
+	}
 }
 
 void UHadesInventoryItemWidget::RefreshMarks()
 {
 	const UHadesQuickSlotComponent* Component = QuickSlots.Get();
+	const int32 SlotIndex = Component ? Component->FindSlot(GetItem()) : INDEX_NONE;
 	if (ShortcutKey)
 	{
-		const int32 SlotIndex = Component ? Component->FindSlot(GetItem()) : INDEX_NONE;
 		if (SlotIndex != INDEX_NONE)
 		{
 			ShortcutKey->SetInputAction(Component->GetSlotKey(SlotIndex));
@@ -55,6 +87,10 @@ void UHadesInventoryItemWidget::RefreshMarks()
 		{
 			ShortcutKey->SetInputActions(TArray<FDataTableRowHandle>());
 		}
+	}
+	if (ShortcutMarker)
+	{
+		ShortcutMarker->SetVisibility(SlotIndex != INDEX_NONE ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
 
 	const UHadesInventoryComponent* Inventory = Cast<UHadesInventoryComponent>(UInventoryComponent::FindInventoryComponent(GetOwningPlayerPawn()));
@@ -74,5 +110,11 @@ void UHadesInventoryItemWidget::RefreshMarks()
 			AmmoText->SetText(FText::AsNumber(Rounds));
 			AmmoText->SetColorAndOpacity(AmmoColors.Pick(Rounds, Capacity));
 		}
+	}
+
+	// Count Text's visibility is set by the base before this runs, for stacks only.
+	if (CountPatch)
+	{
+		CountPatch->SetVisibility(IsShown(CountText) || IsShown(AmmoText) ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
 }

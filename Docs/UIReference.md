@@ -2,7 +2,9 @@
 
 Every UI asset in the project, as it is built in the editor: its parent class, its widget hierarchy, every property changed from its default, its graph, its Class Defaults, and what its C++ class does with it. Anything not listed is left at its default.
 
-This is the state of the UI after patch 0010. How the UI works is in [UI](UI.md); how to build each asset step by step, and how to update from an earlier patch, is in [Inventory UI Setup](InventoryUISetup.md).
+This is the state of the UI after patch 0011, the restyle. How the UI works is in [UI](UI.md); how to update from an earlier patch, step by step, is in [Inventory UI Setup](InventoryUISetup.md).
+
+![The restyled inventory, with the item menu open on a Green Herb](Images/ui-restyle-target.png)
 
 ![The inventory screen with the name of each widget](Images/ui-inventory-anatomy.png)
 
@@ -44,7 +46,7 @@ Notation:
 | `C8A25AFF` | A color as hex sRGB: red, green, blue, alpha. |
 | Width 64 | **Width Override** ticked and set to 64; Height likewise. |
 
-Brushes drawn with one of the three UI textures are drawn as a Box: **Draw As** Box, **Image** the texture, **Image Size** 64 × 64, **Margin** on all four sides, **Tint** `FFFFFFFF`. Rounded Box brushes always have **Rounding Type** Fixed Radius unless written otherwise. A Border's **Brush Color**, outside its brush, stays `FFFFFFFF` unless listed.
+Brushes drawn with a texture are written **Box** or **Image**, then the texture, the **Image Size** and, for a Box, the **Margin** on all four sides, such as "Box, `T_UI_GridCell_HasItem`, 64 × 64, Margin 0.25". **Tint** is `FFFFFFFF` unless listed. A Box keeps the texture's outer margin at Margin × Image Size pixels and stretches the middle; an Image stretches the whole texture. Rounded Box brushes always have **Rounding Type** Fixed Radius unless written otherwise. A Border's **Brush Color**, outside its brush, stays `FFFFFFFF` unless listed. **Not Hit-Testable** is Behavior › Visibility: Not Hit-Testable (Self & All Children).
 
 ---
 
@@ -210,21 +212,50 @@ All in `Content/UI/Style`.
 
 ### 4.1 Textures
 
-| Texture | Looks like | Margin when drawn as a Box | Used by |
-| --- | --- | --- | --- |
-| `T_UI_Panel` | A dark panel with a quiet outline and brighter corner marks | `0.375` | `W_Panel` |
-| `T_UI_Cell` | A dark cell that looks sunk in, shaded from the top and left | `0.25` | `BS_Slot`, `BS_SlotHolding`, `W_EquippedItem` |
-| `T_UI_ItemTile` | A box lit softly from above, with a faint bevel | `0.25` | `W_InventoryItem` |
+Imported from `SourceArt/UI`. Each texture is at least twice the size it's drawn at.
 
-Imported from `SourceArt/UI`, 64 × 64. Each:
+| Texture | Size | Looks like | Drawn as | Used by |
+| --- | --- | --- | --- | --- |
+| `T_UI_Panel` | 128 | A see-through dark panel inside 1 px lines that run 9 px past its corners, a 3 px dot where they cross | Box, 64 × 64, Margin 0.375 | `W_Panel` |
+| `T_UI_GridCell_HasItem` | 128 | A grey tile with cut corners and a dark outline, darker at the top and bottom | Box, 64 × 64, Margin 0.25 | `W_InventoryItem`, `BS_ItemSlot`, `W_EquippedItem` |
+| `T_UI_GridCell_Hover` | 128 | The same tile, white in the middle to light grey at the edges | Box, 64 × 64, Margin 0.25 | `W_InventoryItem`, `BS_ItemSlot` |
+| `T_UI_GridCell_Empty` | 256 | A whole 96 px cell: a black tile with an X, inset 5 px | Image, 96 × 96 | `BS_GridCell`, `BS_GridCellHolding` |
+| `T_UI_GridCell_EmptyHover` | 256 | The same with a brighter outline and X, and a faint glow | Image, 96 × 96 | `BS_GridCell` |
+| `T_UI_ItemGlow` | 128 | A soft white glow, solid in the middle, fading over its outer 28 px | Box, 64 × 64, Margin 0.4375 | `W_InventoryItem` |
+| `T_UI_CountPatch` | 64 | A see-through dark patch, its bottom-left corner cut | Box, 32 × 32, Margin 0.25 | `W_InventoryItem` |
+| `T_UI_ShortcutMarker` | 128 | A full orange right triangle, its right angle top left, lighter toward the long edge, with an inner shadow along every edge | Image, 40 × 40 | `W_InventoryItem` |
+| `T_UI_InHandMarker` | 128 | The same triangle in cream, its right angle top right | Image, 24 × 24 | `W_InventoryItem` |
+| `T_UI_TabBarFrame` | 64 | Lines above and below the tabs running past them, a tick at each end | Box, 32 × 32, Margin 0.5 | `W_InventoryScreen` |
+| `T_UI_TabActive` | 64 | A light fill, `F2EFE9` at the top to `D3CFC7` at the bottom | Image, 64 × 64 | `W_TabButton` |
+| `T_UI_ChevronLeft`, `T_UI_ChevronRight` | 64 | White arrows | Image, 16 × 16 | `W_InventoryScreen` |
+| `T_UI_MenuPanel` | 128 | A light grey capsule, `E4E1DB` to `B7B3AC`, 22 px corners, a thin dark edge | Box, 64 × 64, Margin 0.375 | `W_ItemMenu`, `W_ShortcutMenu` |
+| `T_UI_MenuShadow` | 128 | A soft black shadow | Box, 64 × 64, Margin 0.5 | `W_ItemMenu`, `W_ShortcutMenu` |
+| `T_UI_MenuChevronUp`, `T_UI_MenuChevronDown` | 64 | A dark circle with a white arrow | Image, 20 × 20 | `W_ItemMenu` |
+| `T_UI_MenuBadge` | 128 | A dark grey round badge | Image, 34 × 34 | `W_ItemMenuButton` |
+| `T_UI_MenuBadgeLit` | 128 | A cream round badge with a dark ring | Image, 34 × 34 | `W_ItemMenuButton` |
+| `T_UI_Icon_Shortcut`, `_Use`, `_Equip`, `_Unequip`, `_Combine`, `_Discard`, `_Store`, `_Take` | 128 | White menu icons: four squares, a hand, a crosshair, a crossed-out crosshair, a wrench with a plus, a bin, arrows into and out of a tray | Image, 20 × 20, tinted | `W_ItemMenu` |
+| `T_UI_Cursor_Hand` | 128 | A white pointing hand with a dark outline | Image, 40 × 40 | `W_HandCursor` |
+| `T_UI_Cell` | 64 | A dark cell that looks sunk in | Box, 64 × 64, Margin 0.25 | `BS_Slot`, `BS_SlotHolding` |
+| `T_UI_ItemTile` | 64 | A box lit softly from above | Box, 64 × 64, Margin 0.25 | Nothing since patch 0011 |
+
+Each:
 
 - Compression › **Compression Settings**: UserInterface2D (RGBA)
+- Level Of Detail › **Mip Gen Settings**: SimpleAverage (`T_UI_Cell` and `T_UI_ItemTile`: FromTextureGroup)
 - Level Of Detail › **Texture Group**: UI
-- **Mip Gen Settings**: FromTextureGroup (the default)
+
+### 4.1.1 Fonts
+
+| Asset | Type | Description |
+| --- | --- | --- |
+| `FF_RobotoCondensed_Bold` | Font Face | Imported from `SourceArt/Fonts/RobotoCondensed-Bold.ttf`. Open Font License, in `SourceArt/Fonts/OFL.txt`. |
+| `F_RobotoCondensed` | Font | **Default Font Family**: one entry, named `Bold`, Font `FF_RobotoCondensed_Bold`. Used by `TS_TileCount`. |
+
+Both in `Content/UI/Style`.
 
 ### 4.2 Text styles
 
-Parent class `CommonTextStyle`. Every one uses **Font Family** Roboto (engine content) and **Margin** 0. When **Uses Drop Shadow** is ticked: **Shadow Offset** X `1`, Y `1`, **Shadow Color** `000000E6`.
+Parent class `CommonTextStyle`. Every one uses **Font Family** Roboto (engine content) and **Margin** 0, except `TS_TileCount` (below). When **Uses Drop Shadow** is ticked: **Shadow Offset** X `1`, Y `1`, **Shadow Color** `000000E6`.
 
 | Asset | Typeface | Size | Letter Spacing | Color | Uses Drop Shadow | Line Height Percentage | Used for |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -232,18 +263,25 @@ Parent class `CommonTextStyle`. Every one uses **Font Family** Roboto (engine co
 | `TS_Label` | Bold | 12 | 250 | `8A857BFF` | off | 1 | Panel titles, small labels, tab labels, the placeholder pages, the shortcut menu's title |
 | `TS_ItemName` | Bold | 24 | 40 | `E8E2D4FF` | off | 1 | The item name in the details panel |
 | `TS_Body` | Regular | 16 | 0 | `BDB6A8FF` | off | 1.15 | Descriptions, the action bar and its hint, names in the item box and the in-hand panel |
-| `TS_Count` | Bold | 15 | 0 | `E8E2D4FF` | on | 1 | Stack counts and rounds |
-| `TS_Button` | Bold | 15 | 120 | `E8E2D4FF` | off | 1 | Menu buttons, shortcut entries and the interaction prompt |
+| `TS_Count` | Bold | 15 | 0 | `E8E2D4FF` | on | 1 | Stack counts and rounds in slots, the shortcut menu and the HUD |
+| `TS_Button` | Bold | 15 | 120 | `E8E2D4FF` | off | 1 | The pause menu's button and the interaction prompt |
 | `TS_Message` | Regular | 19 | 20 | `E8E2D4FF` | on | 1 | Messages such as "It's locked." |
+| `TS_Tab` | Regular | 17 | 0 | `DDD8CFFF` | off | 1 | Tab labels |
+| `TS_TabActive` | Bold | 17 | 0 | `2A2825FF` | off | 1 | The open tab's label |
+| `TS_TileCount` | Bold, of `F_RobotoCondensed` | 27 | 0 | `F4F1EBFF` | on | 1 | Stack counts and rounds on items in the grid |
+| `TS_MenuItem` | Bold | 15 | 40 | `2E2C29FF` | off | 1 | Item menu rows and shortcut entries |
+| `TS_MenuLabel` | Bold | 12 | 250 | `6B6760FF` | off | 1 | The shortcut menu's title |
+
+`TS_TileCount` uses **Font Family** `F_RobotoCondensed`, not Roboto, and its shadow is **Shadow Offset** X `0`, Y `1`, **Shadow Color** `0000008C`.
 
 ### 4.3 `BS_Slot`
 
-Cells and slots.
+The item box's rows.
 
 | | |
 | --- | --- |
 | Parent class | `CommonButtonStyle` |
-| Used by | `W_InventoryCell`, `W_InventorySlot`, `W_ItemBoxEntry` (**Style**) |
+| Used by | `W_ItemBoxEntry` (**Style**). Since patch 0011 the cells use `BS_GridCell` and the key items `BS_ItemSlot`. |
 
 **Class Defaults**
 
@@ -264,7 +302,7 @@ Cells while an item is moved: no hover outline, as the moved item shows where it
 | | |
 | --- | --- |
 | Parent class | `CommonButtonStyle` (a duplicate of `BS_Slot`) |
-| Used by | `W_InventoryCell` (**Holding Style**) |
+| Used by | Nothing since patch 0011: `W_InventoryCell` uses `BS_GridCellHolding` |
 
 **Class Defaults**: as `BS_Slot`, except:
 
@@ -278,7 +316,7 @@ The item menu, shortcut menu and pause menu buttons.
 | | |
 | --- | --- |
 | Parent class | `CommonButtonStyle` |
-| Used by | `W_MenuButton`, `W_ShortcutEntry` (**Style**) |
+| Used by | `W_MenuButton` (**Style**) |
 
 **Class Defaults**
 
@@ -301,8 +339,8 @@ The action bar's entries and the tabs: flat, with a faint highlight under the mo
 **Class Defaults**
 
 - **Normal Base**: Draw As Rounded Box; Tint `00000000`; Outline Settings › Corner Radii `2, 2, 2, 2`, Color `00000000`, Width `0`, Rounding Type Fixed Radius
-- **Normal Hovered**: Draw As Rounded Box; Tint `C8A25A1F`; Outline Settings › Corner Radii `2, 2, 2, 2`, Color `00000000`, Width `0`, Rounding Type Fixed Radius
-- **Normal Pressed**: Draw As Rounded Box; Tint `C8A25A40`; Outline Settings › Corner Radii `2, 2, 2, 2`, Color `00000000`, Width `0`, Rounding Type Fixed Radius
+- **Normal Hovered**: Draw As Rounded Box; Tint `FFFFFF14`; Outline Settings › Corner Radii `2, 2, 2, 2`, Color `00000000`, Width `0`, Rounding Type Fixed Radius
+- **Normal Pressed**: Draw As Rounded Box; Tint `FFFFFF29`; Outline Settings › Corner Radii `2, 2, 2, 2`, Color `00000000`, Width `0`, Rounding Type Fixed Radius
 - **Disabled**: Draw As Rounded Box; Tint `00000000`; Outline Settings › Width `0`, Rounding Type Fixed Radius
 - **Button Padding**: Left `6`, Top `3`, Right `6`, Bottom `3`
 - **Min Width** `0`, **Min Height** `0`
@@ -325,6 +363,75 @@ The HUD's shortcuts: see-through boxes without an outline.
 
 The HUD's shortcuts never take the mouse or focus, so the other brushes are never seen.
 
+### 4.8 `BS_GridCell`
+
+The pocket cells: the empty tile with an X, brighter under the mouse or gamepad focus.
+
+| | |
+| --- | --- |
+| Parent class | `CommonButtonStyle` (a duplicate of `BS_Slot`) |
+| Used by | `W_InventoryCell` (**Style**) |
+
+**Class Defaults**
+
+- **Normal Base**: Image, `T_UI_GridCell_Empty`, 96 × 96
+- **Normal Hovered**: Image, `T_UI_GridCell_EmptyHover`, 96 × 96
+- **Normal Pressed**: Image, `T_UI_GridCell_EmptyHover`, 96 × 96
+- **Disabled**: Image, `T_UI_GridCell_Empty`, 96 × 96; Tint `FFFFFF80`
+- **Button Padding**: `0`
+- **Min Width** `0`, **Min Height** `0`
+- Selected brushes and text styles: as `BS_Slot`.
+
+The texture is a whole cell with the tile inset 5 px, so the grid lines run in the gaps between tiles.
+
+### 4.9 `BS_GridCellHolding`
+
+The pocket cells while an item is moved: no hover look, as the moved item shows where it goes.
+
+| | |
+| --- | --- |
+| Parent class | `CommonButtonStyle` (a duplicate of `BS_GridCell`) |
+| Used by | `W_InventoryCell` (**Holding Style**) |
+
+**Class Defaults**: as `BS_GridCell`, except **Normal Hovered** and **Normal Pressed**: Image, `T_UI_GridCell_Empty`, 96 × 96.
+
+### 4.10 `BS_ItemSlot`
+
+The key items: the item tile, bright under the mouse.
+
+| | |
+| --- | --- |
+| Parent class | `CommonButtonStyle` (a duplicate of `BS_Slot`) |
+| Used by | `W_InventorySlot` (**Style**) |
+
+**Class Defaults**
+
+- **Normal Base**: Box, `T_UI_GridCell_HasItem`, 64 × 64, Margin 0.25
+- **Normal Hovered**: Box, `T_UI_GridCell_Hover`, 64 × 64, Margin 0.25
+- **Normal Pressed**: Box, `T_UI_GridCell_Hover`, 64 × 64, Margin 0.25
+- **Disabled**: Box, `T_UI_GridCell_HasItem`, 64 × 64, Margin 0.25; Tint `FFFFFF80`
+- **Button Padding**: `0`
+- **Min Width** `0`, **Min Height** `0`
+
+### 4.11 `BS_ItemMenuRow`
+
+The rows of the item and shortcut menus: nothing behind them, a cream pill under the mouse or gamepad focus.
+
+| | |
+| --- | --- |
+| Parent class | `CommonButtonStyle` |
+| Used by | `W_ItemMenuButton`, `W_ShortcutEntry` (**Style**) |
+
+**Class Defaults**
+
+- **Normal Base**: Draw As None
+- **Normal Hovered**: Draw As Rounded Box; Tint `F7F5F0FF`; Outline Settings › Corner Radii `20, 20, 20, 20`, Color `2A282659`, Width `1`, Rounding Type Fixed Radius
+- **Normal Pressed**: Draw As Rounded Box; Tint `FFFFFFFF`; Outline Settings as Normal Hovered
+- **Disabled**: Draw As None
+- **Button Padding**: Left `3`, Top `3`, Right `16`, Bottom `3`
+- **Min Width** `0`, **Min Height** `0`
+- Selected brushes and text styles: no changes.
+
 ---
 
 ## 5. Shared widgets
@@ -333,7 +440,7 @@ All in `Content/UI/Foundation`.
 
 ### 5.1 `W_Panel`
 
-The framed panel every section sits in: a dark panel with corner marks, a small title, a thin line under it, and a slot for content.
+The framed panel every section sits in: a see-through dark panel inside thin lines that run past its corners, a small title, a thin line under it, and a slot for content.
 
 | | |
 | --- | --- |
@@ -344,23 +451,26 @@ The framed panel every section sits in: a dark panel with corner marks, a small 
 
 ```
 [W_Panel]
-└─ Frame (Border)
-   └─ Vertical Box
-      ├─ Header (Vertical Box)
-      │  ├─ TitleText (Common Text)
-      │  └─ HeaderRule (Image)
-      └─ Content (Named Slot)
+└─ Overlay
+   └─ Frame (Border)
+      └─ Vertical Box
+         ├─ Header (Vertical Box)
+         │  ├─ TitleText (Common Text)
+         │  └─ HeaderRule (Image)
+         └─ Content (Named Slot)
 ```
 
 **Properties**
 
+- **Overlay**: no changes.
 - **`Frame`** (Border):
+  - Slot: Fill/Fill; Padding `-9` on all four sides. The frame reaches 9 px past the panel, so its lines run past the corners without changing the panel's size.
   - Brush › Draw As: Box
   - Brush › Image: `T_UI_Panel`
   - Brush › Image Size: 64 × 64
   - Brush › Margin: `0.375`
   - Brush › Tint: `FFFFFFFF`
-  - Padding: `20`
+  - Padding: `29`: the content stays 20 px inside the lines.
 - **Vertical Box**: no changes.
 - **`Header`** (Vertical Box):
   - **Is Variable**
@@ -426,7 +536,7 @@ No graph.
 
 ### 5.3 `W_TabButton`
 
-One tab of the tab bar.
+One tab of the tab bar: a text tab, filled light while it's open.
 
 | | |
 | --- | --- |
@@ -440,7 +550,6 @@ One tab of the tab bar.
 └─ Size Box
    └─ Overlay
       ├─ ActiveFrame (Border)
-      │  └─ Size Box
       └─ Vertical Box
          ├─ Icon (Image)
          └─ Label (Common Text)
@@ -448,37 +557,36 @@ One tab of the tab bar.
 
 **Properties**
 
-- **Size Box**: Width 120; Height 92
+- **Size Box**: Width 150; Height 36
 - **Overlay**: no changes.
 - **`ActiveFrame`** (Border):
   - **Is Variable**
-  - Slot: H Center, V Top; Padding Top 2
-  - Brush › Draw As: Rounded Box
-  - Brush › Tint: `00000000`
-  - Brush › Outline Settings › Corner Radii `2, 2, 2, 2`, Color `BDB6A8FF`, Width `1`, Rounding Type Fixed Radius
+  - Slot: Fill/Fill; Padding 0
+  - Brush: Image, `T_UI_TabActive`, 64 × 64
   - Padding: `0`
-- **Size Box** (in `ActiveFrame`, empty): Width 76; Height 68
-- **Vertical Box**: Slot: H Center, V Top
+- **Vertical Box**: Slot: H Center, V Center
 - **`Icon`** (Image):
   - **Is Variable**
-  - Slot: Horizontal Alignment Center; Padding Top 12
+  - Slot: Horizontal Alignment Center; Padding 0
   - Brush › Image Size: 48 × 48
   - Color and Opacity: `E8E2D4FF`
 - **`Label`** (Common Text):
   - **Is Variable**
-  - Slot: Horizontal Alignment Center; Padding Top 14
-  - Style: `TS_Label`
+  - Slot: Horizontal Alignment Center; Padding 0
+  - Style: `TS_Tab`
   - Text: `TAB`
 
 **Class Defaults**
 
 - **Style**: `BS_ActionButton`
+- Tab › **Active Label Style**: `TS_TabActive`
+- Tab › **Inactive Label Style**: `TS_Tab`
 
 No graph.
 
-**On each placed tab**: Tab › **Icon Texture**, **Label Text**, and **Active Icon Scale** (1.2).
+**On each placed tab**: Tab › **Icon Texture** None, and **Label Text** (`W_InventoryScreen`'s are `Map`, `Items`, `Crafting`, `Files`). Active Icon Scale doesn't matter without an icon.
 
-**C++** (`UHadesTabButton`). Finds `Icon`, `Label` and `ActiveFrame` (all optional). Sets the icon from Icon Texture without changing its size, and the label from Label Text. The open tab's icon is scaled by Active Icon Scale, its label and frame show; on other tabs the label and frame are hidden, not collapsed. Without an icon, the label always shows. Tabs can't take focus.
+**C++** (`UHadesTabButton`). Finds `Icon`, `Label` and `ActiveFrame` (all optional). Sets the icon from Icon Texture without changing its size, and the label from Label Text. The open tab's icon is scaled by Active Icon Scale, its label and frame show; on other tabs the label and frame are hidden, not collapsed. Without an icon, the label always shows. A Common Text label takes Active Label Style on the open tab and Inactive Label Style on the others. Tabs can't take focus.
 
 ### 5.4 `W_MenuButton`
 
@@ -554,6 +662,36 @@ No graph.
 
 **C++** (`UHadesMessageWidget`). Finds `MessageText` (*required*) and the animation `ShowAnimation` (optional). Empties the text on construct, then, for each message the player controller sends, sets the text and plays the animation from the start.
 
+### 5.6 `W_HandCursor`
+
+The mouse cursor: a pointing hand. Optional; without it the cursor is the system arrow.
+
+| | |
+| --- | --- |
+| Parent class | User Widget |
+| Used by | **Project Settings › Engine › User Interface › Software Cursors**: Default |
+
+**Hierarchy**
+
+```
+[W_HandCursor]
+└─ Size Box
+   └─ Canvas Panel
+      └─ Image
+```
+
+**Properties**
+
+- **Size Box**: Width 80; Height 80; Behavior › Visibility: Not Hit-Testable
+- **Canvas Panel**: no changes.
+- **Image**:
+  - Slot (Canvas Panel Slot): Anchors top left (Minimum 0, 0, Maximum 0, 0); Position X `26.5`, Y `37`; Size X `40`, Y `40`; Alignment 0, 0; Size To Content unticked
+  - Brush: Image, `T_UI_Cursor_Hand`, 40 × 40
+
+No graph.
+
+Slate draws a software cursor centered on the mouse. The fingertip is 13.5 px from the image's left and 3 px from its top, so this puts it at the middle of the widget, where the click lands.
+
 ---
 
 ## 6. Inventory pieces
@@ -574,81 +712,100 @@ An item in the grid. The grid places it over the item's cells, sizes the icon to
 ```
 [W_InventoryItem]
 └─ Overlay
+   ├─ Glow (Image)
    ├─ Background (Border)
-   ├─ SelectedFill (Border)
+   ├─ LitBackground (Image)
+   ├─ IconShadow (Image)
    ├─ Icon (Image)
-   ├─ CountText (Common Text)
-   ├─ Scale Box
-   │  └─ ShortcutKey (Common Action Widget)
-   ├─ EquippedMarker (Image)
-   ├─ Highlight (Border)
-   └─ AmmoText (Common Text)
+   ├─ CountPatch (Size Box)
+   │  └─ Overlay
+   │     ├─ Image
+   │     ├─ CountText (Common Text)
+   │     └─ AmmoText (Common Text)
+   ├─ ShortcutMarker (Overlay)
+   │  ├─ Image
+   │  └─ Scale Box
+   │     └─ ShortcutKey (Common Action Widget)
+   └─ EquippedMarker (Image)
 ```
 
 **Properties**
 
 - **Overlay**:
-  - Clipping › Clipping: Clip to Bounds. It cuts the gold square of `EquippedMarker` to a corner.
+  - Clipping › Clipping: Inherit, so `Glow` can reach past the item.
+- **`Glow`** (Image):
+  - **Is Variable**
+  - Slot: Fill/Fill; Padding `-23`: it reaches 28 px past the tile
+  - Behavior › Visibility: Hidden
+  - Brush: Box, `T_UI_ItemGlow`, 64 × 64, Margin 0.4375
+  - Color and Opacity: `FFFFFFFF`
 - **`Background`** (Border):
   - **Is Variable**
-  - Slot: Fill/Fill
-  - Brush › Draw As: Box
-  - Brush › Image: `T_UI_ItemTile`
-  - Brush › Image Size: 64 × 64
-  - Brush › Margin: `0.25`
-  - Brush › Tint: `FFFFFFFF`
+  - Slot: Fill/Fill; Padding `5`: the gap the grid lines run through
+  - Brush: Box, `T_UI_GridCell_HasItem`, 64 × 64, Margin 0.25
   - Padding: `0`
-- **`SelectedFill`** (Border):
+- **`LitBackground`** (Image):
   - **Is Variable**
-  - Slot: Fill/Fill
+  - Slot: Fill/Fill; Padding `5`
   - Behavior › Visibility: Hidden
-  - Brush › Draw As: Rounded Box
-  - Brush › Tint: `E8E2D429`
-  - Brush › Outline Settings › Corner Radii `0, 0, 0, 0`, Width `0`, Rounding Type Fixed Radius
-  - Padding: `0`
+  - Brush: Box, `T_UI_GridCell_Hover`, 64 × 64, Margin 0.25
+- **`IconShadow`** (Image):
+  - **Is Variable**
+  - Slot: H Center, V Center, as `Icon`
+  - Brush › Image: none
+  - Color and Opacity: `0000008C`
+  - Render Transform › Translation: X 0, Y 2
+  - Behavior › Visibility: Not Hit-Testable
 - **`Icon`** (Image):
   - **Is Variable**
   - Slot: H Center, V Center. Not Fill: the grid sizes the icon and turns it.
+- **`CountPatch`** (Size Box):
+  - **Is Variable**
+  - Slot: H Left, V Bottom; Padding Left 6, Bottom 6: inside the tile's 5 px inset and 1 px outline
+  - Width 46; Height 31
+  - Behavior › Visibility: Not Hit-Testable
+- **Overlay** (in `CountPatch`): no changes.
+- **Image** (in `CountPatch`):
+  - Slot: Fill/Fill
+  - Brush: Box, `T_UI_CountPatch`, 32 × 32, Margin 0.25
 - **`CountText`** (Common Text):
   - **Is Variable**
-  - Slot: H Right, V Bottom; Padding Right 6, Bottom 3
-  - Style: `TS_Count`
+  - Slot: H Left, V Center; Padding Left 7
+  - Style: `TS_TileCount`
   - Text: `99`
+- **`AmmoText`** (Common Text):
+  - **Is Variable**
+  - Slot: H Left, V Center; Padding Left 7
+  - Style: `TS_TileCount`
+  - Text: `10`
+- **`ShortcutMarker`** (Overlay):
+  - **Is Variable**
+  - Slot: H Left, V Top; Padding Left 5, Top 5: the triangle's tip sits on the tile's corner
+  - Behavior › Visibility: Not Hit-Testable
+- **Image** (in `ShortcutMarker`):
+  - Slot: H Left, V Top
+  - Brush: Image, `T_UI_ShortcutMarker`, 40 × 40
 - **Scale Box**:
-  - Slot: H Left, V Top; Padding Left 5, Top 5
+  - Slot: H Left, V Top; Padding Left 3, Top 3
   - Stretching › Stretch: User Specified
-  - Stretching › User Specified Scale: `0.6`
-  - Behavior › Visibility: Not Hit-Testable (Self & All Children)
+  - Stretching › User Specified Scale: `0.4`: the 40 px key icon at 16 px
+  - Behavior › Visibility: Not Hit-Testable
 - **`ShortcutKey`** (Common Action Widget):
   - **Is Variable**
   - Input Actions: empty
 - **`EquippedMarker`** (Image):
   - **Is Variable**
-  - Slot: H Right, V Top
+  - Slot: H Right, V Top; Padding Right 5, Top 5
   - Behavior › Visibility: Collapsed
-  - Brush › Image Size: 22 × 22
-  - Color and Opacity: `C8A25AFF`
-  - Render Transform › Translation: X 11, Y -11
-  - Render Transform › Angle: `45`
-- **`Highlight`** (Border):
-  - **Is Variable**
-  - Slot: Fill/Fill
-  - Behavior › Visibility: Hidden
-  - Brush › Draw As: Rounded Box
-  - Brush › Tint: `00000000`
-  - Brush › Outline Settings › Corner Radii `0, 0, 0, 0`, Color `C8A25AFF`, Width `2`, Rounding Type Fixed Radius
-  - Padding: `0`
-- **`AmmoText`** (Common Text):
-  - **Is Variable**
-  - Slot: H Right, V Bottom; Padding Right 6, Bottom 3
-  - Style: `TS_Count`
-  - Text: `10`
+  - Brush: Image, `T_UI_InHandMarker`, 24 × 24
+  - Color and Opacity: `FFFFFFFF`
+  - Render Transform: Translation 0, 0; Angle `0`
 
 **Graph**
 
 1. **Event On Held Changed** → **Set Render Opacity** (Target: self; In Opacity: **Select** on **Is Held**: False `1.0`, True `0`). The spot an item leaves looks empty while it's moved.
-2. **Event On Hovered Changed** → `Highlight` › **Set Visibility** (**Select** on **Is Hovered**: False → Hidden, True → Not Hit-Testable (Self & All Children)).
-3. **Event On Selected Changed** → `SelectedFill` › **Set Visibility** (**Select** on **Is Selected**: False → Hidden, True → Not Hit-Testable (Self & All Children)).
+
+The C++ lights the item, so there are no hover or selection events in the graph.
 
 **Class Defaults**
 
@@ -657,8 +814,9 @@ An item in the grid. The grid places it over the item's cells, sizes the icon to
 
 **C++** (`UHadesInventoryItemWidget`, on the plugin's `UInventoryItemWidget`).
 
-- The plugin finds `Icon` and `CountText` (optional). It sets the icon, hides the count for items that don't stack, and sends the Held, Hovered and Selected events. Items aren't hovered while something is held.
-- Hades finds `ShortcutKey`, `EquippedMarker`, `Background` and `AmmoText` (optional). It sets the shortcut's key icon, or clears it; shows `EquippedMarker` while the item is in hand; hides `Background` on the stand-in for a moved item, so the item under it shows through; and shows a gun's rounds in `AmmoText`, colored by Ammo Colors, collapsing it for anything else.
+- The plugin finds `Icon`, `IconShadow` and `CountText` (optional). It sets the icon, gives `IconShadow` the same texture, size and turn, hides the count for items that don't stack, and sends the Held, Hovered and Selected events. Items aren't hovered while something is held.
+- Hades finds `ShortcutKey`, `ShortcutMarker`, `EquippedMarker`, `Background`, `LitBackground`, `Glow`, `CountPatch` and `AmmoText` (optional). It sets the shortcut's key icon, or clears it, and shows `ShortcutMarker` only while there is one; shows `EquippedMarker` while the item is in hand; shows `LitBackground` and `Glow` while the item is hovered, focused or selected, such as while its menu is open; hides `Background` on the stand-in for a moved item, so the item under it shows through, and never lights the stand-in; shows a gun's rounds in `AmmoText`, colored by Ammo Colors, collapsing it for anything else; and shows `CountPatch` only while `CountText` or `AmmoText` shows.
+- The grid draws the lit item above the other items, so its glow spills over them.
 
 ### 6.2 `W_SlotItem`
 
@@ -675,7 +833,9 @@ An item inside a slot: the key items, the item box rows, the HUD's shortcuts, th
 [W_SlotItem]
 └─ Overlay
    ├─ Scale Box
-   │  └─ Icon (Image)
+   │  └─ Overlay
+   │     ├─ IconShadow (Image)
+   │     └─ Icon (Image)
    └─ CountText (Common Text)
 ```
 
@@ -686,6 +846,13 @@ An item inside a slot: the key items, the item box rows, the HUD's shortcuts, th
   - Slot: Fill/Fill
   - Stretching › Stretch: Scale To Fit
   - Stretching › Stretch Direction: Down Only
+- **Overlay** (in the Scale Box): no changes.
+- **`IconShadow`** (Image):
+  - **Is Variable**
+  - Slot: H Center, V Center
+  - Color and Opacity: `0000008C`
+  - Render Transform › Translation: X 0, Y 2
+  - Behavior › Visibility: Not Hit-Testable
 - **`Icon`** (Image):
   - **Is Variable**
   - Slot: H Center, V Center
@@ -701,7 +868,7 @@ An item inside a slot: the key items, the item box rows, the HUD's shortcuts, th
 
 **Class Defaults**: no changes.
 
-**C++.** The plugin's item widget, as in 6.1. Outside a grid the icon takes its texture's size, 128 pixels per cell, and the Scale Box shrinks it to fit, never larger.
+**C++.** The plugin's item widget, as in 6.1. Outside a grid the icon takes its texture's size, 128 pixels per cell, and the Scale Box shrinks it to fit, never larger. `IconShadow` gets the same texture, so it shrinks with it.
 
 ### 6.3 `W_InventoryCell`
 
@@ -725,8 +892,8 @@ One cell of the grid.
 
 **Class Defaults**
 
-- **Style**: `BS_Slot`
-- Cell › **Holding Style**: `BS_SlotHolding`
+- **Style**: `BS_GridCell`
+- Cell › **Holding Style**: `BS_GridCellHolding`
 
 No graph.
 
@@ -769,10 +936,10 @@ The pockets.
    | Action | Color |
    | --- | --- |
    | None | `FFFFFF00` |
-   | Place | `C8A25A6B` |
-   | Merge | `C8A25A6B` |
-   | Swap | `C8A25A6B` |
-   | Invalid | `B02A2273` |
+   | Place | `FFFFFF42` |
+   | Merge | `FFFFFF42` |
+   | Swap | `FFFFFF42` |
+   | Invalid | `B02A2280` |
 
 **Class Defaults**
 
@@ -780,8 +947,9 @@ The pockets.
 - **Cell Size**: `96`
 - **Cell Class**: `W_InventoryCell`
 - **Item Class**: `W_InventoryItem`
+- Inventory › Grid › Lines: **Draw Grid Lines** ticked; **Grid Line Color** `D6D0C626`; **Grid Line Thickness** `1`; **Grid Line Overhang** `24`
 
-**C++** (plugin). Finds `GridCanvas` (*required*) and `PlacementPreview` (optional). Shows the pockets of the owning player, a cell per grid cell and an item widget per item. While an item is moved, it draws the item on the cells it would land on, over the preview: gold where it can go, red where it can't. Items glide to new cells at **Preview Glide Speed** (left at its default).
+**C++** (plugin). Finds `GridCanvas` (*required*) and `PlacementPreview` (optional). Shows the pockets of the owning player, a cell per grid cell and an item widget per item. With Draw Grid Lines, it draws lines along every cell edge under the cells, running Grid Line Overhang pixels past the grid, and keeps them the grid's size as pouches grow it. The hovered or selected item is drawn above the other items. While an item is moved, it draws the item on the cells it would land on, over the preview: soft white where it can go, red where it can't. Items glide to new cells at **Preview Glide Speed** (left at its default).
 
 ### 6.5 `W_InventorySlot`
 
@@ -830,7 +998,7 @@ One slot of a container. The key item list is made of them.
 
 **Class Defaults**
 
-- **Style**: `BS_Slot`
+- **Style**: `BS_ItemSlot`: the item tile, bright under the mouse
 - Container Tag, Slot Tag: empty.
 
 **C++** (plugin). Finds `ItemWidget` and `NameText` (optional). Shows the item in one slot of a container, hiding the item widget, not collapsing it, while the slot is empty.
@@ -1018,9 +1186,11 @@ The name and description of the item moved, hovered or focused.
   - Style: `TS_ItemName`
   - Text: `Item Name`
 - **`Underline`** (Image):
-  - Slot: Horizontal Alignment Left; Padding Top 10
-  - Brush › Image Size: 48 × 2
-  - Color and Opacity: `C8A25AFF`
+  - Slot: Horizontal Alignment Fill; Padding Top 10
+  - Brush › Image Size: 32 × 1
+  - Color and Opacity: `D6D0C633`
+
+  With the panel's top line, it frames the name, as in the Example.
 - **`DescriptionText`** (Common Text):
   - **Is Variable**
   - Slot: Horizontal Alignment Fill; Padding Top 14
@@ -1066,7 +1236,7 @@ What's in hand, in the IN HAND panel.
 - **Border**:
   - Slot: Size Auto; Vertical Alignment Center
   - Brush › Draw As: Box
-  - Brush › Image: `T_UI_Cell`
+  - Brush › Image: `T_UI_GridCell_HasItem`
   - Brush › Image Size: 64 × 64
   - Brush › Margin: `0.25`
   - Brush › Tint: `FFFFFFFF`
@@ -1081,7 +1251,7 @@ What's in hand, in the IN HAND panel.
   - **Is Variable**
   - Slot: H Fill, V Center; Padding Left -14, Right -14
   - Brush › Image Size: 32 × 2
-  - Color and Opacity: `3A362FFF`
+  - Color and Opacity: `524D49FF`
   - Render Transform › Angle: `-31`, corner to corner of a 160 × 96 box
 - **`NameText`** (Common Text):
   - **Is Variable**
@@ -1099,7 +1269,7 @@ No graph.
 
 ### 6.11 `W_ItemMenu`
 
-Register Shortcut, Use, Equip and the rest, beside the item.
+Register Shortcut, Use, Equip and the rest, beside the item: a light capsule of rows, each a round icon and a label, as in the Example.
 
 | | |
 | --- | --- |
@@ -1113,16 +1283,20 @@ Register Shortcut, Use, Equip and the rest, beside the item.
 └─ Overlay
    ├─ ClickCatcher (Border)
    └─ Canvas Panel
-      └─ MenuPanel (Border)
-         └─ Vertical Box
-            ├─ ShortcutButton (W_MenuButton)
-            ├─ UseButton (W_MenuButton)
-            ├─ EquipButton (W_MenuButton)
-            ├─ UnequipButton (W_MenuButton)
-            ├─ CombineButton (W_MenuButton)
-            ├─ DiscardButton (W_MenuButton)
-            ├─ StoreButton (W_MenuButton)
-            └─ TakeButton (W_MenuButton)
+      └─ MenuPanel (Overlay)
+         ├─ MenuShadow (Image)
+         └─ MenuBody (Border)
+            └─ Vertical Box
+               ├─ ChevronUp (Image)
+               ├─ ShortcutButton (W_ItemMenuButton)
+               ├─ UseButton (W_ItemMenuButton)
+               ├─ EquipButton (W_ItemMenuButton)
+               ├─ UnequipButton (W_ItemMenuButton)
+               ├─ CombineButton (W_ItemMenuButton)
+               ├─ DiscardButton (W_ItemMenuButton)
+               ├─ StoreButton (W_ItemMenuButton)
+               ├─ TakeButton (W_ItemMenuButton)
+               └─ ChevronDown (Image)
 ```
 
 **Properties**
@@ -1133,26 +1307,39 @@ Register Shortcut, Use, Equip and the rest, beside the item.
   - Brush Color: `00000000`
   - Behavior › Visibility: Visible
 - **Canvas Panel**: Slot: Fill/Fill
-- **`MenuPanel`** (Border):
+- **`MenuPanel`** (Overlay):
   - **Is Variable**
   - Slot (Canvas Panel Slot): Size To Content ticked; Anchors, Position and Alignment left as they are
-  - Brush › Draw As: Rounded Box
-  - Brush › Tint: `1A1916FF`
-  - Brush › Outline Settings › Corner Radii `2, 2, 2, 2`, Color `3A362FFF`, Width `1`, Rounding Type Fixed Radius
-  - Padding: `6`
+- **`MenuShadow`** (Image):
+  - Slot: Fill/Fill; Padding Left -14, Top -8, Right -14, Bottom -22: the shadow falls mostly below the menu
+  - Brush: Box, `T_UI_MenuShadow`, 64 × 64, Margin 0.5
+  - Behavior › Visibility: Not Hit-Testable
+- **`MenuBody`** (Border):
+  - Slot: Fill/Fill; Padding 0
+  - Brush: Box, `T_UI_MenuPanel`, 64 × 64, Margin 0.375
+  - Padding: `8`
 - **Vertical Box**: no changes.
-- **The eight buttons** (W_MenuButton): each **Is Variable**; Slot: Horizontal Alignment Fill; **Label Text**:
+- **`ChevronUp`** (Image):
+  - Slot: Horizontal Alignment Center; Padding Bottom 4
+  - Brush: Image, `T_UI_MenuChevronUp`, 20 × 20
+  - Behavior › Visibility: Not Hit-Testable
+- **The eight buttons** (W_ItemMenuButton): each **Is Variable**; Slot: Horizontal Alignment Fill; Padding Bottom 2; under Menu Button:
 
-  | Name | Label Text |
-  | --- | --- |
-  | `ShortcutButton` | Register Shortcut |
-  | `UseButton` | Use |
-  | `EquipButton` | Equip |
-  | `UnequipButton` | Unequip |
-  | `CombineButton` | Combine |
-  | `DiscardButton` | Discard |
-  | `StoreButton` | Store |
-  | `TakeButton` | Take |
+  | Name | Icon Texture | Label Text |
+  | --- | --- | --- |
+  | `ShortcutButton` | `T_UI_Icon_Shortcut` | Register Shortcut |
+  | `UseButton` | `T_UI_Icon_Use` | Use |
+  | `EquipButton` | `T_UI_Icon_Equip` | Equip |
+  | `UnequipButton` | `T_UI_Icon_Unequip` | Unequip |
+  | `CombineButton` | `T_UI_Icon_Combine` | Combine |
+  | `DiscardButton` | `T_UI_Icon_Discard` | Discard |
+  | `StoreButton` | `T_UI_Icon_Store` | Store |
+  | `TakeButton` | `T_UI_Icon_Take` | Take |
+
+- **`ChevronDown`** (Image):
+  - Slot: Horizontal Alignment Center; Padding Top 2
+  - Brush: Image, `T_UI_MenuChevronDown`, 20 × 20
+  - Behavior › Visibility: Not Hit-Testable
 
 **Class Defaults**
 
@@ -1163,7 +1350,9 @@ Register Shortcut, Use, Equip and the rest, beside the item.
 
 No graph.
 
-**C++** (`UHadesItemMenu`, on `UHadesPopupMenu`). Finds `MenuPanel` (*required*), the eight buttons and `ItemNameText` (optional). Places the menu beside the item, shows only the buttons whose action can run, focuses the first, shows each button's description in the screen's hint while it's hovered, and on a click closes, then runs the action on the screen. A click outside `MenuPanel` closes it, except on the item.
+The menu is as wide as its longest visible row: about 232 px with Register Shortcut.
+
+**C++** (`UHadesItemMenu`, on `UHadesPopupMenu`). Finds `MenuPanel` (*required*), the eight buttons and `ItemNameText` (optional). Places the menu beside the item, shows only the buttons whose action can run, focuses the first, shows each button's description in the screen's hint while it's hovered, and on a click closes, then runs the action on the screen. A click outside `MenuPanel` closes it, except on the item. The buttons light themselves ([6.14](#614-w_itemmenubutton)).
 
 ### 6.12 `W_ShortcutEntry`
 
@@ -1190,7 +1379,7 @@ One shortcut in the shortcut menu.
 - **Horizontal Box**: no changes.
 - **`KeyIcon`** (Common Action Widget):
   - **Is Variable**
-  - Slot: Size Auto; Vertical Alignment Center
+  - Slot: Size Auto; Vertical Alignment Center; Padding Left 8
 - **Size Box**:
   - Slot: Size Auto; Vertical Alignment Center; Padding Left 12, Right 12
   - Width 128; Height 48
@@ -1200,12 +1389,12 @@ One shortcut in the shortcut menu.
 - **`NameText`** (Common Text):
   - **Is Variable**
   - Slot: Size Fill; Vertical Alignment Center
-  - Style: `TS_Button`
+  - Style: `TS_MenuItem`
   - Text: `Item Name`
 
 **Class Defaults**
 
-- **Style**: `BS_MenuButton`
+- **Style**: `BS_ItemMenuRow`
 - Shortcut › **Empty Text**: `Empty`
 
 No graph.
@@ -1214,7 +1403,7 @@ No graph.
 
 ### 6.13 `W_ShortcutMenu`
 
-The list Register Shortcut opens.
+The list Register Shortcut opens, in the same capsule as the item menu.
 
 | | |
 | --- | --- |
@@ -1228,11 +1417,13 @@ The list Register Shortcut opens.
 └─ Overlay
    ├─ ClickCatcher (Border)
    └─ Canvas Panel
-      └─ MenuPanel (Border)
-         └─ Vertical Box
-            ├─ Common Text "SHORTCUT"
-            ├─ Image
-            └─ EntryPanel (Vertical Box)
+      └─ MenuPanel (Overlay)
+         ├─ MenuShadow (Image)
+         └─ MenuBody (Border)
+            └─ Vertical Box
+               ├─ Common Text "SHORTCUT"
+               ├─ Image
+               └─ EntryPanel (Vertical Box)
 ```
 
 **Properties**
@@ -1240,16 +1431,16 @@ The list Register Shortcut opens.
 - **Overlay**: no changes.
 - **`ClickCatcher`** (Border): as in 6.11.
 - **Canvas Panel**: Slot: Fill/Fill
-- **`MenuPanel`** (Border): as in 6.11.
+- **`MenuPanel`** (Overlay), **`MenuShadow`** (Image), **`MenuBody`** (Border): as in 6.11.
 - **Vertical Box**: no changes.
 - **Common Text**:
   - Slot: Padding Left 10, Top 6, Right 10, Bottom 8
-  - Style: `TS_Label`
+  - Style: `TS_MenuLabel`
   - Text: `SHORTCUT`
 - **Image**:
   - Slot: Horizontal Alignment Fill; Padding Bottom 4
   - Brush › Image Size: 32 × 1
-  - Color and Opacity: `3A362FFF`
+  - Color and Opacity: `2A282640`
 - **`EntryPanel`** (Vertical Box):
   - **Is Variable**
   - No children; the C++ fills it.
@@ -1263,6 +1454,65 @@ The list Register Shortcut opens.
 No graph.
 
 **C++** (`UHadesShortcutMenu`, on `UHadesPopupMenu`). Finds `MenuPanel` and `EntryPanel` (*required*). Each time it opens, it fills `EntryPanel` with one entry per quick slot, focuses the one the item is on, and puts the item on the picked shortcut, or takes it off if it was already there.
+
+### 6.14 `W_ItemMenuButton`
+
+One row of the item menu: an icon on a round badge, and a label.
+
+| | |
+| --- | --- |
+| Parent class | `HadesMenuButton` |
+| Folder | `Content/UI/Inventory` |
+| Used by | `W_ItemMenu` (the eight buttons) |
+
+**Hierarchy**
+
+```
+[W_ItemMenuButton]
+└─ Horizontal Box
+   ├─ BadgeBox (Size Box)
+   │  └─ Overlay
+   │     ├─ Badge (Image)
+   │     └─ Icon (Image)
+   └─ Label (Common Text)
+```
+
+**Properties**
+
+- **Horizontal Box**: no changes.
+- **`BadgeBox`** (Size Box):
+  - Slot: Size Auto; Vertical Alignment Center
+  - Width 34; Height 34
+- **Overlay**: no changes.
+- **`Badge`** (Image):
+  - **Is Variable**
+  - Slot: Fill/Fill
+  - Brush: Image, `T_UI_MenuBadge`, 34 × 34
+- **`Icon`** (Image):
+  - **Is Variable**
+  - Slot: H Center, V Center
+  - Brush › Image: none; Image Size 20 × 20
+  - Color and Opacity: `F3F0EAFF`
+- **`Label`** (Common Text):
+  - **Is Variable**
+  - Slot: Size Fill; Vertical Alignment Center; Padding Left 12
+  - Style: `TS_MenuItem`
+  - Text: `Item Menu`
+
+**Class Defaults**
+
+- **Style**: `BS_ItemMenuRow`
+- Menu Button › **Badge Brush**: Image, `T_UI_MenuBadge`, 34 × 34
+- Menu Button › **Lit Badge Brush**: Image, `T_UI_MenuBadgeLit`, 34 × 34
+- Menu Button › **Icon Color**: `F3F0EAFF`
+- Menu Button › **Lit Icon Color**: `262420FF`
+- Menu Button › **Icon Texture** and **Label Text**: empty; set on each placed row.
+
+No graph.
+
+A row is 40 px tall: the badge and 3 px above and below it.
+
+**C++** (`UHadesMenuButton`, a Common button). Finds `Badge`, `Icon` and `Label` (optional). Sets the label from Label Text and the icon from Icon Texture, keeping the designer's Image Size; without an icon, hides the icon and its badge. While hovered, or focused on a gamepad, gives `Badge` the Lit Badge Brush and tints `Icon` Lit Icon Color; otherwise Badge Brush and Icon Color. The cream highlight behind the row comes from the Style.
 
 ---
 
@@ -1289,14 +1539,19 @@ The inventory, with tabs.
       └─ Scale Box
          └─ Frame (Size Box)
             └─ Vertical Box
-               ├─ TabRow (Overlay)
-               │  ├─ PreviousTabKey (Common Action Widget)
-               │  ├─ TabBar (Horizontal Box)
-               │  │  ├─ MapTab (W_TabButton)
-               │  │  ├─ ItemsTab (W_TabButton)
-               │  │  ├─ CraftingTab (W_TabButton)
-               │  │  └─ FilesTab (W_TabButton)
-               │  └─ NextTabKey (Common Action Widget)
+               ├─ Size Box
+               │  └─ TabRow (Overlay)
+               │     └─ TabGroup (Horizontal Box)
+               │        ├─ PreviousTabKey (Common Action Widget)
+               │        ├─ PreviousTabArrow (Image)
+               │        ├─ TabFrame (Border)
+               │        │  └─ TabBar (Horizontal Box)
+               │        │     ├─ MapTab (W_TabButton)
+               │        │     ├─ ItemsTab (W_TabButton)
+               │        │     ├─ CraftingTab (W_TabButton)
+               │        │     └─ FilesTab (W_TabButton)
+               │        ├─ NextTabArrow (Image)
+               │        └─ NextTabKey (Common Action Widget)
                ├─ HeaderRule (Image)
                ├─ Pages (Widget Switcher)
                │  ├─ MapPage (Common Text)
@@ -1349,16 +1604,33 @@ The inventory, with tabs.
 
 **Properties: the tab row**
 
-- **`TabRow`** (Overlay): Slot: Horizontal Alignment Fill
+One bar of text tabs, centered, with the tab keys beside it, as in the Example.
+
+- **Size Box**: Slot: Horizontal Alignment Fill; Height 92 (Width Override unticked). It keeps the row as tall as before, so nothing below moves.
+- **`TabRow`** (Overlay): no changes.
+- **`TabGroup`** (Horizontal Box): Slot: H Center, V Center
 - **`PreviousTabKey`** (Common Action Widget):
-  - Slot: H Left, V Center
+  - Slot: Size Auto; Vertical Alignment Center
   - Input Actions: one element, Data Table `DT_UIInputActions`, Row Name `PreviousTab`
+- **`PreviousTabArrow`** (Image):
+  - Slot: Size Auto; Vertical Alignment Center; Padding Left 12, Right 3
+  - Brush: Image, `T_UI_ChevronLeft`, 16 × 16
+  - Color and Opacity: `D6D0C6FF`
+  - Behavior › Visibility: Not Hit-Testable
+- **`TabFrame`** (Border):
+  - Slot: Size Auto; Vertical Alignment Center
+  - Brush: Box, `T_UI_TabBarFrame`, 32 × 32, Margin 0.5
+  - Padding: Left 15, Top 6, Right 15, Bottom 6. The lines sit 1 px above and below the tabs and run 14 px past them, with a tick at each end.
 - **`TabBar`** (Horizontal Box):
   - **Is Variable**
-  - Slot: H Center, V Top
-- **`MapTab`**, **`ItemsTab`**, **`CraftingTab`**, **`FilesTab`** (W_TabButton): Tab › **Label Text** `MAP`, `ITEMS`, `CRAFTING`, `FILES`; Tab › **Icon Texture** your icon for each, or empty. Their order matches `Pages`.
+- **`MapTab`**, **`ItemsTab`**, **`CraftingTab`**, **`FilesTab`** (W_TabButton): Tab › **Label Text** `Map`, `Items`, `Crafting`, `Files`; Tab › **Icon Texture** None. Their order matches `Pages`.
+- **`NextTabArrow`** (Image):
+  - Slot: Size Auto; Vertical Alignment Center; Padding Left 3, Right 12
+  - Brush: Image, `T_UI_ChevronRight`, 16 × 16
+  - Color and Opacity: `D6D0C6FF`
+  - Behavior › Visibility: Not Hit-Testable
 - **`NextTabKey`** (Common Action Widget):
-  - Slot: H Right, V Center
+  - Slot: Size Auto; Vertical Alignment Center
   - Input Actions: one element, Data Table `DT_UIInputActions`, Row Name `NextTab`
 - **`HeaderRule`** (Image):
   - Slot: Horizontal Alignment Fill; Padding Top 8
@@ -1419,10 +1691,8 @@ The inventory, with tabs.
   - **Is Variable**
   - Slot: Horizontal Alignment Right; Padding Bottom 8
   - Behavior › Visibility: Hidden
-  - Brush › Draw As: Rounded Box
-  - Brush › Tint: `121110FF`
-  - Brush › Outline Settings › Corner Radii `2, 2, 2, 2`, Color `2F2C28FF`, Width `1`, Rounding Type Fixed Radius
-  - Padding: Left 16, Top 10, Right 16, Bottom 10
+  - Brush › Draw As: None: the hint is text only
+  - Padding: Left 16, Top 10, Right 16, Bottom 10, so the text sits where it did inside the old box
 - **`ActionHintText`** (Common Text):
   - **Is Variable**
   - Style: `TS_Body`
@@ -1517,7 +1787,9 @@ The same screen with the item box on the left, and no tabs. It was made by dupli
                └─ ActionBar (Common Bound Action Bar)
 ```
 
-**Properties.** As `W_InventoryScreen`, except:
+**Properties.** As `W_InventoryScreen`, `ActionHint` included, except:
+
+- `TabRow` is as it was before patch 0011: an Overlay straight in the Vertical Box, with no Size Box around it, holding only the title.
 
 - There is no `PreviousTabKey`, `TabBar`, `NextTabKey` or `Pages`, and no Map, Crafting or Files page.
 - **`Frame`** (Size Box): Width 1840
@@ -1740,6 +2012,7 @@ The settings outside the UI that point at UI assets:
 | Project Settings | Game › Common Input Settings | Input Data | `B_CommonInputData` |
 | Project Settings | Game › Common Input Settings › Platform Input › Windows | Controller Data | `CID_KeyboardMouse`, `CID_Gamepad` |
 | `Config/DefaultGame.ini` | `[/Script/Hades.HadesUIManagerSubsystem]` | DefaultUIPolicyClass | `/Game/UI/Foundation/B_HadesUIPolicy.B_HadesUIPolicy_C` |
+| Project Settings | Engine › User Interface › Software Cursors | Default | `W_HandCursor` (optional) |
 
 And which widget holds which:
 
@@ -1752,55 +2025,75 @@ And which widget holds which:
 | `W_InventoryGrid` | `W_InventoryCell` and `W_InventoryItem` through its Class Defaults |
 | `W_InventoryList` | `W_InventorySlot`, or `W_ItemBoxEntry` in the item box, through Entry Class |
 | `W_InventorySlot`, `W_ItemBoxEntry`, `W_QuickSlot`, `W_EquippedItem`, `W_ShortcutEntry` | `W_SlotItem` |
-| `W_ItemMenu`, `W_EscapeMenu` | `W_MenuButton` |
+| `W_ItemMenu` | `W_ItemMenuButton` × 8 |
+| `W_EscapeMenu` | `W_MenuButton` |
 | `W_ShortcutMenu` | `W_ShortcutEntry` through Entry Class |
 
 ---
 
 ## Appendix. Colors and sizes
 
-**Palette.** Every color in the UI comes from this list.
+**Palette.** Every color in the UI comes from this list. The inventory has no gold since patch 0011; the HUD's in-hand frame and the pause menu keep it.
 
 | Name | Hex sRGB, or texture | Where |
 | --- | --- | --- |
 | Backdrop | `00000080` | The dim over the grey world behind the inventory |
 | Pause backdrop | `000000C7` | The dim behind the pause menu |
-| Panel | `T_UI_Panel` | Panel fill, outline and corner marks |
-| Panel line | `2F2C28FF` | The line under panel titles, the hint's outline, the prompt's outline |
-| Rule | `3A362FFF` | The lines under the tabs and above the action bar; the menu outlines; the slash across an empty box |
-| Well | `T_UI_Cell` | Empty cells and slots, the in-hand box |
-| Hover fill | `1C1A16FF` | A hovered or focused cell |
-| Item | `T_UI_ItemTile` | The box under an item |
-| Shortcut | `0A0A0AB3` | The boxes of the HUD's shortcuts |
-| Menu | `1A1916FF` | The item and shortcut menus |
-| Hint | `121110FF` | The hint above the action bar |
-| Selected fill | `E8E2D429` | An item whose menu is open |
-| Accent | `C8A25AFF` | Hover outlines, the in-hand corner and frame, the underline |
-| Accent bright | `E2C27EFF` | Pressed outlines |
-| Moving | `C8A25A6B` | Under an item being moved, where it can go |
-| Invalid | `B02A2273` | Under an item being moved, where it can't go |
+| Panel | `T_UI_Panel` | Panel fill, lines and corner dots: lines `D6D0C6` at 20%, dots `E6E0D6` at 55%, fill `060606` at 50% |
+| Panel line | `2F2C28FF` | The line under panel titles, the prompt's outline |
+| Rule | `3A362FFF` | The lines under the tabs and above the action bar; the pause menu's line |
+| Grid line | `D6D0C626` | The lines between the cells |
+| Tab bar line | `T_UI_TabBarFrame` | `D6D0C6` at 42% |
+| Tab arrow | `D6D0C6FF` | The arrows beside the tab bar |
+| Open tab | `T_UI_TabActive` | `F2EFE9` to `D3CFC7` |
+| Item tile | `T_UI_GridCell_HasItem` | `64615E` at the top and bottom, `7D7975` in the middle, outline `524D49` |
+| Lit tile | `T_UI_GridCell_Hover` | `FFFFFF` in the middle to `C2C2C2` at the edges, outline `524D49` |
+| Empty cell | `T_UI_GridCell_Empty` | Black, outline and X `524D49`; hovered `A29C92` and `8E887E` |
+| Glow | `T_UI_ItemGlow` | `FFFDF8` at 74% to 0 |
+| Count patch | `T_UI_CountPatch` | `22201E` at 50% |
+| Shortcut | `T_UI_ShortcutMarker` | Orange, `5F401C` in the corner to `AF804B` at the long edge |
+| In hand | `T_UI_InHandMarker` | Cream, `B2ACA2` to `F0ECE4` |
+| Icon shadow | `0000008C` | Under every item icon |
+| Menu | `T_UI_MenuPanel` | `E4E1DB` to `B7B3AC`, edge black at 60% |
+| Menu row, lit | `F7F5F0FF`, outline `2A282659` | The highlighted row |
+| Menu badge | `T_UI_MenuBadge`, `T_UI_MenuBadgeLit` | `7C7974` to `575450`; lit `FFFFFF` to `D4D0C8`, ring `2A2826` |
+| Menu icon | `F3F0EAFF`; lit `262420FF` | The icons on the badges |
+| Menu text | `2E2C29FF` | Menu rows; the shortcut menu's title `6B6760FF` |
+| Moving | `FFFFFF42` | Under an item being moved, where it can go |
+| Invalid | `B02A2280` | Under an item being moved, where it can't go |
 | Ammo full | `8CC152FF` | A full gun's rounds |
 | Ammo empty | `D9534FFF` | An empty gun's rounds |
-| Text bright | `E8E2D4FF` | Titles, names, counts, buttons, messages, tab icons; a partly loaded gun's rounds |
-| Text | `BDB6A8FF` | Descriptions, action names, the open tab's frame |
-| Text muted | `8A857BFF` | Small labels, tab labels |
+| Text bright | `E8E2D4FF` | Titles, names, buttons, messages; a partly loaded gun's rounds |
+| Count | `F4F1EBFF` | Counts on items in the grid |
+| Tab text | `DDD8CFFF`; open tab `2A2825FF` | Tab labels |
+| Text | `BDB6A8FF` | Descriptions, the hint, action names |
+| Text muted | `8A857BFF` | Small labels |
+| Item box rows | `T_UI_Cell`; hovered `1C1A16FF` with a `C8A25AFF` outline, pressed `E2C27EFF` | `BS_Slot`, the item box's rows |
+| Pause and HUD accent | `C8A25AFF`, pressed `E2C27EFF` | The HUD's in-hand frame, the pause menu's hovered button |
 
 **Sizes**, at 1920 × 1080:
 
 | What | Size |
 | --- | --- |
 | Inventory frame | 1448 × 1000 (item box screen: 1840 × 1000) |
-| Tab | 120 × 92, icon 48 |
+| Tab row | 92 tall; the bar 630 × 48 with its lines, tabs 150 × 36; keys 12 past the arrows |
 | Columns | Left 848, right 400, item box 360; 40 between left and right, 32 before left on the item box screen; 80 from the frame's edge |
-| Grid cells | 96 |
+| Panel lines | 9 past each corner; content 20 inside them |
+| Grid cells | 96; tiles inset 5, so 86 for one cell; corners cut 8; grid lines 24 past the grid |
 | Item panel | Holds up to 8 × 4 cells: 768 × 384 |
+| Lit item glow | 28 past the tile |
+| Count patch | 46 × 31, 6 in from the item's bottom-left corner |
+| Shortcut corner | 40, its tip on the tile's corner; key icon 16 |
+| In-hand corner | 24, its tip on the tile's top-right corner |
 | Details panel | 120 tall |
 | In-hand box | 160 × 96 |
 | Key item slots | 64, with 8 between |
 | Item box rows | 312 × 56, with 8 between |
+| Item menu | Rows 40 tall, badge 34, icon 20, label 12 past the badge; 8 inside the capsule; chevrons 20 |
 | Shortcut menu items | 128 × 48 |
-| Menu buttons | At least 208 wide |
-| Key icons | 40 tall; 60% in badges |
-| Panel padding | 20 |
+| Pause menu buttons | At least 208 wide |
+| Key icons | 40 tall; 60% in the HUD's badges, 40% on the shortcut corner |
+| Panel padding | 20 inside the lines |
 | Message | 112 above the bottom of the screen |
 | HUD shortcuts | 144 × 72, 4 around each, 56 from the bottom left corner; shown for 2.6 seconds after a shortcut key |
+| Hand cursor | 40, in an 80 × 80 widget with the fingertip at its center |

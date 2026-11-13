@@ -1,8 +1,10 @@
 ﻿# Hades: UI
 
-How the UI works: the layers screens go on, how screens set input and stop the world, the HUD, messages, the inventory screen and its menus, the widgets inside it, and how keys and their icons reach the screen. How each widget is built in the editor is in the [UI Reference](UIReference.md); how to build them step by step is in [Inventory UI Setup](InventoryUISetup.md).
+How the UI works: the layers screens go on, how screens set input and stop the world, the HUD, messages, the inventory screen and its menus, the widgets inside it, and how keys and their icons reach the screen. How each widget is built in the editor is in the [UI Reference](UIReference.md); how to update them from an earlier patch, step by step, is in [Inventory UI Setup](InventoryUISetup.md).
 
-![The inventory on the Items tab, with the item menu open on a Green Herb](Images/ui-inventory.png)
+![The inventory on the Items tab, with the item menu open on a Green Herb](Images/ui-restyle-target.png)
+
+The other pictures on this page were taken before patch 0011 restyled the inventory, so they show its old look; what they show still works the same.
 
 ## Contents
 
@@ -164,12 +166,12 @@ The player controller's **Show Message** tells the player something, such as "It
 | --- | --- |
 | Tab | Opens the inventory on the Items tab. The world behind it stops and turns grey; the inventory keeps its colors. Tab, or Close (Escape), closes it. |
 | Q or E | Switches tabs: Map, Items, Crafting, Files. Only Items works for now; the others are empty pages. |
-| Click an item, or press Confirm on it | Its item menu opens beside it, with only what that item can do now. The item lights up and nothing else can be hovered. A hint above the action bar says what the highlighted option does. Close shuts the menu. |
-| Drag an item, or press Move over it | It sits on the cells under the cursor or the gamepad focus, on a gold background, or a red one where it can't go. Its old spot looks empty, and the details show it. Let go, or press Confirm, to put it down. The hint says "Select an area to place this item." |
+| Click an item, or press Confirm on it | Its item menu opens beside it: a row, with an icon and a label, for each thing that item can do now. The item stays lit and nothing else can be hovered. A hint above the action bar says what the highlighted row does. Close shuts the menu. |
+| Drag an item, or press Move over it | It sits on the cells under the cursor or the gamepad focus, on a soft white background, or a red one where it can't go. Its old spot looks empty, and the details show it. Let go, or press Confirm, to put it down. The hint says "Select an area to place this item." |
 | Put it down on an item of the same size and shape | It snaps onto that item and they trade places: that item is picked up in turn. Put it down the same way, or press Close to leave it where the first item was. Items of different sizes don't swap: the spot shows red. |
 | Rotate, or Q or E, while moving | Turns the item, if it turns and still fits the pockets. Rotate only shows in the action bar while you move something that can turn. |
-| Register Shortcut | The shortcut menu opens beside the item. Pick a shortcut, and its key icon appears in the item's top-left corner. Pick the one it's already on to take it off. |
-| Equip | The item stays where it is, with a gold corner, and shows under IN HAND. |
+| Register Shortcut | The shortcut menu opens beside the item. Pick a shortcut, and an orange triangle with its key icon appears in the item's top-left corner. Pick the one it's already on to take it off. |
+| Equip | The item stays where it is, with a cream triangle in its top-right corner, and shows under IN HAND. |
 | Combine | The hint says "Select an item to combine with."; click the second item. Close cancels. |
 | Hold Auto Sort | Repacks the pockets. |
 | Click another item while a menu is open | The menu closes and that item's menu opens. |
@@ -260,7 +262,7 @@ A screen with `ItemBoxList` is an item box screen:
 | Named part | Type | Description |
 | --- | --- | --- |
 | `MenuPanel` | Any widget, required | See [7](#7-popup-menus). |
-| `ShortcutButton`, `UseButton`, `EquipButton`, `UnequipButton`, `CombineButton`, `DiscardButton`, `StoreButton`, `TakeButton` | Common Button, optional | One per action. Each only shows while its action can run. |
+| `ShortcutButton`, `UseButton`, `EquipButton`, `UnequipButton`, `CombineButton`, `DiscardButton`, `StoreButton`, `TakeButton` | Common Button, optional | One per action. Each only shows while its action can run. `W_ItemMenu`'s are `W_ItemMenuButton` rows ([11.4](#114-hades-menu-button)). |
 | `ItemNameText` | Text Block, optional | The item's name. `W_ItemMenu` doesn't have one. |
 
 | Category | Field | Description |
@@ -279,6 +281,8 @@ A screen with `ItemBoxList` is an item box screen:
 | Take | Take the item from the item box. |
 
 The first button that shows takes focus, and its description shows. Gamepad focus moves Common UI's hidden cursor onto a button, so hovering covers both.
+
+`W_ItemMenu` looks like the Example's: a light capsule with an arrow at the top and bottom, its rows an icon on a round badge and a label. The highlighted row turns cream, its badge light and its icon dark. Register Shortcut's icon is four squares, one per shortcut.
 
 ---
 
@@ -323,12 +327,16 @@ The grid, cells, slots, lists and item details are the plugin's widgets ([UI Ref
 | Named part or field | Type | Description |
 | --- | --- | --- |
 | `ShortcutKey` | Common Action Widget, optional | The key of the shortcut the item is on. It hides itself while the item has none. |
-| `EquippedMarker` | Any widget, optional | Shown while the item is in hand. |
+| `ShortcutMarker` | Any widget, optional | Shown only while the item is on a shortcut. `W_InventoryItem`'s is the orange triangle `ShortcutKey` sits on. |
+| `EquippedMarker` | Any widget, optional | Shown while the item is in hand. `W_InventoryItem`'s is a cream triangle in the top-right corner. |
 | `Background` | Any widget, optional | Covers the item's cells, so a big item reads as one. Hidden on the stand-in drawn for an item being moved, so what's under it shows through. |
+| `LitBackground` | Any widget, optional | Shown over `Background` while the item is hovered, focused or selected, such as while its menu is open. Never on the stand-in. |
+| `Glow` | Any widget, optional | Shown with `LitBackground`. `W_InventoryItem`'s reaches past the item with a negative padding; the grid draws the lit item above the others, so the glow spills over them. |
 | `AmmoText` | Text Block, optional | A gun's rounds, colored by how full it is. Collapsed for anything else. |
+| `CountPatch` | Any widget, optional | Shown only while `CountText` or `AmmoText` shows, such as the darker patch behind the number. |
 | Inventory › Item › Ammo Colors | Full, Partly, Empty | `8CC152` green when full, `E8E2D4` white when partly loaded, `D9534F` red when empty. |
 
-The plugin's parts are there too: `Icon`, `CountText`, and the events On Held Changed, On Hovered Changed and On Selected Changed. The marks refresh when the shortcuts or the item in hand change, and when the item changes.
+The plugin's parts are there too: `Icon`, `IconShadow` (a dark copy of the icon behind it), `CountText`, and the events On Held Changed, On Hovered Changed and On Selected Changed. The marks refresh when the shortcuts or the item in hand change, and when the item changes; the lit parts when the hover or selection changes.
 
 ### 11.2 Hades Quick Slot Widget
 
@@ -361,11 +369,26 @@ The plugin's parts are there too: `Icon`, `CountText`, and the events On Held Ch
 | `EmptyMarker` | Any widget, optional | Shown while nothing is in hand, such as a slash across the empty box. |
 | Equipped Item › Empty Text | Text | `W_EquippedItem`: empty, as the slash says it. |
 
+### 11.4 Hades Menu Button
+
+`UHadesMenuButton` is a menu row: an icon on a round badge, and a label. It is a Common button. `W_ItemMenuButton`, the item menu's row, is made from it ([UI Reference 6.14](UIReference.md#614-w_itemmenubutton)).
+
+| Named part or field | Type | Description |
+| --- | --- | --- |
+| `Badge` | Image, optional | The round shape behind the icon. |
+| `Icon` | Image, optional | Shows Icon Texture at the designer's size. Without a texture, the icon and its badge are hidden. |
+| `Label` | Text Block, optional | Shows Label Text. |
+| Menu Button › Icon Texture, Label Text | | Set on each placed row. |
+| Menu Button › Badge Brush, Lit Badge Brush | Brush | The badge normally, and while the row is hovered or focused. A brush without an image leaves the designer's brush. |
+| Menu Button › Icon Color, Lit Icon Color | Color | The icon's tint normally, and while the row is hovered or focused. `W_ItemMenuButton`: `F3F0EA` on the dark badge, `262420` on the cream one. |
+
+The highlight behind the row comes from its Style, `BS_ItemMenuRow`. A row is never left lit when its menu opens again.
+
 ---
 
 ## 12. Tab buttons
 
-`UHadesTabButton` is one tab of a screen's tab bar. The open tab's icon grows, its label shows, and its frame appears. A tab without an icon always shows its label, so it reads before it has its art. `W_TabButton` is made from it.
+`UHadesTabButton` is one tab of a screen's tab bar. The open tab's icon grows, its label shows, and its frame appears. A tab without an icon always shows its label. `W_TabButton` is made from it: a text tab whose frame is a light fill, so the open tab reads as in the Example.
 
 | Named part or field | Type | Description |
 | --- | --- | --- |
@@ -374,6 +397,7 @@ The plugin's parts are there too: `Icon`, `CountText`, and the events On Held Ch
 | `ActiveFrame` | Any widget, optional | Shown only on the open tab. |
 | Tab › Icon Texture, Label Text | | Set on each placed tab. |
 | Tab › Active Icon Scale | Number | How much the open tab's icon grows. 1.2. |
+| Tab › Active Label Style, Inactive Label Style | Text style | The label's style on the open tab and on the others, when the label is a Common Text. `W_TabButton`: `TS_TabActive`, dark on the light fill, and `TS_Tab`. None keeps the label's own style. |
 
 Tabs never take gamepad focus: the tab keys change them, so focus stays on the page.
 
@@ -433,12 +457,12 @@ Every look is defined once and used everywhere:
 
 | Kind | Assets | Used for |
 | --- | --- | --- |
-| Textures | `T_UI_Panel`, `T_UI_Cell`, `T_UI_ItemTile` | Panels, cells and slots, the box under each item. Drawn as 9-slice boxes, so one texture fits every size. Source art in `SourceArt/UI`. |
-| Text styles | `TS_Title`, `TS_Label`, `TS_ItemName`, `TS_Body`, `TS_Count`, `TS_Button`, `TS_Message` | Every Common Text |
-| Button styles | `BS_Slot`, `BS_SlotHolding`, `BS_MenuButton`, `BS_ActionButton`, `BS_QuickSlot` | Cells and slots; cells while an item is moved; menu buttons; the action bar and tabs; the HUD's shortcuts |
+| Textures | `T_UI_Panel`, `T_UI_GridCell_*`, `T_UI_ItemGlow`, `T_UI_CountPatch`, the two corner markers, the tab and menu textures, `T_UI_Icon_*` | Panels, tiles, cells, marks, menus and icons. Tiles and frames are drawn as 9-slice boxes, so one texture fits every size. Source art in `SourceArt/UI`; the full list is in the [UI Reference](UIReference.md#41-textures). |
+| Text styles | `TS_Title`, `TS_Label`, `TS_ItemName`, `TS_Body`, `TS_Count`, `TS_Button`, `TS_Message`, `TS_Tab`, `TS_TabActive`, `TS_TileCount`, `TS_MenuItem`, `TS_MenuLabel` | Every Common Text. `TS_TileCount` is Roboto Condensed, from `SourceArt/Fonts`. |
+| Button styles | `BS_GridCell`, `BS_GridCellHolding`, `BS_ItemSlot`, `BS_ItemMenuRow`, `BS_Slot`, `BS_MenuButton`, `BS_ActionButton`, `BS_QuickSlot` | Pocket cells; pocket cells while an item is moved; key items; item and shortcut menu rows; the item box's rows; the pause menu's button; the action bar and tabs; the HUD's shortcuts |
 | Panel | `W_Panel` | Every framed section, with a small title and a line under it |
 
-Gold, `C8A25A`, marks what is hovered, focused, in hand or being moved. The full palette and sizes are in the [UI Reference](UIReference.md#appendix-colors-and-sizes).
+The look follows the Example: neutral greys, thin drafting lines, white for what is hovered, focused or being moved, orange for shortcuts and cream for the item in hand. The full palette and sizes are in the [UI Reference](UIReference.md#appendix-colors-and-sizes).
 
 ---
 
@@ -487,7 +511,7 @@ In `W_InventoryScreen`, replace the placeholder Common Text in `Pages` with your
 
 ## 17. Troubleshooting
 
-The most common problems. [Inventory UI Setup, Part 11](InventoryUISetup.md#part-11-troubleshooting) has the full list.
+The most common problems. [Inventory UI Setup](InventoryUISetup.md#troubleshooting) has the ones for the restyle.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |

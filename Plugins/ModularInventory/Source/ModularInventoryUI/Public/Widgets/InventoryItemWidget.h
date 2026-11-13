@@ -55,6 +55,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory|Item")
 	bool IsHeld() const { return bHeld; }
 
+	/** The mouse is over it, or gamepad focus is on one of its cells. Never while something is held. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Item")
+	bool IsItemHovered() const { return bHovered; }
+
 	UFUNCTION(BlueprintPure, Category = "Inventory|Item")
 	bool IsSelected() const { return bSelected; }
 
@@ -74,6 +78,9 @@ protected:
 
 	/** Before On Item Changed, for C++ subclasses. */
 	virtual void NativeOnItemChanged() {}
+
+	/** After On Held Changed, On Hovered Changed or On Selected Changed, for C++ subclasses. */
+	virtual void NativeOnInteractionChanged() {}
 
 	/** The item or its state changed. Update what the base doesn't, like a durability bar from a tag value. */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Item")
@@ -98,6 +105,13 @@ protected:
 	/** Put it straight in an Overlay, centered rather than filling it, so it can turn with the item. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
 	TObjectPtr<UImage> Icon;
+
+	/**
+	 * A copy of Icon behind it: it gets the same texture, size and turn. Tint it dark and offset it with its Render Transform for a
+	 * drop shadow, so light icons read on light tiles. Place it just before Icon, in the same panel and with the same alignment.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
+	TObjectPtr<UImage> IconShadow;
 
 	/** Collapsed for items that don't stack. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
@@ -140,6 +154,7 @@ private:
 
 	TWeakObjectPtr<const UInventoryItemDefinition> ShownDefinition;
 	TSharedPtr<FStreamableHandle> IconHandle;
+	TSharedPtr<FStreamableHandle> IconShadowHandle;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UInventoryItemDetailsWidget> DetailsTooltip;

@@ -29,7 +29,7 @@ The game's inventory rules, built on the Modular Inventory plugin: the pockets a
 
 - **Pockets.** One grid, 6 × 3 at the start. Each hip pouch grows it: 6 × 4, 7 × 4, then 8 × 4. Items keep their shapes: a shotgun takes four cells in a row.
 - **Key items** go in their own list. They take no pocket space, can't be moved, discarded or stored, and go away after their last use.
-- **One item in hand.** Drawing an item equips it where it lies: it keeps its cell in the pockets, marked with a gold corner. Drawing another puts the first away.
+- **One item in hand.** Drawing an item equips it where it lies: it keeps its cell in the pockets, marked with a cream corner. Drawing another puts the first away.
 - **Four shortcuts**, on 1 to 4 and the D-pad. A shortcut draws its item, puts it away if it's in hand, or uses it.
 - **Item actions.** Items can be used (herbs heal), combined (herbs, gunpowder, a gun with its ammo), discarded onto the floor, and stored in or taken from the item box.
 - **Guns** keep their own rounds and load from their ammo.
@@ -97,7 +97,7 @@ Each pocket layout holds the one before it (6 × 3 fits in 6 × 4, and so on), b
 
 ## 4. The item in hand
 
-As in the RE games, the item in hand stays where it is in the pockets, marked with a gold corner. One item is in hand at a time.
+As in the RE games, the item in hand stays where it is in the pockets, marked with a cream corner. One item is in hand at a time.
 
 - **Draw Item** equips the item in place to the first hand its **Equip Rules** allow: `Equipment.Slot.Hand.Right`, then `Equipment.Slot.Hand.Left`. Whatever was in hand is put away first.
 - The Inventory Equipment Component then applies the item: its grants, and its cosmetic pieces, such as the flashlight's light ([13](#13-data-assets)).
@@ -112,7 +112,7 @@ As in the RE games, the item in hand stays where it is in the pockets, marked wi
 
 With one item in hand, Blocked Slots make no difference yet. A tool for either hand would use Slots `Equipment.Slot.Hand`.
 
-The UI shows the item in hand three ways: a gold corner on its tile, the **IN HAND** panel of the inventory, and a gold frame on its shortcut in the HUD.
+The UI shows the item in hand three ways: a cream triangle in the top-right corner of its tile, the **IN HAND** panel of the inventory, and a gold frame on its shortcut in the HUD.
 
 ---
 

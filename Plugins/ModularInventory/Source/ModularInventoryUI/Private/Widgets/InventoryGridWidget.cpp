@@ -12,15 +12,18 @@
 #include "ModularInventory.h"
 #include "Widgets/InventoryCellWidget.h"
 #include "Widgets/InventoryDragDropOperation.h"
+#include "Widgets/InventoryGridLinesWidget.h"
 #include "Widgets/InventoryItemWidget.h"
 
 namespace
 {
-	// Bottom to top.
-	constexpr int32 CellZOrder = 0;
-	constexpr int32 ItemZOrder = 1;
-	constexpr int32 PreviewZOrder = 2;
-	constexpr int32 HeldZOrder = 3;
+	// Bottom to top. The hovered or selected item goes above the others, so a glow around it isn't covered.
+	constexpr int32 LinesZOrder = 0;
+	constexpr int32 CellZOrder = 1;
+	constexpr int32 ItemZOrder = 2;
+	constexpr int32 LitItemZOrder = 3;
+	constexpr int32 PreviewZOrder = 4;
+	constexpr int32 HeldZOrder = 5;
 }
 
 UInventoryGridWidget::UInventoryGridWidget(const FObjectInitializer& ObjectInitializer)
@@ -38,6 +41,8 @@ void UInventoryGridWidget::NativeConstruct()
 	{
 		Interaction->OnTargetChanged.AddUniqueDynamic(this, &ThisClass::HandleTargetChanged);
 		Interaction->OnHeldItemChanged.AddUniqueDynamic(this, &ThisClass::HandleHeldItemChanged);
+		Interaction->OnHoveredItemChanged.AddUniqueDynamic(this, &ThisClass::HandleLitItemChanged);
+		Interaction->OnSelectedItemChanged.AddUniqueDynamic(this, &ThisClass::HandleLitItemChanged);
 	}
 
 	if (UCanvasPanelSlot* PreviewSlot = PlacementPreview ? Cast<UCanvasPanelSlot>(PlacementPreview->Slot) : nullptr)
@@ -59,6 +64,8 @@ void UInventoryGridWidget::NativeDestruct()
 	{
 		Interaction->OnTargetChanged.RemoveDynamic(this, &ThisClass::HandleTargetChanged);
 		Interaction->OnHeldItemChanged.RemoveDynamic(this, &ThisClass::HandleHeldItemChanged);
+		Interaction->OnHoveredItemChanged.RemoveDynamic(this, &ThisClass::HandleLitItemChanged);
+		Interaction->OnSelectedItemChanged.RemoveDynamic(this, &ThisClass::HandleLitItemChanged);
 	}
 
 	Super::NativeDestruct();
@@ -147,6 +154,40 @@ void UInventoryGridWidget::RebuildCells(FIntPoint GridSize)
 	{
 		Cells[Index]->SetPlacement(Container, FInventoryPlacement::AtCell(FIntPoint(Index % GridSize.X, Index / GridSize.X)));
 	}
+	RefreshGridLines();
+}
+
+void UInventoryGridWidget::RefreshGridLines()
+{
+	if (!bDrawGridLines)
+	{
+		if (GridLines)
+		{
+			GridLines->RemoveFromParent();
+			GridLines = nullptr;
+		}
+		return;
+	}
+
+	if (!GridLines)
+	{
+		GridLines = CreateWidget<UInventoryGridLinesWidget>(this, UInventoryGridLinesWidget::StaticClass());
+		if (!GridLines)
+		{
+			return;
+		}
+		GridLines->SetVisibility(ESlateVisibility::HitTestInvisible);
+		GridCanvas->AddChildToCanvas(GridLines)->SetZOrder(LinesZOrder);
+	}
+
+	// Sized to the cells, like them, so it never changes the grid's size; the overhang is drawn past its edges.
+	GridLines->SetLineStyle(GridLineColor, GridLineThickness, GridLineOverhang);
+	GridLines->SetGrid(BuiltGridSize, CellSize);
+	if (UCanvasPanelSlot* LinesSlot = Cast<UCanvasPanelSlot>(GridLines->Slot))
+	{
+		LinesSlot->SetPosition(FVector2D::ZeroVector);
+		LinesSlot->SetSize(FVector2D(BuiltGridSize) * CellSize);
+	}
 }
 
 void UInventoryGridWidget::RefreshItems()
@@ -193,6 +234,36 @@ void UInventoryGridWidget::RefreshItems()
 			It.RemoveCurrent();
 		}
 	}
+	RefreshItemOrder();
+}
+
+void UInventoryGridWidget::RefreshItemOrder()
+{
+	const UInventoryUISubsystem* Interaction = GetInteraction();
+	const FInventoryItemHandle Hovered = Interaction ? Interaction->GetHoveredItem() : FInventoryItemHandle();
+	const FInventoryItemHandle Selected = Interaction ? Interaction->GetSelectedItem() : FInventoryItemHandle();
+
+	for (const TPair<FInventoryItemHandle, TWeakObjectPtr<UInventoryItemWidget>>& Entry : ItemWidgets)
+	{
+		UInventoryItemWidget* ItemWidget = Entry.Value.Get();
+		UCanvasPanelSlot* ItemSlot = ItemWidget ? Cast<UCanvasPanelSlot>(ItemWidget->Slot) : nullptr;
+		if (!ItemSlot)
+		{
+			continue;
+		}
+
+		const bool bLit = Entry.Key.IsSet() && (Entry.Key == Hovered || Entry.Key == Selected);
+		const int32 ZOrder = bLit ? LitItemZOrder : ItemZOrder;
+		if (ItemSlot->GetZOrder() != ZOrder)
+		{
+			ItemSlot->SetZOrder(ZOrder);
+		}
+	}
+}
+
+void UInventoryGridWidget::HandleLitItemChanged(FInventoryItemHandle Item)
+{
+	RefreshItemOrder();
 }
 
 // Preview

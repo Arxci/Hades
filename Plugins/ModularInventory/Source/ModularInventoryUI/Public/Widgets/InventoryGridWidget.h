@@ -13,6 +13,7 @@
 
 class UCanvasPanel;
 class UInventoryCellWidget;
+class UInventoryGridLinesWidget;
 class UInventoryItemWidget;
 class UInventoryUISubsystem;
 struct FInventoryChangeSet;
@@ -22,6 +23,7 @@ struct FInventoryChangeSet;
  * Shows a grid container: a focusable cell widget per cell, the items over them, and where the held item would land.
  * Mouse drops land with the dragged item centered on the cursor; gamepad drops put its top-left corner on the focused cell.
  * With the Inventory UI Subsystem's Snap Held Item on, it also draws the held item on those cells, using Item Class.
+ * The hovered or selected item is drawn above the others, so a glow around it can spill over its neighbours.
  */
 UCLASS(Abstract)
 class MODULARINVENTORYUI_API UInventoryGridWidget : public UUserWidget
@@ -84,6 +86,20 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Inventory|Grid", meta = (ClampMin = "0"))
 	float PreviewGlideSpeed = 0.0f;
 
+	/** Draws thin lines along the cell edges, under the cells, sized to the grid as it grows. */
+	UPROPERTY(EditAnywhere, Category = "Inventory|Grid|Lines")
+	bool bDrawGridLines = false;
+
+	UPROPERTY(EditAnywhere, Category = "Inventory|Grid|Lines", meta = (EditCondition = "bDrawGridLines"))
+	FLinearColor GridLineColor = FLinearColor(1.0f, 1.0f, 1.0f, 0.15f);
+
+	UPROPERTY(EditAnywhere, Category = "Inventory|Grid|Lines", meta = (EditCondition = "bDrawGridLines", ClampMin = "0.5"))
+	float GridLineThickness = 1.0f;
+
+	/** How far the lines run past the grid's outer edges, in pixels. */
+	UPROPERTY(EditAnywhere, Category = "Inventory|Grid|Lines", meta = (EditCondition = "bDrawGridLines", ClampMin = "0"))
+	float GridLineOverhang = 0.0f;
+
 	/** Holds the cells, the items and the preview, and sizes itself to them. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Grid", meta = (BindWidget))
 	TObjectPtr<UCanvasPanel> GridCanvas;
@@ -99,6 +115,9 @@ private:
 	UFUNCTION()
 	void HandleHeldItemChanged();
 
+	UFUNCTION()
+	void HandleLitItemChanged(FInventoryItemHandle Item);
+
 	void HandleRegistryChanged(const FInventoryChangeSet& Changes);
 
 	UInventoryUISubsystem* GetInteraction() const;
@@ -108,6 +127,8 @@ private:
 	void Refresh();
 	void RebuildCells(FIntPoint GridSize);
 	void RefreshItems();
+	void RefreshItemOrder();
+	void RefreshGridLines();
 	void RefreshPreview();
 	void PlacePreview(const FVector2D& Position);
 
@@ -127,6 +148,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UInventoryItemWidget> HeldVisual;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInventoryGridLinesWidget> GridLines;
 
 	TMap<FInventoryItemHandle, TWeakObjectPtr<UInventoryItemWidget>> ItemWidgets;
 

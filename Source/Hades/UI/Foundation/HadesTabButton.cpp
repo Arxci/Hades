@@ -1,5 +1,6 @@
 ﻿#include "HadesTabButton.h"
 
+#include "CommonTextBlock.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
 #include "Engine/Texture2D.h"
@@ -41,6 +42,14 @@ void UHadesTabButton::SetActive(bool bInActive)
 	{
 		// Hidden, not collapsed, so the tab bar doesn't shift as tabs change.
 		Label->SetVisibility(bActive || !IconTexture ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+	}
+	if (UCommonTextBlock* CommonLabel = Cast<UCommonTextBlock>(Label))
+	{
+		const TSubclassOf<UCommonTextStyle> LabelStyle = bActive ? ActiveLabelStyle : InactiveLabelStyle;
+		if (LabelStyle)
+		{
+			CommonLabel->SetStyle(LabelStyle);
+		}
 	}
 	if (ActiveFrame)
 	{

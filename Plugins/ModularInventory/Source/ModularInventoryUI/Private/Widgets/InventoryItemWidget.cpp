@@ -36,6 +36,7 @@ void UInventoryItemWidget::NativeDestruct()
 		Interaction->OnSelectedItemChanged.RemoveDynamic(this, &ThisClass::HandleSelectedItemChanged);
 	}
 	InventoryWidgets::CancelLoad(IconHandle);
+	InventoryWidgets::CancelLoad(IconShadowHandle);
 	ShownDefinition.Reset();
 
 	Super::NativeDestruct();
@@ -92,6 +93,7 @@ void UInventoryItemWidget::Refresh()
 	{
 		ShownDefinition = Definition;
 		InventoryWidgets::ShowIcon(Icon, Definition, IconHandle);
+		InventoryWidgets::ShowIcon(IconShadow, Definition, IconShadowHandle);
 	}
 	ApplyCellLayout();
 
@@ -113,22 +115,31 @@ void UInventoryItemWidget::Refresh()
 void UInventoryItemWidget::ApplyCellLayout()
 {
 	const UInventoryItemDefinition* Definition = GetDefinition();
-	if (!Icon || !Definition || CellSize <= 0.0f)
+	if (!Definition || CellSize <= 0.0f)
 	{
 		return;
 	}
 
 	// Laid out unturned and turned around its center, so it covers the item's turned cells.
 	const FVector2D Unturned = FVector2D(Definition->Size) * CellSize;
-	Icon->SetDesiredSizeOverride(Unturned);
-	Icon->SetRenderTransformAngle(bRotated ? 90.0f : 0.0f);
+	const FVector2D Turned = bRotated ? FVector2D(Unturned.Y, Unturned.X) : Unturned;
+	const FVector2f Overhang = FVector2f(Turned - Unturned) * 0.5f;
 
-	// The Overlay has the turned size and would squeeze the unturned icon into it, so the icon may hang over its edges.
-	if (UOverlaySlot* IconSlot = Cast<UOverlaySlot>(Icon->Slot))
+	// The shadow keeps its own Render Transform translation; only the angle is set here.
+	for (UImage* Image : { Icon.Get(), IconShadow.Get() })
 	{
-		const FVector2D Turned = bRotated ? FVector2D(Unturned.Y, Unturned.X) : Unturned;
-		const FVector2f Overhang = FVector2f(Turned - Unturned) * 0.5f;
-		IconSlot->SetPadding(FMargin(Overhang.X, Overhang.Y));
+		if (!Image)
+		{
+			continue;
+		}
+		Image->SetDesiredSizeOverride(Unturned);
+		Image->SetRenderTransformAngle(bRotated ? 90.0f : 0.0f);
+
+		// The Overlay has the turned size and would squeeze the unturned icon into it, so the icon may hang over its edges.
+		if (UOverlaySlot* ImageSlot = Cast<UOverlaySlot>(Image->Slot))
+		{
+			ImageSlot->SetPadding(FMargin(Overhang.X, Overhang.Y));
+		}
 	}
 }
 
@@ -164,10 +175,12 @@ void UInventoryItemWidget::RefreshInteraction()
 	// A drag visual stands in for the held item, so it is never held or hovered itself.
 	const UInventoryUISubsystem* Interaction = bDragVisual || !Item.IsSet() ? nullptr : GetInteraction();
 
+	bool bChanged = false;
 	const bool bNowHeld = Interaction && Interaction->GetHeldItem() == Item;
 	if (bNowHeld != bHeld)
 	{
 		bHeld = bNowHeld;
+		bChanged = true;
 		OnHeldChanged(bHeld);
 	}
 
@@ -176,6 +189,7 @@ void UInventoryItemWidget::RefreshInteraction()
 	if (bNowHovered != bHovered)
 	{
 		bHovered = bNowHovered;
+		bChanged = true;
 		OnHoveredChanged(bHovered);
 	}
 
@@ -183,7 +197,13 @@ void UInventoryItemWidget::RefreshInteraction()
 	if (bNowSelected != bSelected)
 	{
 		bSelected = bNowSelected;
+		bChanged = true;
 		OnSelectedChanged(bSelected);
+	}
+
+	if (bChanged)
+	{
+		NativeOnInteractionChanged();
 	}
 }
 
