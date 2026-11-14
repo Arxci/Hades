@@ -6,6 +6,8 @@
 #include "ToolMenus.h"
 #include "Widgets/Notifications/SNotificationList.h"
 
+#include "Assets/InventoryAssetManagerSetup.h"
+#include "Assets/InventoryAssetRenaming.h"
 #include "Assets/InventoryIconThumbnailRenderer.h"
 #include "Data/InventoryItemCosmetics.h"
 #include "Data/InventoryItemDefinition.h"
@@ -41,10 +43,16 @@ public:
 		MessageLog.RegisterLogListing(InventoryEditor::MessageLogName, LOCTEXT("MessageLogLabel", "Modular Inventory"));
 
 		UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FModularInventoryEditorModule::RegisterMenus));
+
+		InventoryAssetManagerSetup::CheckOnceLoaded();
+		InventoryAssetRenaming::Register();
 	}
 
 	virtual void ShutdownModule() override
 	{
+		InventoryAssetRenaming::Unregister();
+		InventoryAssetManagerSetup::StopChecking();
+
 		UToolMenus::UnRegisterStartupCallback(this);
 		UToolMenus::UnregisterOwner(this);
 

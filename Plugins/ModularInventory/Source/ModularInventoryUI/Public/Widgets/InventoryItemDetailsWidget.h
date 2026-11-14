@@ -51,13 +51,21 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Inventory|Details")
 	bool bFollowHoveredItem = false;
 
-	/** With Follow Hovered Item, keeps showing the last item while nothing is hovered, until it leaves the inventory. */
+	/**
+	 * With Follow Hovered Item, keeps showing the last item while nothing is hovered, such as while gamepad focus is on an empty cell,
+	 * until it leaves the inventory. Only this panel keeps it: the item stops being hovered and lit. For the hover itself to stay on
+	 * the last item the mouse was over, use the screen's Keep Last Hovered Item instead.
+	 */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Details", meta = (EditCondition = "bFollowHoveredItem"))
 	bool bKeepLastItem = false;
 
 	/** Hidden rather than collapsed, so it keeps its size and nothing around it moves. */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Details")
 	bool bHideWithoutItem = true;
+
+	/** What Count Text says. {Count} is the stack's count, such as x{Count} for x2. */
+	UPROPERTY(EditAnywhere, Category = "Inventory|Details")
+	FText CountFormat = INVTEXT("{Count}");
 
 	/** Colors Name Text by the item's tags, such as its rarity: the first entry whose tag the item has. Without one, Name Text keeps its own color. */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Details")
@@ -79,6 +87,10 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Details", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> NameText;
+
+	/** The item definition's Category, such as Handgun. Collapsed for items without one. */
+	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Details", meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> CategoryText;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Details", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> DescriptionText;

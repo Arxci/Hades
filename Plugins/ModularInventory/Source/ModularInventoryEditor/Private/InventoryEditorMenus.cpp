@@ -5,7 +5,6 @@
 #include "Framework/Commands/UIAction.h"
 #include "ToolMenus.h"
 
-#include "Assets/InventoryAssetManagerSetup.h"
 #include "Assets/InventoryItemCreation.h"
 #include "Data/InventoryItemDefinition.h"
 #include "Icons/InventoryIconGenerator.h"
@@ -98,11 +97,6 @@ void InventoryEditorMenus::Register()
 {
 	UToolMenu* ToolsMenu = UToolMenus::Get()->ExtendMenu("LevelEditor.MainMenu.Tools");
 	FToolMenuSection& ToolsSection = ToolsMenu->AddSection("ModularInventory", LOCTEXT("ToolsSection", "Modular Inventory"));
-	ToolsSection.AddMenuEntry("RegisterItemsWithAssetManager",
-		LOCTEXT("RegisterItems", "Register Items With Asset Manager"),
-		LOCTEXT("RegisterItemsTooltip", "Adds the InventoryItem type to the Asset Manager settings, so items can be found by ID and are always cooked. Also resaves items that still carry an old ID."),
-		FSlateIcon(),
-		FUIAction(FExecuteAction::CreateStatic(&InventoryAssetManagerSetup::RegisterItems)));
 	ToolsSection.AddMenuEntry("GenerateAllItemIcons",
 		LOCTEXT("GenerateAllIcons", "Generate All Item Icons"),
 		LOCTEXT("GenerateAllIconsTooltip", "Generate Item Icons for every item in the project: generated icons are rendered again with the current settings, missing ones are created, hand-made ones are left alone."),

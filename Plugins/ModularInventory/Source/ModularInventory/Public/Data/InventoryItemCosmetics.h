@@ -43,6 +43,15 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Display")
 	TSoftObjectPtr<UTexture2D> Icon;
 
+#if WITH_EDITORONLY_DATA
+	/**
+	 * The editor's Generate Item Icons renders Icon from World Mesh. Off, Icon is only ever the texture set here, even while it's empty.
+	 * Either way, an Icon the generator didn't make is kept; saving one from Edit Item Icon replaces it and turns this back on.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Display")
+	bool bGenerateIcon = true;
+#endif
+
 	/** Shown by pickups lying in the world. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Display")
 	TSoftObjectPtr<UStaticMesh> WorldMesh;

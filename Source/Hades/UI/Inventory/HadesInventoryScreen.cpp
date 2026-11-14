@@ -32,9 +32,15 @@ UHadesInventoryScreen::UHadesInventoryScreen(const FObjectInitializer& ObjectIni
 	InteractionStyle.bSnapHeldItem = true;
 	InteractionStyle.bSwapPicksUpOther = true;
 	InteractionStyle.bClickOnAnyRelease = true;
+	InteractionStyle.bKeepLastHoveredItem = true;
 
 	MoveHint = LOCTEXT("MoveHint", "Select an area to place this item.");
 	CombineHint = LOCTEXT("CombineHint", "Select an item to combine with.");
+	InvalidHint = LOCTEXT("InvalidHint", "That can't go there.");
+	InvalidHints.Add(EInventoryError::Occupied, LOCTEXT("OccupiedHint", "Something's in the way."));
+	InvalidHints.Add(EInventoryError::OutOfBounds, LOCTEXT("OutOfBoundsHint", "That space can't be used yet."));
+	InvalidHints.Add(EInventoryError::CannotStack, LOCTEXT("CannotStackHint", "That stack is full."));
+	InvalidHints.Add(EInventoryError::NoSpace, LOCTEXT("NoSpaceHint", "Not enough space."));
 }
 
 void UHadesInventoryScreen::NativeOnInitialized()
@@ -70,6 +76,7 @@ void UHadesInventoryScreen::NativeOnActivated()
 	{
 		Interaction->OnItemChosen.AddUniqueDynamic(this, &ThisClass::HandleItemChosen);
 		Interaction->OnHeldItemChanged.AddUniqueDynamic(this, &ThisClass::HandleHeldItemChanged);
+		Interaction->OnTargetChanged.AddUniqueDynamic(this, &ThisClass::HandleTargetChanged);
 	}
 	if (ItemBoxList)
 	{
@@ -85,6 +92,7 @@ void UHadesInventoryScreen::NativeOnDeactivated()
 	{
 		Interaction->OnItemChosen.RemoveDynamic(this, &ThisClass::HandleItemChosen);
 		Interaction->OnHeldItemChanged.RemoveDynamic(this, &ThisClass::HandleHeldItemChanged);
+		Interaction->OnTargetChanged.RemoveDynamic(this, &ThisClass::HandleTargetChanged);
 	}
 	if (AHadesPlayerController* Controller = Cast<AHadesPlayerController>(GetOwningPlayer()))
 	{
@@ -243,8 +251,13 @@ void UHadesInventoryScreen::ShowActionHint(const FText& Hint)
 void UHadesInventoryScreen::RefreshActionHint()
 {
 	const UInventoryUISubsystem* Interaction = GetInteraction();
+	const bool bHolding = Interaction && Interaction->IsHolding();
+	const bool bAimedAtInvalid = bHolding && Interaction->GetTargetAction() == EInventoryDropAction::Invalid;
+	const FText* InvalidReason = bAimedAtInvalid ? InvalidHints.Find(Interaction->GetTargetError()) : nullptr;
 	const FText& Hint = !MenuHint.IsEmpty() ? MenuHint
-		: Interaction && Interaction->IsHolding() ? MoveHint
+		: InvalidReason ? *InvalidReason
+		: bAimedAtInvalid && !InvalidHint.IsEmpty() ? InvalidHint
+		: bHolding ? MoveHint
 		: Interaction && Interaction->IsChoosingItem() ? CombineHint
 		: IdleHint;
 
@@ -349,6 +362,12 @@ void UHadesInventoryScreen::RefreshActions()
 
 void UHadesInventoryScreen::HandleHeldItemChanged()
 {
+	RefreshActionHint();
+}
+
+void UHadesInventoryScreen::HandleTargetChanged()
+{
+	// Over a spot the moved item can't go, the hint says why.
 	RefreshActionHint();
 }
 

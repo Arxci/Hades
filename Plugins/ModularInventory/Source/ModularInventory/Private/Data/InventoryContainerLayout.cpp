@@ -9,6 +9,18 @@ int32 UInventoryContainerLayout::FindSlot(const FGameplayTag& SlotTag) const
 	return Slots.IndexOfByPredicate([&SlotTag](const FInventorySlotDefinition& Slot) { return Slot.Tag == SlotTag; });
 }
 
+bool UInventoryContainerLayout::IsCellUsable(const FIntPoint& Cell) const
+{
+	const bool bInside = Type == EInventoryContainerType::Grid && Cell.X >= 0 && Cell.Y >= 0 && Cell.X < GridSize.X && Cell.Y < GridSize.Y;
+	return bInside && (UsableCells <= 0 || Cell.Y * GridSize.X + Cell.X < UsableCells);
+}
+
+int32 UInventoryContainerLayout::GetUsableCellCount() const
+{
+	const int32 CellCount = GetCellCount();
+	return UsableCells > 0 ? FMath::Min(UsableCells, CellCount) : CellCount;
+}
+
 #if WITH_EDITOR
 #include "InventoryValidation.h"
 
@@ -22,6 +34,13 @@ EDataValidationResult UInventoryContainerLayout::IsDataValid(FDataValidationCont
 	{
 		Context.AddError(LOCTEXT("InvalidGridSize", "Grid Size must be at least 1x1."));
 		Result = EDataValidationResult::Invalid;
+	}
+
+	// More usable cells than the grid has does no harm, but probably means the grid was meant to be bigger.
+	if (Type == EInventoryContainerType::Grid && UsableCells > GetCellCount())
+	{
+		Context.AddWarning(FText::Format(LOCTEXT("TooManyUsableCells", "Usable Cells is {0}, but a {1} x {2} grid only has {3} cells, so none are locked."),
+			FText::AsNumber(UsableCells), FText::AsNumber(GridSize.X), FText::AsNumber(GridSize.Y), FText::AsNumber(GetCellCount())));
 	}
 
 	if (Type == EInventoryContainerType::Slots)

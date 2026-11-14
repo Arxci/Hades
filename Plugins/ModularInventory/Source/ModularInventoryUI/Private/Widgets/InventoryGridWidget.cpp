@@ -1,5 +1,6 @@
 #include "Widgets/InventoryGridWidget.h"
 
+#include "Animation/WidgetAnimation.h"
 #include "CommonInputSubsystem.h"
 #include "CommonInputTypeEnum.h"
 #include "Components/CanvasPanel.h"
@@ -32,6 +33,79 @@ UInventoryGridWidget::UInventoryGridWidget(const FObjectInitializer& ObjectIniti
 	, ItemPool(*this)
 {
 }
+
+template <typename WidgetT>
+WidgetT* UInventoryGridWidget::MakeChildWidget(TSubclassOf<WidgetT> Class)
+{
+	WidgetT* Widget = CreateWidget<WidgetT>(this, Class);
+#if WITH_EDITOR
+	if (Widget && IsDesignTime())
+	{
+		Widget->SetDesignerFlags(GetDesignerFlags());
+	}
+#endif
+	return Widget;
+}
+
+void UInventoryGridWidget::NativePreConstruct()
+{
+	Super::NativePreConstruct();
+
+#if WITH_EDITOR
+	if (IsDesignTime())
+	{
+		RefreshDesignerPreview();
+	}
+#endif
+}
+
+#if WITH_EDITOR
+void UInventoryGridWidget::RefreshDesignerPreview()
+{
+	if (!GridCanvas)
+	{
+		return;
+	}
+
+	if (!PreviewLayout)
+	{
+		PreviewLayout = NewObject<UInventoryContainerLayout>(this, NAME_None, RF_Transient);
+	}
+	PreviewLayout->Type = EInventoryContainerType::Grid;
+	PreviewLayout->GridSize = PreviewGridSize.ComponentMax(FIntPoint::ZeroValue);
+	PreviewLayout->UsableCells = PreviewUsableCells;
+
+	// Built afresh each time, as the designer runs this again whenever the widget changes.
+	ClearCells();
+	RebuildCells(PreviewGridSize.X > 0 && PreviewGridSize.Y > 0 ? PreviewLayout.Get() : nullptr);
+
+	for (UInventoryItemWidget* ItemWidget : PreviewItemWidgets)
+	{
+		if (ItemWidget)
+		{
+			ItemWidget->RemoveFromParent();
+		}
+	}
+	PreviewItemWidgets.Reset();
+
+	for (const FInventoryItemPreview& Entry : PreviewItems)
+	{
+		const UInventoryItemDefinition* Definition = Entry.Definition;
+		UInventoryItemWidget* ItemWidget = Definition && ItemClass ? MakeChildWidget<UInventoryItemWidget>(ItemClass) : nullptr;
+		if (!ItemWidget)
+		{
+			continue;
+		}
+
+		UCanvasPanelSlot* ItemSlot = GridCanvas->AddChildToCanvas(ItemWidget);
+		ItemSlot->SetPosition(GetCellPosition(Entry.Cell));
+		ItemSlot->SetSize(GetCellsExtent(Definition->GetSize(Entry.bRotated)));
+		ItemSlot->SetZOrder(Entry.bLit ? LitItemZOrder : ItemZOrder);
+		ItemWidget->ShowPreview(Entry, CellSize, CellGap);
+		PreviewItemWidgets.Add(ItemWidget);
+	}
+}
+#endif
 
 void UInventoryGridWidget::NativeConstruct()
 {
@@ -115,6 +189,18 @@ UInventoryUISubsystem* UInventoryGridWidget::GetInteraction() const
 	return UInventoryUISubsystem::Get(GetOwningLocalPlayer());
 }
 
+// Layout
+FVector2D UInventoryGridWidget::GetCellPosition(const FIntPoint& Cell) const
+{
+	return FVector2D(Cell) * (CellSize + CellGap);
+}
+
+FVector2D UInventoryGridWidget::GetCellsExtent(const FIntPoint& NumCells) const
+{
+	const FVector2D Count(NumCells.ComponentMax(FIntPoint::ZeroValue));
+	return (Count * (CellSize + CellGap) - FVector2D(CellGap)).ComponentMax(FVector2D::ZeroVector);
+}
+
 // Building
 void UInventoryGridWidget::Refresh()
 {
@@ -122,33 +208,40 @@ void UInventoryGridWidget::Refresh()
 	const UInventoryContainerLayout* Layout = Inventory ? Inventory->GetContainerLayout(Container) : nullptr;
 	const bool bIsGrid = Layout && Layout->Type == EInventoryContainerType::Grid;
 
-	RebuildCells(bIsGrid ? Layout->GridSize : FIntPoint::ZeroValue);
+	RebuildCells(bIsGrid ? Layout : nullptr);
 	RefreshItems();
 	RefreshPreview();
 	OnContainerRefreshed();
 }
 
-void UInventoryGridWidget::RebuildCells(FIntPoint GridSize)
+void UInventoryGridWidget::ClearCells()
 {
+	for (UInventoryCellWidget* Cell : Cells)
+	{
+		if (Cell)
+		{
+			Cell->RemoveFromParent();
+		}
+	}
+	Cells.Reset();
+	BuiltGridSize = FIntPoint::ZeroValue;
+}
+
+void UInventoryGridWidget::RebuildCells(const UInventoryContainerLayout* Layout)
+{
+	const FIntPoint GridSize = Layout ? Layout->GridSize : FIntPoint::ZeroValue;
 	if (GridSize != BuiltGridSize)
 	{
-		for (UInventoryCellWidget* Cell : Cells)
-		{
-			if (Cell)
-			{
-				Cell->RemoveFromParent();
-			}
-		}
-		Cells.Reset();
+		ClearCells();
 		BuiltGridSize = GridSize;
 
 		for (int32 Y = 0; CellClass && Y < GridSize.Y; ++Y)
 		{
 			for (int32 X = 0; X < GridSize.X; ++X)
 			{
-				UInventoryCellWidget* Cell = CreateWidget<UInventoryCellWidget>(this, CellClass);
+				UInventoryCellWidget* Cell = MakeChildWidget<UInventoryCellWidget>(CellClass);
 				UCanvasPanelSlot* CellSlot = GridCanvas->AddChildToCanvas(Cell);
-				CellSlot->SetPosition(FVector2D(X, Y) * CellSize);
+				CellSlot->SetPosition(GetCellPosition(FIntPoint(X, Y)));
 				CellSlot->SetSize(FVector2D(CellSize));
 				CellSlot->SetZOrder(CellZOrder);
 				Cells.Add(Cell);
@@ -163,10 +256,12 @@ void UInventoryGridWidget::RebuildCells(FIntPoint GridSize)
 		}
 	}
 
-	// The same cells serve whichever container of this size is shown.
+	// The same cells serve whichever container of this size is shown, and its layout decides which of them are locked.
 	for (int32 Index = 0; Index < Cells.Num(); ++Index)
 	{
-		Cells[Index]->SetPlacement(Container, FInventoryPlacement::AtCell(FIntPoint(Index % GridSize.X, Index / GridSize.X)));
+		const FIntPoint Cell(Index % GridSize.X, Index / GridSize.X);
+		Cells[Index]->SetPlacement(Container, FInventoryPlacement::AtCell(Cell));
+		Cells[Index]->SetLocked(Layout && !Layout->IsCellUsable(Cell));
 	}
 	RefreshGridLines();
 }
@@ -185,7 +280,7 @@ void UInventoryGridWidget::RefreshGridLines()
 
 	if (!GridLines)
 	{
-		GridLines = CreateWidget<UInventoryGridLinesWidget>(this, UInventoryGridLinesWidget::StaticClass());
+		GridLines = MakeChildWidget<UInventoryGridLinesWidget>(UInventoryGridLinesWidget::StaticClass());
 		if (!GridLines)
 		{
 			return;
@@ -194,13 +289,13 @@ void UInventoryGridWidget::RefreshGridLines()
 		GridCanvas->AddChildToCanvas(GridLines)->SetZOrder(LinesZOrder);
 	}
 
-	// Sized to the cells, like them, so it never changes the grid's size; the overhang is drawn past its edges.
+	// Sized to the cells, like them, so it never changes the grid's size; the overhang and the outer half gaps are drawn past its edges.
 	GridLines->SetLineStyle(GridLineColor, GridLineThickness, GridLineOverhang);
-	GridLines->SetGrid(BuiltGridSize, CellSize);
+	GridLines->SetGrid(BuiltGridSize, CellSize, CellGap);
 	if (UCanvasPanelSlot* LinesSlot = Cast<UCanvasPanelSlot>(GridLines->Slot))
 	{
 		LinesSlot->SetPosition(FVector2D::ZeroVector);
-		LinesSlot->SetSize(FVector2D(BuiltGridSize) * CellSize);
+		LinesSlot->SetSize(GetCellsExtent(BuiltGridSize));
 	}
 }
 
@@ -229,11 +324,11 @@ void UInventoryGridWidget::RefreshItems()
 		const FInventoryPlacement Placement = Inventory->GetItemPlacement(Item);
 		if (UCanvasPanelSlot* ItemSlot = Cast<UCanvasPanelSlot>(ItemWidget->Slot))
 		{
-			ItemSlot->SetPosition(FVector2D(Placement.Cell) * CellSize);
-			ItemSlot->SetSize(FVector2D(Inventory->GetItemSize(Item)) * CellSize);
+			ItemSlot->SetPosition(GetCellPosition(Placement.Cell));
+			ItemSlot->SetSize(GetCellsExtent(Inventory->GetItemSize(Item)));
 		}
 		ItemWidget->SetItem(Item);
-		ItemWidget->SetCellLayout(CellSize, Placement.bRotated);
+		ItemWidget->SetCellLayout(CellSize, CellGap, Placement.bRotated);
 	}
 
 	for (auto It = ItemWidgets.CreateIterator(); It; ++It)
@@ -307,7 +402,7 @@ void UInventoryGridWidget::RefreshPreview()
 	}
 	if (bShowHeld)
 	{
-		HeldVisual->ShowHeldItem(CellSize);
+		HeldVisual->ShowHeldItem(CellSize, CellGap);
 	}
 
 	// Sizes change at once. Positions glide there in Native Tick, except when the preview first shows.
@@ -315,10 +410,10 @@ void UInventoryGridWidget::RefreshPreview()
 	{
 		if (UCanvasPanelSlot* PreviewSlot = Widget && bAimedHere ? Cast<UCanvasPanelSlot>(Widget->Slot) : nullptr)
 		{
-			PreviewSlot->SetSize(FVector2D(End - Start) * CellSize);
+			PreviewSlot->SetSize(GetCellsExtent(End - Start));
 		}
 	}
-	PreviewTargetPosition = FVector2D(Start) * CellSize;
+	PreviewTargetPosition = GetCellPosition(Start);
 	if (!bAimedHere)
 	{
 		PreviewPosition.Reset();
@@ -332,8 +427,33 @@ void UInventoryGridWidget::RefreshPreview()
 	const EInventoryDropAction Action = bAimedHere ? Interaction->GetTargetAction() : EInventoryDropAction::None;
 	if (Action != PreviewAction)
 	{
+		const bool bWasShown = PreviewAction != EInventoryDropAction::None;
+		const bool bShown = Action != EInventoryDropAction::None;
 		PreviewAction = Action;
+		RefreshPreviewLoop();
 		OnPlacementPreviewChanged(Action);
+		if (bShown != bWasShown)
+		{
+			OnPlacementPreviewShown(bShown);
+		}
+	}
+}
+
+void UInventoryGridWidget::RefreshPreviewLoop()
+{
+	if (!PlacementPreviewLoop)
+	{
+		return;
+	}
+
+	if (!PreviewLoopActions.Contains(PreviewAction))
+	{
+		StopAnimation(PlacementPreviewLoop);
+	}
+	else if (bRestartPreviewLoop || !IsAnimationPlaying(PlacementPreviewLoop))
+	{
+		// No end to the loops, and what it animates goes back as it was when it stops.
+		PlayAnimation(PlacementPreviewLoop, 0.0f, 0, PreviewLoopPlayMode, PreviewLoopSpeed, true);
 	}
 }
 
@@ -366,12 +486,6 @@ void UInventoryGridWidget::HandleTargetChanged()
 
 void UInventoryGridWidget::HandleHeldItemChanged()
 {
-	// Turning the held item moves its center off the cursor, so aim again from where the mouse is.
-	UInventoryUISubsystem* Interaction = GetInteraction();
-	if (DragScreenPosition.IsSet() && Interaction && Interaction->IsHolding())
-	{
-		Interaction->SetTarget(Container, GetDropPlacement(DragScreenPosition.GetValue()));
-	}
 	RefreshPreview();
 }
 
@@ -404,13 +518,10 @@ bool UInventoryGridWidget::IsDropOperation(const UDragDropOperation* Operation) 
 
 FInventoryPlacement UInventoryGridWidget::GetDropPlacement(const FVector2D& ScreenPosition) const
 {
+	// Cells are a cell and a gap apart. Shifted by half a gap, each cell starts in the middle of the gap before it.
 	const FVector2D Local = GridCanvas->GetCachedGeometry().AbsoluteToLocal(ScreenPosition);
-	const UInventoryUISubsystem* Interaction = GetInteraction();
-	const FIntPoint HeldSize = Interaction ? Interaction->GetHeldSize() : FIntPoint(1, 1);
-
-	// The dragged item is centered on the cursor.
-	const FIntPoint TopLeft(FMath::RoundToInt32(Local.X / CellSize - HeldSize.X * 0.5), FMath::RoundToInt32(Local.Y / CellSize - HeldSize.Y * 0.5));
-	return FInventoryPlacement::AtCell(TopLeft);
+	const FVector2D InCells = (Local + FVector2D(CellGap * 0.5)) / (CellSize + CellGap);
+	return FInventoryPlacement::AtCell(FIntPoint(FMath::FloorToInt32(InCells.X), FMath::FloorToInt32(InCells.Y)));
 }
 
 bool UInventoryGridWidget::NativeOnDragOver(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
@@ -420,9 +531,7 @@ bool UInventoryGridWidget::NativeOnDragOver(const FGeometry& InGeometry, const F
 		return Super::NativeOnDragOver(InGeometry, InDragDropEvent, InOperation);
 	}
 
-	const FVector2D ScreenPosition = InDragDropEvent.GetScreenSpacePosition();
-	DragScreenPosition = ScreenPosition;
-	GetInteraction()->SetTarget(Container, GetDropPlacement(ScreenPosition));
+	GetInteraction()->SetTarget(Container, GetDropPlacement(InDragDropEvent.GetScreenSpacePosition()));
 	return true;
 }
 
@@ -430,7 +539,6 @@ void UInventoryGridWidget::NativeOnDragLeave(const FDragDropEvent& InDragDropEve
 {
 	Super::NativeOnDragLeave(InDragDropEvent, InOperation);
 
-	DragScreenPosition.Reset();
 	UInventoryUISubsystem* Interaction = GetInteraction();
 	if (Interaction && !Interaction->GetStyle().bSnapHeldItem && Interaction->GetTargetContainer() == Container)
 	{
@@ -445,6 +553,5 @@ bool UInventoryGridWidget::NativeOnDrop(const FGeometry& InGeometry, const FDrag
 		return Super::NativeOnDrop(InGeometry, InDragDropEvent, InOperation);
 	}
 
-	DragScreenPosition.Reset();
 	return GetInteraction()->PlaceHeld(Container, GetDropPlacement(InDragDropEvent.GetScreenSpacePosition()));
 }

@@ -1,5 +1,6 @@
 ﻿#include "HadesMenuButton.h"
 
+#include "CommonTextBlock.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
 #include "Engine/Texture2D.h"
@@ -74,5 +75,12 @@ void UHadesMenuButton::SetLit(bool bInLit)
 	if (Icon)
 	{
 		Icon->SetColorAndOpacity(bInLit ? LitIconColor : IconColor);
+	}
+
+	const TSubclassOf<UCommonTextStyle> LabelLook = bInLit ? LitLabelStyle : LabelStyle;
+	UCommonTextBlock* CommonLabel = Cast<UCommonTextBlock>(Label);
+	if (CommonLabel && LabelLook)
+	{
+		CommonLabel->SetStyle(LabelLook);
 	}
 }

@@ -6,7 +6,9 @@
 
 #include "InventoryUITypes.generated.h"
 
+class UInventoryItemDefinition;
 class UInventorySubsystem;
+class USoundBase;
 
 
 UENUM(BlueprintType)
@@ -20,6 +22,80 @@ enum class EInventoryDropAction : uint8
 	/** Trades places with the item already there. */
 	Swap,
 	Invalid
+};
+
+
+/** What just happened to the held item, such as for a sound or an effect. */
+UENUM(BlueprintType)
+enum class EInventoryHoldEvent : uint8
+{
+	PickedUp,
+	/** Put down on a free spot. */
+	Placed,
+	/** Put down onto a stack it joined. */
+	Merged,
+	/** Put down in another item's place, trading places with it. */
+	Swapped,
+	/** Putting it down was tried where it can't go. */
+	Refused,
+	Rotated,
+	Split,
+	/** Put back where it was, without being placed. */
+	PutBack
+};
+
+
+/** Sounds an inventory screen plays for what happens to items. Each is optional. Buttons, such as cells and menu rows, play their own from their styles. */
+USTRUCT(BlueprintType)
+struct MODULARINVENTORYUI_API FInventoryUISounds
+{
+	GENERATED_BODY()
+
+	/** The mouse or gamepad focus reaches an item, while nothing is held. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	TObjectPtr<USoundBase> HoverItem;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	TObjectPtr<USoundBase> PickUp;
+
+	/** Put down on a free spot. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	TObjectPtr<USoundBase> PutDown;
+
+	/** Put down onto a stack it joined. None plays Put Down. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	TObjectPtr<USoundBase> Merge;
+
+	/** Traded places with another item. None plays Put Down. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	TObjectPtr<USoundBase> Swap;
+
+	/** Putting it down was tried where it can't go. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	TObjectPtr<USoundBase> CantPlace;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	TObjectPtr<USoundBase> Rotate;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	TObjectPtr<USoundBase> Split;
+
+	/** Put back where it was, such as with Back. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	TObjectPtr<USoundBase> PutBack;
+};
+
+
+/** What a right-click does while an item is held. */
+UENUM(BlueprintType)
+enum class EInventoryHeldRightClick : uint8
+{
+	/** The same as with nothing held: on an item, it asks for that item's menu, which puts the held item back. */
+	AsUsual,
+	/** Puts the held item back where it was. */
+	PutBack,
+	/** Turns the held item. */
+	Rotate
 };
 
 
@@ -58,6 +134,21 @@ struct MODULARINVENTORYUI_API FInventoryInteractionStyle
 	/** Shift and a click on an item moves it to the other side, such as from a chest into the pockets, while there's a transfer container. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
 	bool bShiftClickTransfers = false;
+
+	/**
+	 * The item the mouse was last over stays hovered, lit and in details panels, until the mouse reaches another item. Moving across
+	 * gaps and empty cells, or off the inventory, doesn't end it. Off, it ends as the mouse leaves the item. Gamepad focus always decides.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	bool bKeepLastHoveredItem = false;
+
+	/** What a right-click does while an item is held. Put Back and Rotate work anywhere on an inventory screen. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	EInventoryHeldRightClick HeldRightClick = EInventoryHeldRightClick::AsUsual;
+
+	/** The mouse wheel turns the held item, anywhere on an inventory screen except over something that scrolls. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	bool bWheelRotatesHeld = false;
 };
 
 
@@ -126,6 +217,41 @@ struct MODULARINVENTORYUI_API FInventoryStatDisplay
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (ClampMin = "0", ClampMax = "3"))
 	int32 FractionalDigits = 0;
+};
+
+
+/**
+ * An item drawn without being in any inventory, such as on a grid's designer preview: a definition, and how it looks.
+ * Item widgets show it with Show Preview.
+ */
+USTRUCT(BlueprintType)
+struct MODULARINVENTORYUI_API FInventoryItemPreview
+{
+	GENERATED_BODY()
+
+	/** The value of Tag, from Tag Values or else the definition's. False when neither has it. */
+	bool FindTagValue(const FGameplayTag& Tag, float& OutValue) const;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	TObjectPtr<UInventoryItemDefinition> Definition;
+
+	/** Its top-left cell on a grid. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (ClampMin = "0"))
+	FIntPoint Cell = FIntPoint::ZeroValue;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	bool bRotated = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (ClampMin = "1"))
+	int32 Count = 1;
+
+	/** Drawn as if hovered, to see the highlight. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	bool bLit = false;
+
+	/** Tag values it has instead of its definition's, such as durability for a meter. A game's item widget can read others for its own marks. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (TitleProperty = "Tag"))
+	TArray<FInventoryTagValue> TagValues;
 };
 
 

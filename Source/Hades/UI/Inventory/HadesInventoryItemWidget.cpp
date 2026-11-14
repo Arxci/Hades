@@ -4,8 +4,11 @@
 #include "Components/TextBlock.h"
 #include "GameFramework/Pawn.h"
 
+#include "Hades/HadesGameplayTags.h"
 #include "Hades/Inventory/HadesInventoryComponent.h"
 #include "Hades/Inventory/HadesQuickSlotComponent.h"
+
+#include "Data/InventoryItemDefinition.h"
 
 namespace
 {
@@ -43,43 +46,43 @@ void UHadesInventoryItemWidget::NativeOnItemChanged()
 {
 	Super::NativeOnItemChanged();
 
-	if (Background)
-	{
-		Background->SetVisibility(IsDragVisual() ? ESlateVisibility::Hidden : ESlateVisibility::HitTestInvisible);
-	}
 	RefreshMarks();
-	RefreshLit();
-}
-
-void UHadesInventoryItemWidget::NativeOnInteractionChanged()
-{
-	Super::NativeOnInteractionChanged();
-
-	RefreshLit();
-}
-
-void UHadesInventoryItemWidget::RefreshLit()
-{
-	// The stand-in for a moved item is never hovered or selected itself, so it never lights up.
-	const bool bLit = !IsDragVisual() && (IsItemHovered() || IsSelected());
-	const ESlateVisibility NewVisiblity = bLit ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden;
-	if (LitBackground)
-	{
-		LitBackground->SetVisibility(NewVisiblity);
-	}
-	if (Glow)
-	{
-		Glow->SetVisibility(NewVisiblity);
-	}
 }
 
 void UHadesInventoryItemWidget::RefreshMarks()
 {
+	// From the player's inventory, or from a designer preview's tag values, as the designer has no inventory.
 	const UHadesQuickSlotComponent* Component = QuickSlots.Get();
-	const int32 SlotIndex = Component ? Component->FindSlot(GetItem()) : INDEX_NONE;
+	const UHadesInventoryComponent* Inventory = Cast<UHadesInventoryComponent>(UInventoryComponent::FindInventoryComponent(GetOwningPlayerPawn()));
+	int32 SlotIndex = INDEX_NONE;
+	bool bInHand = false;
+	int32 Capacity = 0;
+	int32 Rounds = 0;
+	if (const FInventoryItemPreview* ShownPreview = GetPreview())
+	{
+		float Value = 0.0f;
+		SlotIndex = ShownPreview->FindTagValue(HadesGameplayTags::UI_Preview_Shortcut, Value) && Value >= 1.0f ? FMath::RoundToInt32(Value) - 1 : INDEX_NONE;
+		bInHand = ShownPreview->FindTagValue(HadesGameplayTags::UI_Preview_InHand, Value) && Value > 0.0f;
+
+		const FHadesGun* Gun = ShownPreview->Definition ? ShownPreview->Definition->FindFragment<FHadesGun>() : nullptr;
+		Capacity = Gun ? Gun->Capacity : 0;
+		if (Gun)
+		{
+			Rounds = ShownPreview->FindTagValue(HadesGameplayTags::Item_Stat_Rounds, Value) ? FMath::RoundToInt32(Value) : FMath::Min(Gun->StartingRounds, Gun->Capacity);
+		}
+	}
+	else
+	{
+		SlotIndex = Component ? Component->FindSlot(GetItem()) : INDEX_NONE;
+		bInHand = Inventory && Inventory->IsInHand(GetItem());
+		Capacity = Inventory ? Inventory->GetCapacity(GetItem()) : 0;
+		Rounds = Capacity > 0 ? Inventory->GetLoadedRounds(GetItem()) : 0;
+	}
+
 	if (ShortcutKey)
 	{
-		if (SlotIndex != INDEX_NONE)
+		// The key's icon comes from the quick slot component, which a preview has none of.
+		if (SlotIndex != INDEX_NONE && Component)
 		{
 			ShortcutKey->SetInputAction(Component->GetSlotKey(SlotIndex));
 		}
@@ -88,25 +91,26 @@ void UHadesInventoryItemWidget::RefreshMarks()
 			ShortcutKey->SetInputActions(TArray<FDataTableRowHandle>());
 		}
 	}
+	if (ShortcutNumberText)
+	{
+		ShortcutNumberText->SetText(SlotIndex != INDEX_NONE ? FText::AsNumber(SlotIndex + 1) : FText::GetEmpty());
+		ShortcutNumberText->SetVisibility(SlotIndex != INDEX_NONE ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
 	if (ShortcutMarker)
 	{
 		ShortcutMarker->SetVisibility(SlotIndex != INDEX_NONE ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
 
-	const UHadesInventoryComponent* Inventory = Cast<UHadesInventoryComponent>(UInventoryComponent::FindInventoryComponent(GetOwningPlayerPawn()));
 	if (EquippedMarker)
 	{
-		const bool bInHand = Inventory && Inventory->IsInHand(GetItem());
 		EquippedMarker->SetVisibility(bInHand ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
 
 	if (AmmoText)
 	{
-		const int32 Capacity = Inventory ? Inventory->GetCapacity(GetItem()) : 0;
 		AmmoText->SetVisibility(Capacity > 0 ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 		if (Capacity > 0)
 		{
-			const int32 Rounds = Inventory->GetLoadedRounds(GetItem());
 			AmmoText->SetText(FText::AsNumber(Rounds));
 			AmmoText->SetColorAndOpacity(AmmoColors.Pick(Rounds, Capacity));
 		}

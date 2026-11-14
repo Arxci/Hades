@@ -2,12 +2,13 @@
 
 #include "Blueprint/WidgetBlueprintLibrary.h"
 
-void UInventoryGridLinesWidget::SetGrid(FIntPoint InGridSize, float InCellSize)
+void UInventoryGridLinesWidget::SetGrid(FIntPoint InGridSize, float InCellSize, float InCellGap)
 {
-	if (GridSize != InGridSize || CellSize != InCellSize)
+	if (GridSize != InGridSize || CellSize != InCellSize || CellGap != InCellGap)
 	{
 		GridSize = InGridSize;
 		CellSize = InCellSize;
+		CellGap = InCellGap;
 		Invalidate(EInvalidateWidgetReason::Paint);
 	}
 }
@@ -29,21 +30,25 @@ int32 UInventoryGridLinesWidget::NativePaint(const FPaintArgs& Args, const FGeom
 		return MaxLayer;
 	}
 
-	// The overhang is drawn outside this widget's own bounds, so the grid's layout never makes room for it.
+	// The overhang, and the half gap around the outer cells, are drawn outside this widget's own bounds, so the grid's layout never makes room for them.
 	FPaintContext Context(AllottedGeometry, MyCullingRect, OutDrawElements, MaxLayer, InWidgetStyle, bParentEnabled);
 	const FLinearColor Tint = Color * InWidgetStyle.GetColorAndOpacityTint();
-	const double Width = GridSize.X * CellSize;
-	const double Height = GridSize.Y * CellSize;
+	const double Pitch = CellSize + CellGap;
+	const double HalfGap = CellGap * 0.5;
+	const double Left = -HalfGap - Overhang;
+	const double Top = -HalfGap - Overhang;
+	const double Right = GridSize.X * Pitch - HalfGap + Overhang;
+	const double Bottom = GridSize.Y * Pitch - HalfGap + Overhang;
 
 	for (int32 Column = 0; Column <= GridSize.X; ++Column)
 	{
-		const double X = Column * CellSize;
-		UWidgetBlueprintLibrary::DrawLine(Context, FVector2D(X, -Overhang), FVector2D(X, Height + Overhang), Tint, true, Thickness);
+		const double X = Column * Pitch - HalfGap;
+		UWidgetBlueprintLibrary::DrawLine(Context, FVector2D(X, Top), FVector2D(X, Bottom), Tint, true, Thickness);
 	}
 	for (int32 Row = 0; Row <= GridSize.Y; ++Row)
 	{
-		const double Y = Row * CellSize;
-		UWidgetBlueprintLibrary::DrawLine(Context, FVector2D(-Overhang, Y), FVector2D(Width + Overhang, Y), Tint, true, Thickness);
+		const double Y = Row * Pitch - HalfGap;
+		UWidgetBlueprintLibrary::DrawLine(Context, FVector2D(Left, Y), FVector2D(Right, Y), Tint, true, Thickness);
 	}
 	return FMath::Max(MaxLayer, Context.MaxLayer);
 }

@@ -21,6 +21,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInventoryUIHoveredItemChangedSignat
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInventoryUIItemSignature, FInventoryItemHandle, Item);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FInventoryUIItemChosenSignature, FInventoryItemHandle, Item, FInventoryItemHandle, Chosen);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FInventoryUIDroppedOutsideSignature, FInventoryItemHandle, Item, int32, Count);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInventoryUIHoldEventSignature, EInventoryHoldEvent, Event);
 
 
 /**
@@ -49,7 +50,11 @@ public:
 	FInventoryInteractionStyle GetStyle() const { return Style; }
 
 	// Holding
-	/** Count 0 holds the whole stack. Items that can't split are always held whole. */
+	/**
+	 * Count 0 holds the whole stack. Items that can't split are always held whole.
+	 * In a grid, the item is held by the cell aimed at, when that's one of its cells, such as the focused one or the one under the cursor;
+	 * otherwise by its middle cell. That cell then goes wherever the held item is aimed.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	bool BeginHold(FInventoryItemHandle Item, int32 Count = 0);
 
@@ -60,7 +65,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	void CancelHold();
 
-	/** Turns the held item, if Can Rotate Held. */
+	/** Turns the held item a quarter turn around the cell it's held by, if Can Rotate Held. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	void RotateHeld();
 
@@ -95,7 +100,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory UI")
 	FIntPoint GetHeldSize() const;
 
-	// Placing
+	// Placing. In a grid, a placement passed in is the cell aimed at: the held item goes with the cell it's held by there.
 	/** Puts the held item there: on a free spot, onto a stack it can join, or by swapping with an item of its size there. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	bool PlaceHeld(FInventoryContainerHandle Container, const FInventoryPlacement& Placement);
@@ -130,6 +135,13 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Inventory UI")
 	EInventoryDropAction GetTargetAction() const { return TargetAction; }
+
+	/**
+	 * Why the held item can't go where it's aimed, such as Occupied for another item in the way, Out Of Bounds for locked cells, or
+	 * Rejected for a container that won't take it. None unless Get Target Action is Invalid.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Inventory UI")
+	EInventoryError GetTargetError() const { return TargetError; }
 
 	/** Where the held item would land at the target. In a grid: exactly on an item of its size there, or moved in from the edge so it fits. */
 	UFUNCTION(BlueprintPure, Category = "Inventory UI")
@@ -203,6 +215,13 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Inventory UI")
 	FInventoryUIHeldItemChangedSignature OnHeldItemChanged;
 
+	/**
+	 * What just happened to the held item, for sounds and effects: picked up, placed, merged, swapped, refused, rotated, split or put back.
+	 * After On Held Item Changed. Holds that end because the item went away, was transferred, or the screen closed send nothing.
+	 */
+	UPROPERTY(BlueprintAssignable, Category = "Inventory UI")
+	FInventoryUIHoldEventSignature OnHoldEvent;
+
 	/** The target moved, or what placing there would do changed. */
 	UPROPERTY(BlueprintAssignable, Category = "Inventory UI")
 	FInventoryUITargetChangedSignature OnTargetChanged;
@@ -233,7 +252,18 @@ private:
 	TArray<FInventoryContainerHandle> GetTransferTargets(FInventoryItemHandle Item) const;
 	FInventoryPlacement FitInGrid(FInventoryContainerHandle Container, const FInventoryPlacement& Placement) const;
 	EInventoryDropAction ResolvePlacement(FInventoryContainerHandle Container, const FInventoryPlacement& Placement, bool bApply);
+
+	/** Also says why, when it's Invalid. */
+	EInventoryDropAction ResolvePlacement(FInventoryContainerHandle Container, const FInventoryPlacement& Placement, bool bApply, EInventoryError& OutError);
+	/** Picked Up is announced unless bAnnounce is false, such as for the item a swap picks up. */
+	bool BeginHoldBy(FInventoryItemHandle Item, int32 Count, const FIntPoint& GrabCell, bool bAnnounce = true);
+
+	/** Cancel Hold without Put Back, for holds that end some other way. */
+	void EndHold();
 	void SetHeld(FInventoryItemHandle Item, int32 Count, bool bRotated);
+
+	/** Which of the item's cells is aimed at, from its top-left. Unset unless the target is one of its cells in a grid. */
+	TOptional<FIntPoint> GetTargetedCell(FInventoryItemHandle Item) const;
 	void RefreshTarget();
 	void HandleRegistryChanged(const FInventoryChangeSet& Changes);
 
@@ -243,9 +273,13 @@ private:
 	int32 HeldCount = 0;
 	bool bHeldRotated = false;
 
+	/** The cell of the held item it's held by, from its top-left as it's turned now. In a grid, it goes on the cell aimed at. */
+	FIntPoint HeldGrabCell = FIntPoint::ZeroValue;
+
 	FInventoryContainerHandle TargetContainer;
 	FInventoryPlacement TargetPlacement;
 	EInventoryDropAction TargetAction = EInventoryDropAction::None;
+	EInventoryError TargetError = EInventoryError::None;
 
 	FInventoryItemHandle HoveredItem;
 	FInventoryItemHandle SelectedItem;

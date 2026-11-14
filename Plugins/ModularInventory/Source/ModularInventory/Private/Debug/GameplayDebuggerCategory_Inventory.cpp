@@ -116,7 +116,9 @@ void FGameplayDebuggerCategory_Inventory::AddContainerLines(const FInventoryRegi
 	}
 
 	const UInventoryContainerLayout& Layout = *Record->Layout;
-	const FString Size = Layout.Type == EInventoryContainerType::Grid ? FString::Printf(TEXT(" %dx%d"), Layout.GridSize.X, Layout.GridSize.Y) : FString();
+	const bool bHasLockedCells = Layout.GetUsableCellCount() < Layout.GetCellCount();
+	const FString Locked = bHasLockedCells ? FString::Printf(TEXT(" (%d usable)"), Layout.GetUsableCellCount()) : FString();
+	const FString Size = Layout.Type == EInventoryContainerType::Grid ? FString::Printf(TEXT(" %dx%d%s"), Layout.GridSize.X, Layout.GridSize.Y, *Locked) : FString();
 	AddLine(FString::Printf(TEXT("%s{green}%s{white} %s%s%s  %d items"), *Indent(Depth), *Record->Tag.ToString(), DescribeType(Layout.Type), *Size,
 		Layout.bEquipment ? TEXT(" equipment") : TEXT(""), Record->Items.Num()));
 
@@ -144,7 +146,7 @@ void FGameplayDebuggerCategory_Inventory::AddGridLines(const FInventoryRegistry&
 	const FInventoryContainerRecord& Record = *Registry.FindContainer(Container);
 	const FIntPoint GridSize = Record.Layout->GridSize;
 
-	// Each item gets a letter in the order it's listed above.
+	// Each item gets a letter in the order it's listed above. Empty cells are dots, and locked cells hashes.
 	TMap<int32, TCHAR> Letters;
 	for (int32 Index = 0; Index < Record.Items.Num(); ++Index)
 	{
@@ -159,7 +161,8 @@ void FGameplayDebuggerCategory_Inventory::AddGridLines(const FInventoryRegistry&
 			const int32 CellIndex = Y * GridSize.X + X;
 			const int32 Occupant = Record.Cells.IsValidIndex(CellIndex) ? Record.Cells[CellIndex] : INDEX_NONE;
 			const TCHAR* Letter = Letters.Find(Occupant);
-			Row.AppendChar(Letter ? *Letter : TEXT('.'));
+			const TCHAR EmptyChar = Record.Layout->IsCellUsable(FIntPoint(X, Y)) ? TEXT('.') : TEXT('#');
+			Row.AppendChar(Letter ? *Letter : EmptyChar);
 		}
 		AddLine(Row + TEXT("{white}"));
 	}

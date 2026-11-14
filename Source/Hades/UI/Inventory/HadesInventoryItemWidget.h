@@ -32,7 +32,7 @@ struct FHadesAmmoColors
 
 /**
  * An item in the inventory with the game's marks on it: the key of the shortcut it's on, whether it's in hand, and a gun's rounds.
- * It also lights up while hovered, focused or selected: Lit Background and Glow show.
+ * The plugin's item widget lights it up and hides its Background on the stand-in for a moved item.
  */
 UCLASS(Abstract)
 class HADES_API UHadesInventoryItemWidget : public UInventoryItemWidget
@@ -47,12 +47,15 @@ protected:
 
 	//~ Begin UInventoryItemWidget Interface
 	virtual void NativeOnItemChanged() override;
-	virtual void NativeOnInteractionChanged() override;
 	//~ End UInventoryItemWidget Interface
 
 	/** The icon of the shortcut's key, from the quick slot component's Slot Keys. It hides itself while the item has no shortcut. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
 	TObjectPtr<UCommonActionWidget> ShortcutKey;
+
+	/** The number of the shortcut the item is on, 1 for the first, such as on a badge in the corner. Collapsed while it has none. */
+	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> ShortcutNumberText;
 
 	/** Shown only while the item is on a shortcut, such as the corner Shortcut Key sits on. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
@@ -62,21 +65,9 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> CountPatch;
 
-	/** Shown over Background while the item is hovered, focused or selected, such as while its menu is open. */
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
-	TObjectPtr<UWidget> LitBackground;
-
-	/** Shown while the item is lit, as Lit Background. Give it a negative padding so it reaches past the item. */
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
-	TObjectPtr<UWidget> Glow;
-
 	/** Shown while the item is in hand. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> EquippedMarker;
-
-	/** Covers the item's cells, so a big item reads as one. Hidden on the stand-in for an item being moved, so what's under it shows through. */
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
-	TObjectPtr<UWidget> Background;
 
 	/** A gun's rounds, colored by how full it is. Collapsed for anything else. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
@@ -88,8 +79,6 @@ protected:
 private:
 	UFUNCTION()
 	void RefreshMarks();
-
-	void RefreshLit();
 
 	TWeakObjectPtr<UHadesQuickSlotComponent> QuickSlots;
 };

@@ -53,8 +53,10 @@ namespace
 			return nullptr;
 		}
 
+		// An item made from a texture keeps it as its own icon.
 		Cosmetics->WorldMesh = Mesh;
 		Cosmetics->Icon = Icon;
+		Cosmetics->bGenerateIcon = Icon == nullptr;
 		Cosmetics->PostEditChange();
 
 		Item->DisplayName = FText::FromString(FName::NameToDisplayString(BaseName, false));

@@ -105,6 +105,14 @@ void InventoryIcons::GenerateIcons(TConstArrayView<UInventoryItemDefinition*> It
 		}
 		SlowTask.EnterProgressFrame(1.0f, FText::FromString(Item->GetName()));
 
+		if (Item->Cosmetics && !Item->Cosmetics->bGenerateIcon)
+		{
+			Log.Info()
+				->AddToken(FUObjectToken::Create(Item))
+				->AddToken(FTextToken::Create(LOCTEXT("OwnIcon", "uses its own icon: Generate Icon is off on its cosmetics.")));
+			continue;
+		}
+
 		UTexture2D* Icon = LoadIcon(*Item);
 		if (Icon && !FindRecipe(Icon))
 		{
@@ -158,12 +166,17 @@ bool InventoryIcons::SaveIcon(UInventoryItemDefinition& Item, const FInventoryIc
 		return false;
 	}
 
+	// Saving a generated icon, such as from the Icon Studio for an item that had its own, makes it a generated one from then on.
 	UTexture2D* Icon = LoadIcon(Item);
-	if (!FindRecipe(Icon))
+	if (!FindRecipe(Icon) || !Cosmetics->bGenerateIcon)
 	{
-		Icon = CreateIconTexture(Item, *Cosmetics);
 		Cosmetics->Modify();
-		Cosmetics->Icon = Icon;
+		if (!FindRecipe(Icon))
+		{
+			Icon = CreateIconTexture(Item, *Cosmetics);
+			Cosmetics->Icon = Icon;
+		}
+		Cosmetics->bGenerateIcon = true;
 		Cosmetics->PostEditChange();
 	}
 

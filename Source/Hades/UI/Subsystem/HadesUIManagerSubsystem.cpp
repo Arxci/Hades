@@ -11,10 +11,23 @@
 
 namespace
 {
-	/** By default Space presses the focused button like Enter, which would beat any UI action bound to it. */
+	/**
+	 * By default Space presses the focused button like Enter, which would beat any UI action bound to it, and Tab and the arrow keys
+	 * move focus. Hades doesn't do keyboard navigation: Tab is a game key, such as for the inventory, and only the gamepad's D-pad and
+	 * stick move focus.
+	 */
 	class FHadesNavigationConfig : public FNavigationConfig
 	{
 	public:
+		FHadesNavigationConfig()
+		{
+			bTabNavigation = false;
+			for (const FKey& ArrowKey : { EKeys::Left, EKeys::Right, EKeys::Up, EKeys::Down })
+			{
+				KeyEventRules.Remove(ArrowKey);
+			}
+		}
+
 		virtual EUINavigationAction GetNavigationActionFromKey(const FKeyEvent& InKeyEvent) const override
 		{
 			return InKeyEvent.GetKey() == EKeys::SpaceBar ? EUINavigationAction::Invalid : FNavigationConfig::GetNavigationActionFromKey(InKeyEvent);

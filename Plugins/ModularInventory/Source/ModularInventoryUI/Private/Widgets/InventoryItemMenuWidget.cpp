@@ -11,6 +11,8 @@
 #include "Framework/Application/SlateUser.h"
 #include "Input/CommonUIInputTypes.h"
 #include "InputCoreTypes.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
 
 #include "InventoryUISubsystem.h"
 #include "Widgets/InventoryDragDropOperation.h"
@@ -52,7 +54,6 @@ void UInventoryItemMenuWidget::SetItem(FInventoryItemHandle InItem, UInventoryIt
 	Item = InItem;
 	AnchorWidget = ItemWidget;
 	Anchor = FindAnchor(ItemWidget);
-	PlaceBeside(Anchor);
 
 	if (UInventoryUISubsystem* Interaction = GetInteraction())
 	{
@@ -62,6 +63,19 @@ void UInventoryItemMenuWidget::SetItem(FInventoryItemHandle InItem, UInventoryIt
 
 	NativeOnItemChanged();
 	OnItemChanged();
+
+	// Last, so the menu is measured with the buttons this item shows.
+	PlaceBeside(Anchor);
+}
+
+void UInventoryItemMenuWidget::NativeOnActivated()
+{
+	Super::NativeOnActivated();
+
+	if (OpenSound)
+	{
+		UGameplayStatics::PlaySound2D(this, OpenSound);
+	}
 }
 
 void UInventoryItemMenuWidget::NativeOnDeactivated()
@@ -71,6 +85,10 @@ void UInventoryItemMenuWidget::NativeOnDeactivated()
 	if (Interaction && !Interaction->IsChoosingItem() && Interaction->GetSelectedItem() == Item)
 	{
 		Interaction->SetSelectedItem(FInventoryItemHandle());
+	}
+	if (CloseSound)
+	{
+		UGameplayStatics::PlaySound2D(this, CloseSound);
 	}
 
 	Super::NativeOnDeactivated();
@@ -128,7 +146,7 @@ FBox2D UInventoryItemMenuWidget::FindAnchor(const UInventoryItemWidget* ItemWidg
 void UInventoryItemMenuWidget::PlaceBeside(const FBox2D& Box)
 {
 	UCanvasPanelSlot* PanelSlot = MenuPanel ? Cast<UCanvasPanelSlot>(MenuPanel->Slot) : nullptr;
-	if (!PanelSlot)
+	if (!PanelSlot || Placement == EInventoryMenuPlacement::AsDesigned)
 	{
 		return;
 	}
@@ -139,14 +157,37 @@ void UInventoryItemMenuWidget::PlaceBeside(const FBox2D& Box)
 	USlateBlueprintLibrary::AbsoluteToViewport(this, Box.Min, PixelPosition, Min);
 	USlateBlueprintLibrary::AbsoluteToViewport(this, Box.Max, PixelPosition, Max);
 
-	// Toward the middle of the screen, so it never runs off an edge.
 	const FVector2D ScreenSize = UWidgetLayoutLibrary::GetViewportSize(this) / UWidgetLayoutLibrary::GetViewportScale(this);
-	const bool bOpenLeft = Max.X > ScreenSize.X * 0.5;
-	const bool bOpenUp = Max.Y > ScreenSize.Y * 0.5;
-
 	PanelSlot->SetAutoSize(true);
-	PanelSlot->SetAlignment(FVector2D(bOpenLeft ? 1.0 : 0.0, bOpenUp ? 1.0 : 0.0));
-	PanelSlot->SetPosition(FVector2D(bOpenLeft ? Min.X : Max.X, bOpenUp ? Max.Y : Min.Y));
+
+	if (Placement == EInventoryMenuPlacement::TowardCenter)
+	{
+		// Toward the middle of the screen, so it never runs off an edge.
+		const bool bOpenLeft = Max.X > ScreenSize.X * 0.5;
+		const bool bOpenUp = Max.Y > ScreenSize.Y * 0.5;
+		PanelSlot->SetAlignment(FVector2D(bOpenLeft ? 1.0 : 0.0, bOpenUp ? 1.0 : 0.0));
+		PanelSlot->SetPosition(FVector2D(bOpenLeft ? Min.X - MenuGap : Max.X + MenuGap, bOpenUp ? Max.Y : Min.Y));
+		return;
+	}
+
+	// On the side asked for, unless only the other side has room. Level with the item's top, moved up as far as it takes to stay on screen.
+	const FVector2D MenuSize = MeasureMenuPanel();
+	const bool bRoomRight = Max.X + MenuGap + MenuSize.X <= ScreenSize.X;
+	const bool bRoomLeft = Min.X - MenuGap - MenuSize.X >= 0.0;
+	const bool bOpenLeft = Placement == EInventoryMenuPlacement::Left ? bRoomLeft || !bRoomRight : !bRoomRight && bRoomLeft;
+	const double Left = bOpenLeft ? Min.X - MenuGap - MenuSize.X : Max.X + MenuGap;
+	const FVector2D LastPosition = (ScreenSize - MenuSize).ComponentMax(FVector2D::ZeroVector);
+
+	PanelSlot->SetAlignment(FVector2D::ZeroVector);
+	PanelSlot->SetPosition(FVector2D(FMath::Clamp(Left, 0.0, LastPosition.X), FMath::Clamp(Min.Y, 0.0, LastPosition.Y)));
+}
+
+FVector2D UInventoryItemMenuWidget::MeasureMenuPanel()
+{
+	// Pushed menus are placed before they're first drawn, so their size isn't known yet without a layout pass.
+	TakeWidget();
+	ForceLayoutPrepass();
+	return MenuPanel ? MenuPanel->GetDesiredSize() : FVector2D::ZeroVector;
 }
 
 // Mouse

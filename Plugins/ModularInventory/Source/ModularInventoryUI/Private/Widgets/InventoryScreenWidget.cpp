@@ -2,6 +2,9 @@
 
 #include "Blueprint/WidgetTree.h"
 #include "Input/CommonUIInputTypes.h"
+#include "InputCoreTypes.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
 
 #include "InventoryUISubsystem.h"
 #include "Widgets/InventoryCellWidget.h"
@@ -41,6 +44,41 @@ namespace
 			else if (const UUserWidget* Group = Cast<UUserWidget>(Widget))
 			{
 				Found = FindItemWidgetIn(*Group, Item);
+			}
+		});
+		return Found;
+	}
+
+	/** The grid cell, list entry or slot for a spot in a container, among Parent's widgets. */
+	UInventoryCellWidget* FindCellWidgetIn(const UUserWidget& Parent, FInventoryContainerHandle Container, const FInventoryPlacement& Placement)
+	{
+		UInventoryCellWidget* Found = nullptr;
+		if (!Parent.WidgetTree)
+		{
+			return nullptr;
+		}
+
+		Parent.WidgetTree->ForEachWidget([&Found, Container, &Placement](UWidget* Widget)
+		{
+			if (Found)
+			{
+				return;
+			}
+			if (const UInventoryGridWidget* Grid = Cast<UInventoryGridWidget>(Widget))
+			{
+				Found = Grid->GetContainer() == Container ? Grid->GetCellWidget(Placement.Cell) : nullptr;
+			}
+			else if (const UInventoryListWidget* List = Cast<UInventoryListWidget>(Widget))
+			{
+				Found = List->GetContainer() == Container ? List->GetEntryWidget(Placement.Index) : nullptr;
+			}
+			else if (UInventoryCellWidget* Cell = Cast<UInventoryCellWidget>(Widget))
+			{
+				Found = Cell->GetContainer() == Container && Cell->GetPlacement() == Placement ? Cell : nullptr;
+			}
+			else if (const UUserWidget* Group = Cast<UUserWidget>(Widget))
+			{
+				Found = FindCellWidgetIn(*Group, Container, Placement);
 			}
 		});
 		return Found;
@@ -87,6 +125,38 @@ void UInventoryScreenWidget::NativeOnInitialized()
 	}
 }
 
+// Mouse: clicks and the wheel that nothing on the screen used come here.
+FReply UInventoryScreenWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	UInventoryUISubsystem* Interaction = GetInteraction();
+	if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton && Interaction && Interaction->IsHolding())
+	{
+		switch (Interaction->GetStyle().HeldRightClick)
+		{
+		case EInventoryHeldRightClick::PutBack:
+			Interaction->CancelHold();
+			return FReply::Handled();
+		case EInventoryHeldRightClick::Rotate:
+			Interaction->RotateHeld();
+			return FReply::Handled();
+		case EInventoryHeldRightClick::AsUsual:
+			break;
+		}
+	}
+	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+}
+
+FReply UInventoryScreenWidget::NativeOnMouseWheel(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	UInventoryUISubsystem* Interaction = GetInteraction();
+	if (Interaction && Interaction->IsHolding() && Interaction->GetStyle().bWheelRotatesHeld && InMouseEvent.GetWheelDelta() != 0.0f)
+	{
+		Interaction->RotateHeld();
+		return FReply::Handled();
+	}
+	return Super::NativeOnMouseWheel(InGeometry, InMouseEvent);
+}
+
 void UInventoryScreenWidget::NativeOnActivated()
 {
 	Super::NativeOnActivated();
@@ -101,6 +171,7 @@ void UInventoryScreenWidget::NativeOnActivated()
 		Interaction->OnHeldItemChanged.AddUniqueDynamic(this, &ThisClass::HandleInteractionChanged);
 		Interaction->OnTargetChanged.AddUniqueDynamic(this, &ThisClass::HandleInteractionChanged);
 		Interaction->OnHoveredItemChanged.AddUniqueDynamic(this, &ThisClass::HandleHoveredItemChanged);
+		Interaction->OnHoldEvent.AddUniqueDynamic(this, &ThisClass::HandleHoldEvent);
 	}
 	RefreshActions();
 }
@@ -113,14 +184,16 @@ void UInventoryScreenWidget::NativeOnDeactivated()
 		Interaction->OnHeldItemChanged.RemoveDynamic(this, &ThisClass::HandleInteractionChanged);
 		Interaction->OnTargetChanged.RemoveDynamic(this, &ThisClass::HandleInteractionChanged);
 		Interaction->OnHoveredItemChanged.RemoveDynamic(this, &ThisClass::HandleHoveredItemChanged);
+		Interaction->OnHoldEvent.RemoveDynamic(this, &ThisClass::HandleHoldEvent);
 
 		Interaction->ClearInteraction();
 		Interaction->SetStyle(PreviousStyle);
 		Interaction->SetTransferContainer(FInventoryContainerHandle());
 	}
 
-	// Common UI reuses closed screens, so a chest's container mustn't carry over to the next opening.
+	// Common UI reuses closed screens, so a chest's container and the last cell aimed at mustn't carry over to the next opening.
 	TransferContainer = FInventoryContainerHandle();
+	LastAimedContainer = FInventoryContainerHandle();
 
 	Super::NativeOnDeactivated();
 }
@@ -146,6 +219,13 @@ UWidget* UInventoryScreenWidget::NativeGetDesiredFocusTarget() const
 	if (UWidget* Target = Super::NativeGetDesiredFocusTarget())
 	{
 		return Target;
+	}
+
+	// Back where the player was, such as on the item whose menu just closed, rather than on the first cell.
+	UInventoryCellWidget* LastAimed = LastAimedContainer.IsSet() ? FindCellWidgetIn(*this, LastAimedContainer, LastAimedPlacement) : nullptr;
+	if (LastAimed && LastAimed->IsVisible() && LastAimed->GetIsEnabled())
+	{
+		return LastAimed;
 	}
 	return MainGrid ? MainGrid->GetCellWidget(FIntPoint::ZeroValue) : nullptr;
 }
@@ -196,12 +276,49 @@ void UInventoryScreenWidget::SetActionBound(FUIActionBindingHandle& Handle, cons
 
 void UInventoryScreenWidget::HandleInteractionChanged()
 {
+	const UInventoryUISubsystem* Interaction = GetInteraction();
+	if (Interaction && Interaction->GetTargetContainer().IsSet())
+	{
+		LastAimedContainer = Interaction->GetTargetContainer();
+		LastAimedPlacement = Interaction->GetTargetPlacement();
+	}
 	RefreshActions();
 }
 
 void UInventoryScreenWidget::HandleHoveredItemChanged(FInventoryItemHandle Item)
 {
+	// Not while an item is held: items aren't drawn hovered then.
+	const UInventoryUISubsystem* Interaction = GetInteraction();
+	if (Item.IsSet() && Interaction && !Interaction->IsHolding())
+	{
+		PlayInventorySound(Sounds.HoverItem);
+	}
 	RefreshActions();
+}
+
+// Sounds
+void UInventoryScreenWidget::HandleHoldEvent(EInventoryHoldEvent Event)
+{
+	switch (Event)
+	{
+	case EInventoryHoldEvent::PickedUp: PlayInventorySound(Sounds.PickUp); break;
+	case EInventoryHoldEvent::Placed:   PlayInventorySound(Sounds.PutDown); break;
+	case EInventoryHoldEvent::Merged:   PlayInventorySound(Sounds.Merge ? Sounds.Merge : Sounds.PutDown); break;
+	case EInventoryHoldEvent::Swapped:  PlayInventorySound(Sounds.Swap ? Sounds.Swap : Sounds.PutDown); break;
+	case EInventoryHoldEvent::Refused:  PlayInventorySound(Sounds.CantPlace); break;
+	case EInventoryHoldEvent::Rotated:  PlayInventorySound(Sounds.Rotate); break;
+	case EInventoryHoldEvent::Split:    PlayInventorySound(Sounds.Split); break;
+	case EInventoryHoldEvent::PutBack:  PlayInventorySound(Sounds.PutBack); break;
+	}
+}
+
+void UInventoryScreenWidget::PlayInventorySound(USoundBase* Sound) const
+{
+	// A UI sound, so it plays while the game is paused behind the screen.
+	if (Sound)
+	{
+		UGameplayStatics::PlaySound2D(this, Sound);
+	}
 }
 
 void UInventoryScreenWidget::HandleMoveAction()

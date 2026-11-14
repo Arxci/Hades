@@ -6,6 +6,8 @@
 #include "Components/OverlaySlot.h"
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
+#include "Engine/LocalPlayer.h"
+#include "Framework/Application/SlateUser.h"
 #include "InputCoreTypes.h"
 
 #include "InventorySubsystem.h"
@@ -22,6 +24,7 @@ void UInventoryItemWidget::NativeOnInitialized()
 	{
 		DefaultTagTint = TagTint->GetColorAndOpacity();
 	}
+	DefaultRenderOpacity = GetRenderOpacity();
 }
 
 void UInventoryItemWidget::NativeConstruct()
@@ -57,36 +60,67 @@ void UInventoryItemWidget::NativeDestruct()
 void UInventoryItemWidget::SetItem(FInventoryItemHandle InItem)
 {
 	Item = InItem;
+	bPreview = false;
 	Refresh();
 
 	// Pooled widgets get reused for other items, which may or may not be held or hovered.
 	RefreshInteraction();
 }
 
-void UInventoryItemWidget::SetCellLayout(float InCellSize, bool bInRotated)
+void UInventoryItemWidget::SetCellLayout(float InCellSize, float InCellGap, bool bInRotated)
 {
 	CellSize = InCellSize;
+	CellGap = FMath::Max(0.0f, InCellGap);
 	bRotated = bInRotated;
 	ApplyCellLayout();
 }
 
-void UInventoryItemWidget::ShowHeldItem(float InCellSize)
+void UInventoryItemWidget::ShowHeldItem(float InCellSize, float InCellGap)
 {
 	const UInventoryUISubsystem* Interaction = GetInteraction();
 	bDragVisual = true;
 	SetVisibility(ESlateVisibility::HitTestInvisible);
-	SetCellLayout(InCellSize, Interaction && Interaction->IsHeldRotated());
+	SetCellLayout(InCellSize, InCellGap, Interaction && Interaction->IsHeldRotated());
 	SetItem(Interaction ? Interaction->GetHeldItem() : FInventoryItemHandle());
+}
+
+void UInventoryItemWidget::ShowPreview(const FInventoryItemPreview& InPreview, float InCellSize, float InCellGap)
+{
+	Item = FInventoryItemHandle();
+	Preview = InPreview;
+	bPreview = true;
+	CellSize = InCellSize;
+	CellGap = FMath::Max(0.0f, InCellGap);
+	bRotated = InPreview.bRotated;
+	Refresh();
+
+	if (bHovered != Preview.bLit)
+	{
+		bHovered = Preview.bLit;
+		OnHoveredChanged(bHovered);
+		RefreshLit();
+		NativeOnInteractionChanged();
+	}
 }
 
 const UInventoryItemDefinition* UInventoryItemWidget::GetDefinition() const
 {
+	if (bPreview)
+	{
+		return Preview.Definition;
+	}
+
 	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
 	return Inventory ? Inventory->GetItemDefinition(Item) : nullptr;
 }
 
 int32 UInventoryItemWidget::GetCount() const
 {
+	if (bPreview)
+	{
+		return Preview.Count;
+	}
+
 	const UInventoryUISubsystem* Interaction = GetInteraction();
 	if (bDragVisual && Interaction)
 	{
@@ -108,11 +142,15 @@ void UInventoryItemWidget::Refresh()
 	}
 	ApplyCellLayout();
 
+	if (NameText)
+	{
+		NameText->SetText(Definition ? Definition->DisplayName : FText::GetEmpty());
+	}
 	if (CountText)
 	{
 		const int32 Count = GetCount();
 		const bool bShowCount = Definition && Definition->GetMaxStackSize() > 1 && (Count > 1 || !bHideCountOfOne);
-		CountText->SetText(FText::AsNumber(Count));
+		CountText->SetText(FText::FormatNamed(CountFormat, TEXT("Count"), FText::AsNumber(Count)));
 		CountText->SetVisibility(bShowCount ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
 	if (DetailsTooltip)
@@ -121,6 +159,7 @@ void UInventoryItemWidget::Refresh()
 	}
 	RefreshMeter();
 	RefreshTagTint();
+	RefreshLit();
 
 	NativeOnItemChanged();
 	OnItemChanged();
@@ -133,9 +172,28 @@ void UInventoryItemWidget::RefreshMeter()
 		return;
 	}
 
-	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
-	float Fraction = 0.0f;
-	const bool bHasMeter = Inventory && Inventory->GetTagValueFraction(Item, MeterTag, MeterMaxTag, Fraction);
+	// A preview has no item, so its values come from the preview and its definition, filled the way the registry fills an item's.
+	float Value = 0.0f;
+	float Max = 0.0f;
+	bool bHasValue = false;
+	if (const FInventoryItemPreview* Shown = GetPreview())
+	{
+		bHasValue = Shown->FindTagValue(MeterTag, Value);
+		const FInventoryTagValue* Starting = Shown->Definition ? Shown->Definition->FindTagValue(MeterTag) : nullptr;
+		if (!MeterMaxTag.IsValid() || !Shown->FindTagValue(MeterMaxTag, Max))
+		{
+			Max = Starting ? Starting->Value : 0.0f;
+		}
+	}
+	else if (const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this))
+	{
+		bHasValue = Inventory->HasTagValue(Item, MeterTag);
+		Value = Inventory->GetTagValue(Item, MeterTag);
+		Max = Inventory->GetTagValueMax(Item, MeterTag, MeterMaxTag);
+	}
+
+	const bool bHasMeter = bHasValue && Max > 0.0f;
+	const float Fraction = bHasMeter ? FMath::Clamp(Value / Max, 0.0f, 1.0f) : 0.0f;
 	const bool bShown = bHasMeter && !(bHideFullMeter && Fraction >= 1.0f);
 	const ESlateVisibility MeterVisibility = bShown ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed;
 
@@ -154,8 +212,8 @@ void UInventoryItemWidget::RefreshMeter()
 		if (bShown)
 		{
 			MeterText->SetText(FText::FormatNamed(MeterFormat,
-				TEXT("Value"), FText::AsNumber(FMath::RoundToInt(Inventory->GetTagValue(Item, MeterTag))),
-				TEXT("Max"), FText::AsNumber(FMath::RoundToInt(Inventory->GetTagValueMax(Item, MeterTag, MeterMaxTag))),
+				TEXT("Value"), FText::AsNumber(FMath::RoundToInt(Value)),
+				TEXT("Max"), FText::AsNumber(FMath::RoundToInt(Max)),
 				TEXT("Percent"), FText::AsNumber(FMath::RoundToInt(Fraction * 100.0f))));
 		}
 		if (bTintMeter)
@@ -172,8 +230,16 @@ void UInventoryItemWidget::RefreshTagTint()
 		return;
 	}
 
-	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
-	const FLinearColor* TagColor = Inventory ? InventoryWidgets::FindTagColor(TagColors, Inventory->GetEffectiveItemTags(Item)) : nullptr;
+	FGameplayTagContainer ItemTags;
+	if (const FInventoryItemPreview* Shown = GetPreview())
+	{
+		ItemTags = Shown->Definition ? Shown->Definition->Tags : FGameplayTagContainer();
+	}
+	else if (const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this))
+	{
+		ItemTags = Inventory->GetEffectiveItemTags(Item);
+	}
+	const FLinearColor* TagColor = InventoryWidgets::FindTagColor(TagColors, ItemTags);
 	TagTint->SetColorAndOpacity(TagColor ? *TagColor : DefaultTagTint);
 }
 
@@ -185,10 +251,14 @@ void UInventoryItemWidget::ApplyCellLayout()
 		return;
 	}
 
-	// Laid out unturned and turned around its center, so it covers the item's turned cells.
-	const FVector2D Unturned = FVector2D(Definition->Size) * CellSize;
-	const FVector2D Turned = bRotated ? FVector2D(Unturned.Y, Unturned.X) : Unturned;
-	const FVector2f Overhang = FVector2f(Turned - Unturned) * 0.5f;
+	// The icon has the shape of the item's cells, so it's never stretched. The widget covers the cells and the gaps between them, turned.
+	const FVector2D NumCells(Definition->Size);
+	const FVector2D Unturned = NumCells * CellSize;
+	const FVector2D Area = Unturned + (NumCells - FVector2D(1.0)).ComponentMax(FVector2D::ZeroVector) * CellGap;
+	const FVector2D TurnedArea = bRotated ? FVector2D(Area.Y, Area.X) : Area;
+
+	// Laid out unturned in the middle of the widget, then turned around its center, so it covers the item's turned cells.
+	const FVector2f Overhang = FVector2f(TurnedArea - Unturned) * 0.5f;
 
 	// The shadow keeps its own Render Transform translation; only the angle is set here.
 	for (UImage* Image : { Icon.Get(), IconShadow.Get() })
@@ -200,7 +270,8 @@ void UInventoryItemWidget::ApplyCellLayout()
 		Image->SetDesiredSizeOverride(Unturned);
 		Image->SetRenderTransformAngle(bRotated ? 90.0f : 0.0f);
 
-		// The Overlay has the turned size and would squeeze the unturned icon into it, so the icon may hang over its edges.
+		// The Overlay has the turned size and would squeeze the unturned icon into it, so the icon may hang over its edges; with gaps,
+		// the padding also centers it on the widget.
 		if (UOverlaySlot* ImageSlot = Cast<UOverlaySlot>(Image->Slot))
 		{
 			ImageSlot->SetPadding(FMargin(Overhang.X, Overhang.Y));
@@ -237,6 +308,12 @@ void UInventoryItemWidget::HandleSelectedItemChanged(FInventoryItemHandle Select
 
 void UInventoryItemWidget::RefreshInteraction()
 {
+	// A preview keeps the look it was given.
+	if (bPreview)
+	{
+		return;
+	}
+
 	// A drag visual stands in for the held item, so it is never held or hovered itself.
 	const UInventoryUISubsystem* Interaction = bDragVisual || !Item.IsSet() ? nullptr : GetInteraction();
 
@@ -246,6 +323,7 @@ void UInventoryItemWidget::RefreshInteraction()
 	{
 		bHeld = bNowHeld;
 		bChanged = true;
+		SetRenderOpacity(bHeld ? DefaultRenderOpacity * HeldOpacity : DefaultRenderOpacity);
 		OnHeldChanged(bHeld);
 	}
 
@@ -268,7 +346,26 @@ void UInventoryItemWidget::RefreshInteraction()
 
 	if (bChanged)
 	{
+		RefreshLit();
 		NativeOnInteractionChanged();
+	}
+}
+
+void UInventoryItemWidget::RefreshLit()
+{
+	if (Background)
+	{
+		Background->SetVisibility(bDragVisual ? ESlateVisibility::Hidden : ESlateVisibility::HitTestInvisible);
+	}
+
+	// Hidden, not collapsed, so nothing moves. A drag visual stands in for the held item, so it's never lit itself.
+	const bool bLit = !bDragVisual && (bHovered || bSelected);
+	for (UWidget* LitPart : { LitBackground.Get(), Glow.Get() })
+	{
+		if (LitPart)
+		{
+			LitPart->SetVisibility(bLit ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+		}
 	}
 }
 
@@ -287,7 +384,13 @@ FReply UInventoryItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
 	}
 	if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton)
 	{
-		if (UInventoryUISubsystem* Interaction = GetInteraction())
+		// While an item is held, the style can make a right-click put it back or turn it instead. The screen does that, anywhere on it.
+		UInventoryUISubsystem* Interaction = GetInteraction();
+		if (Interaction && Interaction->IsHolding() && Interaction->GetStyle().HeldRightClick != EInventoryHeldRightClick::AsUsual)
+		{
+			return FReply::Unhandled();
+		}
+		if (Interaction)
 		{
 			Interaction->RequestContext(Item);
 		}
@@ -318,7 +421,7 @@ FReply UInventoryItemWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, 
 		}
 		else
 		{
-			Interaction->ActivatePlacement(Inventory->GetItemContainer(Item), Inventory->GetItemPlacement(Item));
+			Interaction->ActivatePlacement(Inventory->GetItemContainer(Item), GetPlacementAt(InMouseEvent.GetScreenSpacePosition()));
 		}
 		return FReply::Handled();
 	}
@@ -354,13 +457,14 @@ void UInventoryItemWidget::NativeOnMouseLeave(const FPointerEvent& InMouseEvent)
 	Super::NativeOnMouseLeave(InMouseEvent);
 	bPressed = false;
 
-	// Only the mouse moving off ends the hover. A menu opening over the item doesn't, and on a gamepad the focused cell decides,
-	// not the hidden cursor Common UI moves along with focus.
+	// Only the mouse moving off ends the hover, and with Keep Last Hovered Item, only reaching another item does. A menu opening over
+	// the item doesn't, and on a gamepad the focused cell decides, not the hidden cursor Common UI moves along with focus.
 	const bool bMovedOff = !GetCachedGeometry().IsUnderLocation(InMouseEvent.GetScreenSpacePosition());
 	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
 	const bool bGamepad = Input && Input->GetCurrentInputType() == ECommonInputType::Gamepad;
 	UInventoryUISubsystem* Interaction = GetInteraction();
-	if (!bDragVisual && bMovedOff && !bGamepad && Interaction && Interaction->GetHoveredItem() == Item)
+	const bool bKeepHover = Interaction && Interaction->GetStyle().bKeepLastHoveredItem;
+	if (!bDragVisual && bMovedOff && !bGamepad && !bKeepHover && Interaction && Interaction->GetHoveredItem() == Item)
 	{
 		Interaction->SetHoveredItem(FInventoryItemHandle());
 	}
@@ -377,7 +481,20 @@ void UInventoryItemWidget::NativeOnDragDetected(const FGeometry& InGeometry, con
 UInventoryDragDropOperation* UInventoryItemWidget::BeginDrag(int32 Count)
 {
 	UInventoryUISubsystem* Interaction = GetInteraction();
-	if (bDragVisual || !Interaction || !Interaction->BeginHold(Item, Count))
+	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
+	if (bDragVisual || !Interaction || !Inventory || !Interaction->CanBeginHold(Item))
+	{
+		return nullptr;
+	}
+
+	// Aimed at the cell under the cursor first, so that's the cell it's held by, and it's drawn where it lies until the cursor moves on.
+	const FVector2D CursorPosition = GetCursorPosition();
+	const bool bFromGrid = CellSize > 0.0f;
+	if (bFromGrid)
+	{
+		Interaction->SetTarget(Inventory->GetItemContainer(Item), GetPlacementAt(CursorPosition));
+	}
+	if (!Interaction->BeginHold(Item, Count))
 	{
 		return nullptr;
 	}
@@ -392,9 +509,43 @@ UInventoryDragDropOperation* UInventoryItemWidget::BeginDrag(int32 Count)
 		UInventoryItemWidget* Visual = CreateWidget<UInventoryItemWidget>(GetOwningPlayer(), DragVisualClass ? DragVisualClass.Get() : GetClass());
 		if (Visual)
 		{
-			Visual->ShowHeldItem(CellSize > 0.0f ? CellSize : DragCellSize);
+			Visual->ShowHeldItem(bFromGrid ? CellSize : DragCellSize, bFromGrid ? CellGap : 0.0f);
 			Operation->DefaultDragVisual = Visual;
+		}
+
+		// From a grid, the cursor keeps the spot it grabbed, as the item lands by the cell under it.
+		const FGeometry& Geometry = GetCachedGeometry();
+		const FVector2D Size = Geometry.GetLocalSize();
+		if (bFromGrid && Size.X > 0.0 && Size.Y > 0.0)
+		{
+			const FVector2D Grabbed = Geometry.AbsoluteToLocal(CursorPosition);
+			Operation->Pivot = EDragPivot::TopLeft;
+			Operation->Offset = -(Grabbed / Size).ClampAxes(0.0, 1.0);
 		}
 	}
 	return Operation;
+}
+
+FInventoryPlacement UInventoryItemWidget::GetPlacementAt(const FVector2D& ScreenPosition) const
+{
+	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
+	const FInventoryPlacement ItemPlacement = Inventory ? Inventory->GetItemPlacement(Item) : FInventoryPlacement();
+	const UInventoryItemDefinition* Definition = GetDefinition();
+	if (!Definition || CellSize <= 0.0f || bDragVisual)
+	{
+		return ItemPlacement;
+	}
+
+	const FVector2D Local = GetCachedGeometry().AbsoluteToLocal(ScreenPosition);
+	const FVector2D InCells = (Local + FVector2D(CellGap * 0.5)) / (CellSize + CellGap);
+	const FIntPoint LastCell = Definition->GetSize(bRotated) - FIntPoint(1, 1);
+	const FIntPoint Offset = FIntPoint(FMath::FloorToInt32(InCells.X), FMath::FloorToInt32(InCells.Y)).ComponentMax(FIntPoint::ZeroValue).ComponentMin(LastCell);
+	return FInventoryPlacement::AtCell(ItemPlacement.Cell + Offset);
+}
+
+FVector2D UInventoryItemWidget::GetCursorPosition() const
+{
+	ULocalPlayer* LocalPlayer = GetOwningLocalPlayer();
+	const TSharedPtr<FSlateUser> SlateUser = LocalPlayer ? LocalPlayer->GetSlateUser() : TSharedPtr<FSlateUser>();
+	return SlateUser ? FVector2D(SlateUser->GetCursorPosition()) : FVector2D::ZeroVector;
 }

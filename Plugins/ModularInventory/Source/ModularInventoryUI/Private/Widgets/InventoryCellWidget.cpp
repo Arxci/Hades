@@ -1,5 +1,8 @@
 #include "Widgets/InventoryCellWidget.h"
 
+#include "CommonInputSubsystem.h"
+#include "CommonInputTypeEnum.h"
+
 #include "InventorySubsystem.h"
 #include "InventoryUISubsystem.h"
 
@@ -13,6 +16,16 @@ FInventoryItemHandle UInventoryCellWidget::GetItem() const
 {
 	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
 	return Inventory ? Inventory->GetItemAt(Container, Placement) : FInventoryItemHandle();
+}
+
+void UInventoryCellWidget::SetLocked(bool bInLocked)
+{
+	// Disabled: the style's Disabled brush, no clicks or hover, and gamepad navigation passes over it.
+	if (bInLocked != bLocked)
+	{
+		bLocked = bInLocked;
+		SetIsEnabled(!bLocked);
+	}
 }
 
 UInventoryUISubsystem* UInventoryCellWidget::GetInteraction() const
@@ -30,7 +43,7 @@ void UInventoryCellWidget::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 
-	OnHovered().AddUObject(this, &ThisClass::Aim);
+	OnHovered().AddUObject(this, &ThisClass::HandleHovered);
 	OnUnhovered().AddUObject(this, &ThisClass::StopAiming);
 	OnClicked().AddUObject(this, &ThisClass::HandleClicked);
 	IdleStyle = GetStyle() ? GetStyle()->GetClass() : nullptr;
@@ -44,7 +57,11 @@ void UInventoryCellWidget::NativeConstruct()
 	{
 		Interaction->OnHeldItemChanged.AddUniqueDynamic(this, &ThisClass::HandleHeldItemChanged);
 	}
-	HandleHeldItemChanged();
+	if (UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer()))
+	{
+		Input->OnInputMethodChangedNative.AddUObject(this, &ThisClass::HandleCellInputMethodChanged);
+	}
+	ApplyCellStyle();
 }
 
 void UInventoryCellWidget::NativeDestruct()
@@ -53,24 +70,59 @@ void UInventoryCellWidget::NativeDestruct()
 	{
 		Interaction->OnHeldItemChanged.RemoveDynamic(this, &ThisClass::HandleHeldItemChanged);
 	}
+	if (UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer()))
+	{
+		Input->OnInputMethodChangedNative.RemoveAll(this);
+	}
 
 	Super::NativeDestruct();
 }
 
 void UInventoryCellWidget::HandleHeldItemChanged()
 {
+	ApplyCellStyle();
+}
+
+void UInventoryCellWidget::HandleCellInputMethodChanged(ECommonInputType InputType)
+{
+	ApplyCellStyle();
+}
+
+void UInventoryCellWidget::ApplyCellStyle()
+{
 	const UInventoryUISubsystem* Interaction = GetInteraction();
-	if (HoldingStyle && IdleStyle)
+	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
+	const bool bMouse = Input && Input->GetCurrentInputType() == ECommonInputType::MouseAndKeyboard;
+
+	TSubclassOf<UCommonButtonStyle> Wanted = IdleStyle;
+	if (HoldingStyle && Interaction && Interaction->IsHolding())
 	{
-		SetStyle(Interaction && Interaction->IsHolding() ? HoldingStyle : IdleStyle);
+		Wanted = HoldingStyle;
+	}
+	else if (MouseStyle && bMouse)
+	{
+		Wanted = MouseStyle;
+	}
+
+	const UCommonButtonStyle* Current = GetStyle();
+	if (Wanted && (!Current || Current->GetClass() != Wanted))
+	{
+		SetStyle(Wanted);
 	}
 }
 
 // Gamepads aim by focus. Hover alone isn't enough: an item drawn over a grid cell takes the cell's hover.
+// With a mouse, Common UI still focuses a cell as a screen opens or a menu closes, but the mouse does the aiming.
 void UInventoryCellWidget::NativeOnAddedToFocusPath(const FFocusEvent& InFocusEvent)
 {
 	Super::NativeOnAddedToFocusPath(InFocusEvent);
-	Aim();
+
+	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
+	const bool bGamepad = Input && Input->GetCurrentInputType() == ECommonInputType::Gamepad;
+	if (bGamepad || InFocusEvent.GetCause() == EFocusCause::Navigation)
+	{
+		Aim(true);
+	}
 }
 
 void UInventoryCellWidget::NativeOnRemovedFromFocusPath(const FFocusEvent& InFocusEvent)
@@ -79,12 +131,24 @@ void UInventoryCellWidget::NativeOnRemovedFromFocusPath(const FFocusEvent& InFoc
 	StopAiming();
 }
 
-void UInventoryCellWidget::Aim()
+void UInventoryCellWidget::HandleHovered()
 {
-	if (UInventoryUISubsystem* Interaction = GetInteraction())
+	Aim(false);
+}
+
+void UInventoryCellWidget::Aim(bool bByFocus)
+{
+	UInventoryUISubsystem* Interaction = GetInteraction();
+	if (!Interaction)
 	{
-		Interaction->SetTarget(Container, Placement);
-		Interaction->SetHoveredItem(GetItem());
+		return;
+	}
+
+	Interaction->SetTarget(Container, Placement);
+	const FInventoryItemHandle CellItem = GetItem();
+	if (bByFocus || CellItem.IsSet() || !Interaction->GetStyle().bKeepLastHoveredItem)
+	{
+		Interaction->SetHoveredItem(CellItem);
 	}
 }
 

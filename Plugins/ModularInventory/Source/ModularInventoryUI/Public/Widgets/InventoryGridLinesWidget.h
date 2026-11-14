@@ -8,8 +8,9 @@
 
 
 /**
- * Thin lines along a grid's cell edges, running Overhang pixels past its outer edges. An Inventory Grid Widget with
- * Draw Grid Lines on makes one under its cells and keeps it the size of the grid, so you don't place this yourself.
+ * Thin lines between a grid's cells, running Overhang pixels past its outer edges. With a gap between cells, the lines run
+ * along the middle of the gaps, and half a gap outside the outer cells. An Inventory Grid Widget with Draw Grid Lines on makes
+ * one under its cells and keeps it the size of the grid, so you don't place this yourself.
  */
 UCLASS()
 class MODULARINVENTORYUI_API UInventoryGridLinesWidget : public UUserWidget
@@ -17,7 +18,7 @@ class MODULARINVENTORYUI_API UInventoryGridLinesWidget : public UUserWidget
 	GENERATED_BODY()
 
 public:
-	void SetGrid(FIntPoint InGridSize, float InCellSize);
+	void SetGrid(FIntPoint InGridSize, float InCellSize, float InCellGap);
 	void SetLineStyle(const FLinearColor& InColor, float InThickness, float InOverhang);
 
 protected:
@@ -29,6 +30,7 @@ protected:
 private:
 	FIntPoint GridSize = FIntPoint::ZeroValue;
 	float CellSize = 0.0f;
+	float CellGap = 0.0f;
 	FLinearColor Color = FLinearColor::White;
 	float Thickness = 1.0f;
 	float Overhang = 0.0f;

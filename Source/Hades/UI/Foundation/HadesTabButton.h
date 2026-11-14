@@ -13,8 +13,8 @@ class UTextBlock;
 
 
 /**
- * One tab of a screen's tab bar. The open tab's icon grows, its label shows and Active Frame appears behind or around it.
- * Without an icon the label always shows, so a text-only tab bar works too. The label can change style with the open tab.
+ * One tab of a screen's tab bar. The open tab's icon grows and takes Active Icon Color, its label shows and Active Frame appears
+ * behind or around it. Without an icon the label always shows, so a text-only tab bar works too. The label can change style with the open tab.
  */
 UCLASS(Abstract)
 class HADES_API UHadesTabButton : public UCommonButtonBase
@@ -50,6 +50,14 @@ protected:
 	/** How much the open tab's icon grows. */
 	UPROPERTY(EditAnywhere, Category = "Tab", meta = (ClampMin = "1"))
 	float ActiveIconScale = 1.2f;
+
+	/** The icon's tint on the tabs that aren't open, such as grey. */
+	UPROPERTY(EditAnywhere, Category = "Tab")
+	FLinearColor IconColor = FLinearColor::White;
+
+	/** The icon's tint on the open tab, such as white. */
+	UPROPERTY(EditAnywhere, Category = "Tab")
+	FLinearColor ActiveIconColor = FLinearColor::White;
 
 	/** The label's style on the open tab, such as dark text on a light fill. None keeps the label's own style. Needs a Common Text label. */
 	UPROPERTY(EditAnywhere, Category = "Tab")

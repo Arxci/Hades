@@ -116,13 +116,19 @@ void UInventoryItemDetailsWidget::Refresh()
 		const FLinearColor* TagColor = Inventory ? InventoryWidgets::FindTagColor(TagColors, Inventory->GetEffectiveItemTags(Item)) : nullptr;
 		NameText->SetColorAndOpacity(TagColor ? FSlateColor(*TagColor) : DefaultNameColor);
 	}
+	if (CategoryText)
+	{
+		const FText ItemCategory = Definition ? Definition->Category : FText::GetEmpty();
+		CategoryText->SetText(ItemCategory);
+		CategoryText->SetVisibility(ItemCategory.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
+	}
 	if (DescriptionText)
 	{
 		DescriptionText->SetText(Definition ? Definition->Description : FText::GetEmpty());
 	}
 	if (CountText)
 	{
-		CountText->SetText(FText::AsNumber(Count));
+		CountText->SetText(FText::FormatNamed(CountFormat, TEXT("Count"), FText::AsNumber(Count)));
 		CountText->SetVisibility(Count > 1 ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
 	RefreshStats(Inventory);

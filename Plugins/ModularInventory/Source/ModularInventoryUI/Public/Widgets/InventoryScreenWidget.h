@@ -14,6 +14,7 @@
 class UInventoryGridWidget;
 class UInventoryItemWidget;
 class UInventoryUISubsystem;
+class USoundBase;
 struct FUIInputConfig;
 
 
@@ -22,7 +23,7 @@ struct FUIInputConfig;
  * slots and details in the designer.
  * While it's active, Interaction Style decides how items are handled, and each action is bound only while it can work, so an action
  * bar shows what works now. Back stops choosing an item, or puts back the held item, before it closes the screen, and closing it
- * drops whatever was held or chosen.
+ * drops whatever was held or chosen. A right-click or the mouse wheel anywhere on it can put back or turn the held item, as the style says.
  */
 UCLASS(Abstract, Blueprintable)
 class MODULARINVENTORYUI_API UInventoryScreenWidget : public UCommonActivatableWidget
@@ -50,6 +51,8 @@ public:
 protected:
 	//~ Begin UUserWidget Interface
 	virtual void NativeOnInitialized() override;
+	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+	virtual FReply NativeOnMouseWheel(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	//~ End UUserWidget Interface
 
 	//~ Begin UCommonActivatableWidget Interface
@@ -84,7 +87,14 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Screen")
 	FInventoryInteractionStyle InteractionStyle;
 
-	/** Gamepad focus starts on its first cell, unless Get Desired Focus Target is implemented. */
+	/** Played while this screen is active, for hovering items and for what happens to the held item. Each is optional. */
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Screen")
+	FInventoryUISounds Sounds;
+
+	/**
+	 * Gamepad focus starts on its first cell, unless Get Desired Focus Target is implemented. When focus comes back to the screen, such
+	 * as after an item menu closes, it goes to the cell, entry or slot last aimed at instead, in any of the screen's grids, lists and slots.
+	 */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Screen", meta = (BindWidgetOptional))
 	TObjectPtr<UInventoryGridWidget> MainGrid;
 
@@ -127,6 +137,11 @@ private:
 	UFUNCTION()
 	void HandleHoveredItemChanged(FInventoryItemHandle Item);
 
+	UFUNCTION()
+	void HandleHoldEvent(EInventoryHoldEvent Event);
+
+	void PlayInventorySound(USoundBase* Sound) const;
+
 	void HandleMoveAction();
 	void HandleRotateAction();
 	void HandleSplitAction();
@@ -135,6 +150,10 @@ private:
 
 	FInventoryInteractionStyle PreviousStyle;
 	FInventoryContainerHandle TransferContainer;
+
+	/** The spot last aimed at while the screen is open, which focus goes back to. */
+	FInventoryContainerHandle LastAimedContainer;
+	FInventoryPlacement LastAimedPlacement;
 
 	FUIActionBindingHandle MoveHandle;
 	FUIActionBindingHandle RotateHandle;

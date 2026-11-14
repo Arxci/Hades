@@ -77,6 +77,12 @@ EInventoryError FInventoryRegistry::CanOccupy(int32 ItemIndex, const FInventoryI
 		{
 			for (int32 X = Cell.X; X < Cell.X + Size.X; ++X)
 			{
+				// Cells locked by the layout's Usable Cells are outside the part of the grid that can be used.
+				if (!Layout.IsCellUsable(FIntPoint(X, Y)))
+				{
+					return EInventoryError::OutOfBounds;
+				}
+
 				const int32 Occupant = ContainerRecord->Cells[Y * Layout.GridSize.X + X];
 				if (Occupant != INDEX_NONE && Occupant != ItemIndex)
 				{

@@ -76,6 +76,147 @@ namespace
 		}
 		return Pixels;
 	}
+
+	/** Grows coverage by Radius pixels in every direction, one axis at a time. Outside the image counts as empty. */
+	void Dilate(TArray<float>& Mask, FIntPoint Size, int32 Radius)
+	{
+		if (Radius <= 0)
+		{
+			return;
+		}
+
+		TArray<float> Rows;
+		Rows.SetNumUninitialized(Mask.Num());
+		for (int32 Y = 0; Y < Size.Y; ++Y)
+		{
+			for (int32 X = 0; X < Size.X; ++X)
+			{
+				float Coverage = 0.0f;
+				for (int32 SampleX = FMath::Max(0, X - Radius); SampleX <= FMath::Min(Size.X - 1, X + Radius); ++SampleX)
+				{
+					Coverage = FMath::Max(Coverage, Mask[Y * Size.X + SampleX]);
+				}
+				Rows[Y * Size.X + X] = Coverage;
+			}
+		}
+		for (int32 Y = 0; Y < Size.Y; ++Y)
+		{
+			for (int32 X = 0; X < Size.X; ++X)
+			{
+				float Coverage = 0.0f;
+				for (int32 SampleY = FMath::Max(0, Y - Radius); SampleY <= FMath::Min(Size.Y - 1, Y + Radius); ++SampleY)
+				{
+					Coverage = FMath::Max(Coverage, Rows[SampleY * Size.X + X]);
+				}
+				Mask[Y * Size.X + X] = Coverage;
+			}
+		}
+	}
+
+	/** A Gaussian blur that has faded out Softness pixels from an edge, one axis at a time. Outside the image counts as empty. */
+	void Blur(TArray<float>& Mask, FIntPoint Size, float Softness)
+	{
+		const int32 Radius = FMath::CeilToInt(Softness);
+		const float Sigma = Softness / 3.0f;
+		if (Radius <= 0 || Sigma < 0.1f)
+		{
+			return;
+		}
+
+		TArray<float> Kernel;
+		Kernel.SetNumUninitialized(2 * Radius + 1);
+		float KernelSum = 0.0f;
+		for (int32 Index = -Radius; Index <= Radius; ++Index)
+		{
+			const float Weight = FMath::Exp(-static_cast<float>(Index * Index) / (2.0f * Sigma * Sigma));
+			Kernel[Index + Radius] = Weight;
+			KernelSum += Weight;
+		}
+		for (float& Weight : Kernel)
+		{
+			Weight /= KernelSum;
+		}
+
+		TArray<float> Rows;
+		Rows.SetNumZeroed(Mask.Num());
+		for (int32 Y = 0; Y < Size.Y; ++Y)
+		{
+			for (int32 X = 0; X < Size.X; ++X)
+			{
+				float Coverage = 0.0f;
+				for (int32 SampleX = FMath::Max(0, X - Radius); SampleX <= FMath::Min(Size.X - 1, X + Radius); ++SampleX)
+				{
+					Coverage += Mask[Y * Size.X + SampleX] * Kernel[SampleX - X + Radius];
+				}
+				Rows[Y * Size.X + X] = Coverage;
+			}
+		}
+		for (int32 Y = 0; Y < Size.Y; ++Y)
+		{
+			for (int32 X = 0; X < Size.X; ++X)
+			{
+				float Coverage = 0.0f;
+				for (int32 SampleY = FMath::Max(0, Y - Radius); SampleY <= FMath::Min(Size.Y - 1, Y + Radius); ++SampleY)
+				{
+					Coverage += Rows[SampleY * Size.X + X] * Kernel[SampleY - Y + Radius];
+				}
+				Mask[Y * Size.X + X] = Coverage;
+			}
+		}
+	}
+
+	/** Coverage between pixel centers, blended from the four nearest. Outside the image counts as empty. */
+	float SampleMask(const TArray<float>& Mask, FIntPoint Size, float X, float Y)
+	{
+		const int32 Left = FMath::FloorToInt(X);
+		const int32 Top = FMath::FloorToInt(Y);
+		const float AlongX = X - Left;
+		const float AlongY = Y - Top;
+		auto At = [&Mask, Size](int32 PixelX, int32 PixelY)
+		{
+			const bool bInside = PixelX >= 0 && PixelY >= 0 && PixelX < Size.X && PixelY < Size.Y;
+			return bInside ? Mask[PixelY * Size.X + PixelX] : 0.0f;
+		};
+		return FMath::Lerp(FMath::Lerp(At(Left, Top), At(Left + 1, Top), AlongX), FMath::Lerp(At(Left, Top + 1), At(Left + 1, Top + 1), AlongX), AlongY);
+	}
+
+	/**
+	 * Lays the icon over a soft shadow of itself: its coverage grown by Spread, blurred by Softness, moved by Offset and tinted Color.
+	 * Blended in linear color, as light mixes.
+	 */
+	void AddShadow(TArray<FColor>& Pixels, FIntPoint Size, const UInventoryEditorSettings& Settings)
+	{
+		TArray<float> Mask;
+		Mask.SetNumUninitialized(Pixels.Num());
+		for (int32 Index = 0; Index < Pixels.Num(); ++Index)
+		{
+			Mask[Index] = Pixels[Index].A / 255.0f;
+		}
+		Dilate(Mask, Size, Settings.ShadowSpread);
+		Blur(Mask, Size, Settings.ShadowSoftness);
+
+		const FLinearColor ShadowColor(Settings.ShadowColor.R, Settings.ShadowColor.G, Settings.ShadowColor.B);
+		const float ShadowOpacity = FMath::Clamp(Settings.ShadowColor.A, 0.0f, 1.0f);
+		const FVector2f Offset(Settings.ShadowOffset);
+		for (int32 Y = 0; Y < Size.Y; ++Y)
+		{
+			for (int32 X = 0; X < Size.X; ++X)
+			{
+				FColor& Pixel = Pixels[Y * Size.X + X];
+				const float Shadow = FMath::Clamp(SampleMask(Mask, Size, X - Offset.X, Y - Offset.Y), 0.0f, 1.0f) * ShadowOpacity;
+				const FLinearColor Icon = FLinearColor::FromSRGBColor(Pixel);
+				const float ShadowShown = Shadow * (1.0f - Icon.A);
+				const float Alpha = Icon.A + ShadowShown;
+				if (Alpha <= 0.0f)
+				{
+					continue;
+				}
+
+				const FLinearColor Color = (FLinearColor(Icon.R, Icon.G, Icon.B) * Icon.A + ShadowColor * ShadowShown) / Alpha;
+				Pixel = FLinearColor(Color.R, Color.G, Color.B, Alpha).ToFColor(true);
+			}
+		}
+	}
 }
 
 FInventoryIconRenderer::FInventoryIconRenderer()
@@ -176,12 +317,26 @@ TArray<FColor> FInventoryIconRenderer::Render(const FInventoryIconFraming& Frami
 		Tangent = FMath::Max(SilhouetteSize.X, SilhouetteSize.Y * Aspect) / (2.0 * Distance);
 	}
 
-	Tangent *= (1.0 + 2.0 * Settings->Padding) / FMath::Max(Framing.Zoom, 0.01f);
+	// The margin on each side, as a fraction of the frame: Padding's, and the shadow's reach on the icon's shorter side, so the shadow isn't cut off.
+	const double PaddingMargin = Settings->Padding / (1.0 + 2.0 * Settings->Padding);
+	const double ShadowMargin = Settings->GetShadowReach() / FMath::Min(ImageSize.X, ImageSize.Y);
+	const double Margin = FMath::Min(PaddingMargin + ShadowMargin, 0.4);
+	Tangent *= 1.0 / (1.0 - 2.0 * Margin) / FMath::Max(Framing.Zoom, 0.01f);
 	const FVector2D FrameSize(2.0 * Distance * Tangent, 2.0 * Distance * Tangent / Aspect);
 	Shift -= FVector2D(Framing.Offset.X, -Framing.Offset.Y) * FrameSize;
 
 	const TArray<FLinearColor> FinalPass = Capture(RenderSize, Distance, Shift, Tangent);
-	return FinalPass.IsEmpty() ? TArray<FColor>() : ResolveSamples(FinalPass, ImageSize, Supersampling, Settings->Exposure);
+	if (FinalPass.IsEmpty())
+	{
+		return {};
+	}
+
+	TArray<FColor> Pixels = ResolveSamples(FinalPass, ImageSize, Supersampling, Settings->Exposure);
+	if (Settings->bDrawShadow)
+	{
+		AddShadow(Pixels, ImageSize, *Settings);
+	}
+	return Pixels;
 }
 
 void FInventoryIconRenderer::ApplyLighting()

@@ -16,6 +16,7 @@
 namespace
 {
 	TWeakPtr<SNotificationItem> RegisterPrompt;
+	FDelegateHandle FilesLoadedHandle;
 
 	bool IsItemTypeRegistered()
 	{
@@ -25,17 +26,28 @@ namespace
 		});
 	}
 
-	/** Items saved before item definitions had a fixed Asset Manager type keep their old ID until they're saved again. */
-	int32 ResaveItemsWithOldIds()
+	TArray<FAssetData> FindItems()
 	{
 		TArray<FAssetData> Items;
 		IAssetRegistry::GetChecked().GetAssetsByClass(UInventoryItemDefinition::StaticClass()->GetClassPathName(), Items, true);
+		return Items;
+	}
 
-		TArray<UPackage*> Packages;
-		for (const FAssetData& Item : Items)
+	/** Items saved before item definitions had a fixed Asset Manager type keep their old ID until they're saved again. */
+	TArray<FAssetData> FindItemsWithOldIds()
+	{
+		return FindItems().FilterByPredicate([](const FAssetData& Item)
 		{
-			const UObject* Asset = Item.GetPrimaryAssetId().PrimaryAssetType != UInventoryItemDefinition::AssetType ? Item.GetAsset() : nullptr;
-			if (Asset)
+			return Item.GetPrimaryAssetId().PrimaryAssetType != UInventoryItemDefinition::AssetType;
+		});
+	}
+
+	int32 ResaveItemsWithOldIds()
+	{
+		TArray<UPackage*> Packages;
+		for (const FAssetData& Item : FindItemsWithOldIds())
+		{
+			if (const UObject* Asset = Item.GetAsset())
 			{
 				Packages.Add(Asset->GetPackage());
 			}
@@ -83,18 +95,59 @@ void InventoryAssetManagerSetup::RegisterItems()
 		FText::AsNumber(ResavedCount)));
 }
 
-void InventoryAssetManagerSetup::PromptIfUnregistered()
+void InventoryAssetManagerSetup::PromptIfNeeded()
 {
-	if (IsItemTypeRegistered() || RegisterPrompt.IsValid() || IsRunningCommandlet() || FApp::IsUnattended())
+	if (RegisterPrompt.IsValid() || IsRunningCommandlet() || FApp::IsUnattended())
 	{
 		return;
 	}
 
-	FNotificationInfo Info(LOCTEXT("RegisterPrompt", "Inventory items aren't registered with the Asset Manager yet, so they can't be found by ID, given with Inventory.Give or saved by ID."));
+	const bool bRegistered = IsItemTypeRegistered();
+	const int32 OldIdCount = bRegistered ? FindItemsWithOldIds().Num() : 0;
+	if (bRegistered && OldIdCount == 0)
+	{
+		return;
+	}
+
+	FNotificationInfo Info(bRegistered
+		? FText::Format(LOCTEXT("ResavePrompt", "{0} inventory items still carry an old ID, so they can't be found by it. Resave them to give them their ID."), FText::AsNumber(OldIdCount))
+		: LOCTEXT("RegisterPrompt", "Inventory items aren't registered with the Asset Manager yet, so they can't be found by ID, given with Inventory.Give or saved by ID."));
 	Info.bFireAndForget = false;
-	Info.ButtonDetails.Emplace(LOCTEXT("Register", "Register Items"), FText(), FSimpleDelegate::CreateStatic(&InventoryAssetManagerSetup::RegisterItems));
+	Info.ButtonDetails.Emplace(bRegistered ? LOCTEXT("Resave", "Resave Items") : LOCTEXT("Register", "Register Items"), FText(),
+		FSimpleDelegate::CreateStatic(&InventoryAssetManagerSetup::RegisterItems));
 	Info.ButtonDetails.Emplace(LOCTEXT("NotNow", "Not Now"), FText(), FSimpleDelegate::CreateStatic(&CloseRegisterPrompt));
 	RegisterPrompt = FSlateNotificationManager::Get().AddNotification(Info);
+}
+
+void InventoryAssetManagerSetup::CheckOnceLoaded()
+{
+	auto Check = []()
+	{
+		if (!FindItems().IsEmpty())
+		{
+			PromptIfNeeded();
+		}
+	};
+
+	IAssetRegistry& AssetRegistry = IAssetRegistry::GetChecked();
+	if (AssetRegistry.IsLoadingAssets())
+	{
+		FilesLoadedHandle = AssetRegistry.OnFilesLoaded().AddLambda(Check);
+	}
+	else
+	{
+		Check();
+	}
+}
+
+void InventoryAssetManagerSetup::StopChecking()
+{
+	if (IAssetRegistry* AssetRegistry = IAssetRegistry::Get())
+	{
+		AssetRegistry->OnFilesLoaded().Remove(FilesLoadedHandle);
+	}
+	FilesLoadedHandle.Reset();
+	CloseRegisterPrompt();
 }
 
 #undef LOCTEXT_NAMESPACE

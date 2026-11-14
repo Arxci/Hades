@@ -52,6 +52,12 @@ public:
 	int32 GetSlotCount() const { return Type == EInventoryContainerType::Slots ? Slots.Num() : 0; }
 	int32 GetCellCount() const { return Type == EInventoryContainerType::Grid ? GridSize.X * GridSize.Y : 0; }
 
+	/** Whether a grid cell is inside the grid and not locked by Usable Cells. */
+	bool IsCellUsable(const FIntPoint& Cell) const;
+
+	/** How many of the grid's cells can hold items. */
+	int32 GetUsableCellCount() const;
+
 #if WITH_EDITOR
 	virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;
 #endif
@@ -62,6 +68,14 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Layout", meta = (ClampMin = "1", EditCondition = "Type == EInventoryContainerType::Grid", EditConditionHides))
 	FIntPoint GridSize = FIntPoint(4, 4);
+
+	/**
+	 * How many cells can hold items, counted row by row from the top left. The rest are locked: nothing can go in them, and grid
+	 * widgets draw them disabled. 0 makes every cell usable. For pockets that grow a few cells at a time, as in the RE games:
+	 * a 4 x 3 grid with 10 usable cells has its last two cells locked.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Layout", meta = (ClampMin = "0", EditCondition = "Type == EInventoryContainerType::Grid", EditConditionHides))
+	int32 UsableCells = 0;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Layout", meta = (TitleProperty = "Tag", EditCondition = "Type == EInventoryContainerType::Slots", EditConditionHides))
 	TArray<FInventorySlotDefinition> Slots;

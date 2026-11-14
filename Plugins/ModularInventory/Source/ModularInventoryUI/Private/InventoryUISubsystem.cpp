@@ -29,6 +29,12 @@ namespace
 		const FInventoryItemRecord* Record = Registry.FindItem(Item);
 		return Record ? Record->Container : FInventoryContainerHandle();
 	}
+
+	/** The item's middle cell from its top-left, rounded toward the top-left: what it's held by when nothing says otherwise. */
+	FIntPoint GetMiddleCell(const FInventoryItemRecord& Record)
+	{
+		return (Record.Definition->GetSize(Record.Placement.bRotated) - FIntPoint(1, 1)) / 2;
+	}
 }
 
 UInventoryUISubsystem* UInventoryUISubsystem::Get(const ULocalPlayer* LocalPlayer)
@@ -59,6 +65,13 @@ void UInventoryUISubsystem::SetStyle(const FInventoryInteractionStyle& InStyle)
 // Holding
 bool UInventoryUISubsystem::BeginHold(FInventoryItemHandle Item, int32 Count)
 {
+	const FInventoryRegistry* Registry = GetRegistry();
+	const FInventoryItemRecord* Record = Registry ? Registry->FindItem(Item) : nullptr;
+	return Record && BeginHoldBy(Item, Count, GetTargetedCell(Item).Get(GetMiddleCell(*Record)));
+}
+
+bool UInventoryUISubsystem::BeginHoldBy(FInventoryItemHandle Item, int32 Count, const FIntPoint& GrabCell, bool bAnnounce)
+{
 	if (!CanBeginHold(Item))
 	{
 		return false;
@@ -66,8 +79,29 @@ bool UInventoryUISubsystem::BeginHold(FInventoryItemHandle Item, int32 Count)
 
 	const FInventoryItemRecord* Record = GetRegistry()->FindItem(Item);
 	const bool bWholeStack = Count <= 0 || Count >= Record->Count || !Record->Definition->CanSplit();
+	const FIntPoint LastCell = Record->Definition->GetSize(Record->Placement.bRotated) - FIntPoint(1, 1);
+	HeldGrabCell = GrabCell.ComponentMax(FIntPoint::ZeroValue).ComponentMin(LastCell);
 	SetHeld(Item, bWholeStack ? Record->Count : Count, Record->Placement.bRotated);
+	if (bAnnounce)
+	{
+		OnHoldEvent.Broadcast(EInventoryHoldEvent::PickedUp);
+	}
 	return true;
+}
+
+TOptional<FIntPoint> UInventoryUISubsystem::GetTargetedCell(FInventoryItemHandle Item) const
+{
+	const FInventoryRegistry* Registry = GetRegistry();
+	const FInventoryItemRecord* Record = Registry ? Registry->FindItem(Item) : nullptr;
+	if (!Record || TargetContainer != Record->Container || !IsGrid(*Registry, Record->Container))
+	{
+		return TOptional<FIntPoint>();
+	}
+
+	const FIntPoint Cell = TargetPlacement.Cell - Record->Placement.Cell;
+	const FIntPoint Size = Record->Definition->GetSize(Record->Placement.bRotated);
+	const bool bOnItem = Cell.X >= 0 && Cell.Y >= 0 && Cell.X < Size.X && Cell.Y < Size.Y;
+	return bOnItem ? TOptional<FIntPoint>(Cell) : TOptional<FIntPoint>();
 }
 
 bool UInventoryUISubsystem::CanBeginHold(FInventoryItemHandle Item) const
@@ -81,16 +115,33 @@ void UInventoryUISubsystem::CancelHold()
 {
 	if (IsHolding())
 	{
+		EndHold();
+		OnHoldEvent.Broadcast(EInventoryHoldEvent::PutBack);
+	}
+}
+
+void UInventoryUISubsystem::EndHold()
+{
+	if (IsHolding())
+	{
 		SetHeld(FInventoryItemHandle(), 0, false);
 	}
 }
 
 void UInventoryUISubsystem::RotateHeld()
 {
-	if (CanRotateHeld())
+	if (!CanRotateHeld())
 	{
-		SetHeld(HeldItem, HeldCount, !bHeldRotated);
+		return;
 	}
+
+	// Turned items are a quarter turn clockwise, so the cell it's held by turns with it, and stays where it's aimed.
+	const FIntPoint Size = GetHeldSize();
+	HeldGrabCell = bHeldRotated
+		? FIntPoint(HeldGrabCell.Y, Size.X - 1 - HeldGrabCell.X)
+		: FIntPoint(Size.Y - 1 - HeldGrabCell.Y, HeldGrabCell.X);
+	SetHeld(HeldItem, HeldCount, !bHeldRotated);
+	OnHoldEvent.Broadcast(EInventoryHoldEvent::Rotated);
 }
 
 bool UInventoryUISubsystem::CanRotateHeld() const
@@ -138,6 +189,7 @@ void UInventoryUISubsystem::SetHeldCount(int32 Count)
 	if (NewCount != HeldCount)
 	{
 		SetHeld(HeldItem, NewCount, bHeldRotated);
+		OnHoldEvent.Broadcast(EInventoryHoldEvent::Split);
 	}
 }
 
@@ -162,6 +214,7 @@ void UInventoryUISubsystem::SetHeld(FInventoryItemHandle Item, int32 Count, bool
 	else if (!IsHolding())
 	{
 		RegistryListener.Unbind();
+		HeldGrabCell = FIntPoint::ZeroValue;
 	}
 
 	RefreshTarget();
@@ -174,7 +227,7 @@ void UInventoryUISubsystem::HandleRegistryChanged(const FInventoryChangeSet& Cha
 	const FInventoryItemRecord* Record = Registry ? Registry->FindItem(HeldItem) : nullptr;
 	if (!Record)
 	{
-		CancelHold();
+		EndHold();
 	}
 	else if (HeldCount > Record->Count)
 	{
@@ -190,18 +243,36 @@ void UInventoryUISubsystem::HandleRegistryChanged(const FInventoryChangeSet& Cha
 bool UInventoryUISubsystem::PlaceHeld(FInventoryContainerHandle Container, const FInventoryPlacement& Placement)
 {
 	const FInventoryRegistry* Registry = GetRegistry();
-	const FInventoryItemHandle Other = Registry ? Registry->GetItemAt(Container, FitInGrid(Container, Placement)) : FInventoryItemHandle();
+	const FInventoryPlacement Landing = FitInGrid(Container, Placement);
+	const FInventoryItemHandle Other = Registry ? Registry->GetItemAt(Container, Landing) : FInventoryItemHandle();
 	const EInventoryDropAction Action = ResolvePlacement(Container, Placement, true);
+	if (Action == EInventoryDropAction::Invalid)
+	{
+		OnHoldEvent.Broadcast(EInventoryHoldEvent::Refused);
+	}
 	if (Action == EInventoryDropAction::None || Action == EInventoryDropAction::Invalid)
 	{
 		return false;
 	}
 
-	CancelHold();
-	if (Action == EInventoryDropAction::Swap && Style.bSwapPicksUpOther && Other.IsSet())
+	// Items aren't drawn hovered while one is held, but the hover still follows the cursor over them. Before that shows again, it moves
+	// to what was just put down, or the stack it joined, so the last item passed over doesn't light up for a moment.
+	const bool bPickUpOther = Action == EInventoryDropAction::Swap && Style.bSwapPicksUpOther && Other.IsSet();
+	if (!bPickUpOther)
 	{
-		BeginHold(Other);
+		SetHoveredItem(Registry->GetItemAt(Container, Landing));
 	}
+
+	// The other item had the held one's cells, so it's held by the same cell, and is drawn where it was until the cursor or focus moves on.
+	const FIntPoint GrabCell = HeldGrabCell;
+	EndHold();
+	if (bPickUpOther)
+	{
+		BeginHoldBy(Other, 0, GrabCell, false);
+	}
+	OnHoldEvent.Broadcast(Action == EInventoryDropAction::Merge ? EInventoryHoldEvent::Merged
+		: Action == EInventoryDropAction::Swap ? EInventoryHoldEvent::Swapped
+		: EInventoryHoldEvent::Placed);
 	return true;
 }
 
@@ -237,6 +308,9 @@ bool UInventoryUISubsystem::ActivatePlacement(FInventoryContainerHandle Containe
 		RequestContext(Item);
 		return true;
 	}
+
+	// Held by the cell clicked or accepted on.
+	SetTarget(Container, Placement);
 	return BeginHold(Item);
 }
 
@@ -253,9 +327,15 @@ bool UInventoryUISubsystem::PickUpOrPlace()
 		return false;
 	}
 
-	// Aimed where it lies, so it's drawn there until the cursor or focus moves on.
-	const FInventoryRegistry* Registry = GetRegistry();
-	SetTarget(Registry->FindItem(Item)->Container, Registry->GetItemPlacement(Item));
+	// Held by the cell aimed at, such as the focused one. Otherwise by its middle cell, aimed where it lies, so it's drawn there until
+	// the cursor or focus moves on.
+	if (!GetTargetedCell(Item).IsSet())
+	{
+		const FInventoryRegistry* Registry = GetRegistry();
+		const FInventoryItemRecord* Record = Registry->FindItem(Item);
+		const bool bInGrid = IsGrid(*Registry, Record->Container);
+		SetTarget(Record->Container, bInGrid ? FInventoryPlacement::AtCell(Record->Placement.Cell + GetMiddleCell(*Record)) : Record->Placement);
+	}
 	return BeginHold(Item);
 }
 
@@ -278,10 +358,11 @@ FInventoryPlacement UInventoryUISubsystem::FitInGrid(FInventoryContainerHandle C
 		return Placement;
 	}
 
+	// The cell it's held by goes on the cell aimed at, moved in from the edges so it fits.
 	const FIntPoint HeldSize = GetHeldSize();
 	const FIntPoint LastCell = (Record->Layout->GridSize - HeldSize).ComponentMax(FIntPoint::ZeroValue);
 	FInventoryPlacement Fitted = Placement;
-	Fitted.Cell = Placement.Cell.ComponentMax(FIntPoint::ZeroValue).ComponentMin(LastCell);
+	Fitted.Cell = (Placement.Cell - HeldGrabCell).ComponentMax(FIntPoint::ZeroValue).ComponentMin(LastCell);
 
 	// Over one other item of its size, even partly, it lands exactly in that item's place, to swap with it. Its own cells don't
 	// count, or a long item couldn't shift along a cell.
@@ -310,6 +391,13 @@ FInventoryPlacement UInventoryUISubsystem::FitInGrid(FInventoryContainerHandle C
 
 EInventoryDropAction UInventoryUISubsystem::ResolvePlacement(FInventoryContainerHandle Container, const FInventoryPlacement& Placement, bool bApply)
 {
+	EInventoryError Error = EInventoryError::None;
+	return ResolvePlacement(Container, Placement, bApply, Error);
+}
+
+EInventoryDropAction UInventoryUISubsystem::ResolvePlacement(FInventoryContainerHandle Container, const FInventoryPlacement& Placement, bool bApply, EInventoryError& OutError)
+{
+	OutError = EInventoryError::None;
 	FInventoryRegistry* Registry = GetRegistry();
 	const FInventoryItemRecord* Held = Registry ? Registry->FindItem(HeldItem) : nullptr;
 	const FInventoryContainerRecord* TargetRecord = Registry ? Registry->FindContainer(Container) : nullptr;
@@ -319,6 +407,7 @@ EInventoryDropAction UInventoryUISubsystem::ResolvePlacement(FInventoryContainer
 	}
 	if (TargetRecord->Layout->bReadOnlyInUI)
 	{
+		OutError = EInventoryError::Rejected;
 		return EInventoryDropAction::Invalid;
 	}
 
@@ -358,7 +447,8 @@ EInventoryDropAction UInventoryUISubsystem::ResolvePlacement(FInventoryContainer
 	auto EquipHeld = [&]() { return Registry->EquipItem(HeldItem, Container, EquipSlot, Storage); };
 	auto Attempt = [&](TFunctionRef<EInventoryError()> Operation) { return bApply ? Operation() : Registry->DryRun(Operation); };
 
-	if (Attempt(MoveHeld) == EInventoryError::None)
+	const EInventoryError MoveError = Attempt(MoveHeld);
+	if (MoveError == EInventoryError::None)
 	{
 		return bMerge ? EInventoryDropAction::Merge : EInventoryDropAction::Place;
 	}
@@ -371,6 +461,9 @@ EInventoryDropAction UInventoryUISubsystem::ResolvePlacement(FInventoryContainer
 	{
 		return EInventoryDropAction::Swap;
 	}
+
+	// Why it can't simply go there, such as another item in the way.
+	OutError = MoveError;
 	return EInventoryDropAction::Invalid;
 }
 
@@ -399,7 +492,8 @@ void UInventoryUISubsystem::ClearTarget()
 
 void UInventoryUISubsystem::RefreshTarget()
 {
-	TargetAction = TargetContainer.IsSet() ? ResolvePlacement(TargetContainer, TargetPlacement, false) : EInventoryDropAction::None;
+	TargetError = EInventoryError::None;
+	TargetAction = TargetContainer.IsSet() ? ResolvePlacement(TargetContainer, TargetPlacement, false, TargetError) : EInventoryDropAction::None;
 	OnTargetChanged.Broadcast();
 }
 
@@ -484,7 +578,7 @@ bool UInventoryUISubsystem::TransferItem(FInventoryItemHandle Item)
 
 	if (Item == HeldItem)
 	{
-		CancelHold();
+		EndHold();
 	}
 	const FInventoryContainerHandle HoveredIn = GetItemContainer(*Registry, HoveredItem);
 	if (Registry->MoveItemToContainers(Item, Targets, 0, true) != EInventoryError::None)
@@ -516,7 +610,7 @@ bool UInventoryUISubsystem::TakeAll()
 		return false;
 	}
 
-	CancelHold();
+	EndHold();
 	const FInventoryContainerHandle HoveredIn = GetItemContainer(*Registry, HoveredItem);
 	const bool bTookEverything = PlayerInventory->TakeAll(TransferContainer);
 	if (GetItemContainer(*Registry, HoveredItem) != HoveredIn)
@@ -535,7 +629,7 @@ bool UInventoryUISubsystem::CanTakeAll() const
 
 void UInventoryUISubsystem::ClearInteraction()
 {
-	CancelHold();
+	EndHold();
 	CancelChoosingItem();
 	ClearTarget();
 	SetHoveredItem(FInventoryItemHandle());

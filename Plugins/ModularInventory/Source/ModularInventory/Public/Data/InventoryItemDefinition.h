@@ -98,6 +98,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Display")
 	FText DisplayName;
 
+	/** What kind of item it is, in a word or two, such as Handgun or Key Item. Details panels show it under the name. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Display")
+	FText Category;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Display", meta = (MultiLine = "true"))
 	FText Description;
 

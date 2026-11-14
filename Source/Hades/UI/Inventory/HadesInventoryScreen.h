@@ -122,6 +122,14 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Hints")
 	FText MoveHint;
 
+	/** The action hint while the item being moved is over a spot it can't go, by why it can't. Reasons not listed use Invalid Hint. */
+	UPROPERTY(EditDefaultsOnly, Category = "Hints")
+	TMap<EInventoryError, FText> InvalidHints;
+
+	/** The action hint over a spot the moved item can't go, for reasons not in Invalid Hints. Empty keeps Move Hint. */
+	UPROPERTY(EditDefaultsOnly, Category = "Hints")
+	FText InvalidHint;
+
 	/** The action hint while choosing the second item to combine. */
 	UPROPERTY(EditDefaultsOnly, Category = "Hints")
 	FText CombineHint;
@@ -136,6 +144,9 @@ private:
 
 	UFUNCTION()
 	void HandleHeldItemChanged();
+
+	UFUNCTION()
+	void HandleTargetChanged();
 
 	UHadesInventoryComponent* GetPlayerInventory() const;
 	FInventoryContainerHandle GetItemBox() const;

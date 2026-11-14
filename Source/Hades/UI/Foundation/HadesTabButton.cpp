@@ -37,6 +37,7 @@ void UHadesTabButton::SetActive(bool bInActive)
 	if (Icon)
 	{
 		Icon->SetRenderScale(FVector2D(bActive ? ActiveIconScale : 1.0f));
+		Icon->SetColorAndOpacity(bActive ? ActiveIconColor : IconColor);
 	}
 	if (Label)
 	{

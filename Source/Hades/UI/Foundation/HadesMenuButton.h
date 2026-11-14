@@ -7,6 +7,7 @@
 
 #include "HadesMenuButton.generated.h"
 
+class UCommonTextStyle;
 class UImage;
 class UTextBlock;
 class UTexture2D;
@@ -14,7 +15,7 @@ class UTexture2D;
 
 /**
  * A menu row with an icon on a round badge and a label, such as in the item menu. While hovered, or focused on a gamepad,
- * the badge and the icon's color change; the row's own highlight comes from the button Style.
+ * the badge, the icon's color and the label's style change; the row's own highlight comes from the button Style.
  */
 UCLASS(Abstract)
 class HADES_API UHadesMenuButton : public UCommonButtonBase
@@ -69,6 +70,14 @@ protected:
 
 	UPROPERTY(EditAnywhere, Category = "Menu Button")
 	FLinearColor LitIconColor = FLinearColor::Black;
+
+	/** The label's style normally, such as light text on a dark menu. None keeps the label's own style. Needs a Common Text label. */
+	UPROPERTY(EditAnywhere, Category = "Menu Button")
+	TSubclassOf<UCommonTextStyle> LabelStyle;
+
+	/** The label's style while the row is highlighted, such as dark text on a light row. Set Label Style too, or the label stays lit. */
+	UPROPERTY(EditAnywhere, Category = "Menu Button")
+	TSubclassOf<UCommonTextStyle> LitLabelStyle;
 
 private:
 	void SetLit(bool bInLit);

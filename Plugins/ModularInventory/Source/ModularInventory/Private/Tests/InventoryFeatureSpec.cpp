@@ -138,6 +138,50 @@ void FInventoryFeatureSpec::Define()
 			TestTrue(TEXT("Old layout kept"), Registry->FindContainer(Grid)->Layout.Get() == Data->Grid4x4);
 		});
 
+		It("never put items on cells locked by Usable Cells", [this]()
+		{
+			// 4 x 2 with six usable cells: the last two cells of the bottom row are locked.
+			UInventoryContainerLayout* Partial = Data->Make<UInventoryContainerLayout>();
+			Partial->GridSize = FIntPoint(4, 2);
+			Partial->UsableCells = 6;
+			const FInventoryContainerHandle Pockets = Registry->CreateContainer(Partial, FGameplayTag(), nullptr);
+			TestEqual(TEXT("Usable cell count"), Partial->GetUsableCellCount(), 6);
+			TestTrue(TEXT("Last usable cell"), Partial->IsCellUsable(FIntPoint(1, 1)));
+			TestFalse(TEXT("First locked cell"), Partial->IsCellUsable(FIntPoint(2, 1)));
+
+			const FInventoryItemHandle Stone = AddTestItem(*Registry, Data->Stone, Pockets);
+			const EInventoryError OntoLocked = Registry->CanPlace(Stone, Pockets, FInventoryPlacement::AtCell(FIntPoint(3, 1)));
+			TestTrue(*DescribeErrors(TEXT("Stone onto a locked cell"), OntoLocked, EInventoryError::OutOfBounds), OntoLocked == EInventoryError::OutOfBounds);
+
+			// Standing up at (2, 0), the knife would reach down into a locked cell.
+			const FInventoryItemHandle Knife = AddTestItem(*Registry, Data->Knife, Grid);
+			const EInventoryError KnifeOverLocked = Registry->CanPlace(Knife, Pockets, FInventoryPlacement::AtCell(FIntPoint(2, 0)));
+			TestTrue(*DescribeErrors(TEXT("Knife over a locked cell"), KnifeOverLocked, EInventoryError::OutOfBounds), KnifeOverLocked == EInventoryError::OutOfBounds);
+
+			for (int32 Index = 1; Index < 6; ++Index)
+			{
+				TestTrue(*FString::Printf(TEXT("Stone %d added"), Index + 1), AddTestItem(*Registry, Data->Stone, Pockets).IsSet());
+			}
+			TestFalse(TEXT("No room for a seventh stone"), AddTestItem(*Registry, Data->Stone, Pockets).IsSet());
+		});
+
+		It("unlock cells with a layout that has more usable cells", [this]()
+		{
+			UInventoryContainerLayout* Partial = Data->Make<UInventoryContainerLayout>();
+			Partial->GridSize = FIntPoint(4, 2);
+			Partial->UsableCells = 6;
+			const FInventoryContainerHandle Pockets = Registry->CreateContainer(Partial, FGameplayTag(), nullptr);
+			const FInventoryItemHandle Stone = AddTestItem(*Registry, Data->Stone, Pockets, 1, FInventoryPlacement::AtCell(FIntPoint(1, 1)));
+
+			TestTrue(TEXT("Unlocked"), Registry->SetContainerLayout(Pockets, Data->Grid4x2) == EInventoryError::None);
+			TestTrue(TEXT("Stone in place"), Registry->GetItemPlacement(Stone).Cell == FIntPoint(1, 1));
+			TestTrue(TEXT("Moved onto a cell that was locked"), Registry->MoveItem(Stone, Pockets, FInventoryPlacement::AtCell(FIntPoint(3, 1))) == EInventoryError::None);
+
+			const EInventoryError Error = Registry->SetContainerLayout(Pockets, Partial);
+			TestTrue(*DescribeErrors(TEXT("Locking the stone's cell"), Error, EInventoryError::OutOfBounds), Error == EInventoryError::OutOfBounds);
+			TestTrue(TEXT("Unlocked layout kept"), Registry->FindContainer(Pockets)->Layout.Get() == Data->Grid4x2);
+		});
+
 		It("sort biggest first and merge partial stacks", [this]()
 		{
 			const FInventoryItemHandle Knife = AddTestItem(*Registry, Data->Knife, Grid, 1, FInventoryPlacement::AtCell(FIntPoint(3, 2)));

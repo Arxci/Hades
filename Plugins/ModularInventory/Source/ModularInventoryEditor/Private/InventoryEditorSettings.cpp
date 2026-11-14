@@ -40,6 +40,16 @@ void UInventoryEditorSettings::Open()
 	}
 }
 
+float UInventoryEditorSettings::GetShadowReach() const
+{
+	if (!bDrawShadow)
+	{
+		return 0.0f;
+	}
+	const float Shift = static_cast<float>(FMath::Max(FMath::Abs(ShadowOffset.X), FMath::Abs(ShadowOffset.Y)));
+	return ShadowSpread + ShadowSoftness + Shift;
+}
+
 FString UInventoryEditorSettings::GetBaseName(const FString& AssetName) const
 {
 	FString BaseName = AssetName;

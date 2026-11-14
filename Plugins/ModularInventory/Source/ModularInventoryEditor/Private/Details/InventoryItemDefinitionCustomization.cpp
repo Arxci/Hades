@@ -6,6 +6,7 @@
 #include "DetailWidgetRow.h"
 #include "Engine/Texture2D.h"
 #include "IDetailPropertyRow.h"
+#include "IPropertyUtilities.h"
 #include "PropertyHandle.h"
 #include "Rendering/DrawElements.h"
 #include "Styling/CoreStyle.h"
@@ -339,9 +340,27 @@ void FInventoryItemDefinitionCustomization::CustomizeDetails(IDetailLayoutBuilde
 	// Every Display property is added, so they keep their order around the new rows.
 	IDetailCategoryBuilder& Display = DetailBuilder.EditCategory("Display");
 	Display.AddProperty(DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UInventoryItemDefinition, DisplayName)));
+	Display.AddProperty(DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UInventoryItemDefinition, Category)));
 	Display.AddProperty(DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UInventoryItemDefinition, Description)));
-	AddCosmeticsRow(Display, DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UInventoryItemDefinition, Cosmetics)), Item);
+
+	const TSharedRef<IPropertyHandle> CosmeticsHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UInventoryItemDefinition, Cosmetics));
+	AddCosmeticsRow(Display, CosmeticsHandle, Item);
 	AddIconRow(Display, Item);
+
+	// Generate Icon lives on the cosmetics, beside the icon, but is set here without opening them.
+	if (UInventoryItemCosmetics* Cosmetics = Item->Cosmetics)
+	{
+		const TArray<UObject*> CosmeticsObjects = { Cosmetics };
+		Display.AddExternalObjectProperty(CosmeticsObjects, GET_MEMBER_NAME_CHECKED(UInventoryItemCosmetics, bGenerateIcon));
+	}
+	const TSharedPtr<IPropertyUtilities> Utilities = DetailBuilder.GetPropertyUtilities();
+	CosmeticsHandle->SetOnPropertyValueChanged(FSimpleDelegate::CreateLambda([Utilities]()
+	{
+		if (Utilities)
+		{
+			Utilities->ForceRefresh();
+		}
+	}));
 
 	AddFootprintRow(DetailBuilder.EditCategory("Sockets"), Item);
 }
