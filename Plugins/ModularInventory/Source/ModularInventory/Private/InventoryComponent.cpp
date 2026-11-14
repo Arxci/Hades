@@ -2,6 +2,7 @@
 
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
+#include "Algo/AllOf.h"
 #include "Engine/AssetManager.h"
 #include "GameFramework/Actor.h"
 
@@ -212,6 +213,24 @@ int32 UInventoryComponent::AddItem(const FInventoryItemSpec& Spec, bool bAllowPa
 	return InventorySubsystem ? InventorySubsystem->GetRegistry().AddItemToContainers(Spec, GetStorageContainers(), bAllowPartial, &OutItems) : 0;
 }
 
+bool UInventoryComponent::CanAddItem(const FInventoryItemSpec& Spec, bool bAllowPartial) const
+{
+	UInventorySubsystem* InventorySubsystem = GetSubsystem();
+	if (!InventorySubsystem)
+	{
+		return false;
+	}
+
+	FInventoryRegistry& Registry = InventorySubsystem->GetRegistry();
+	const TArray<FInventoryContainerHandle> Storage = GetStorageContainers();
+	return Registry.DryRun([&]()
+	{
+		EInventoryError Error = EInventoryError::None;
+		Registry.AddItemToContainers(Spec, Storage, bAllowPartial, nullptr, &Error);
+		return Error;
+	}) == EInventoryError::None;
+}
+
 bool UInventoryComponent::AddLoot(const UInventoryLootTable* LootTable, const FGameplayTagContainer& ContextTags, bool bAllowPartial)
 {
 	UInventorySubsystem* InventorySubsystem = GetSubsystem();
@@ -250,6 +269,19 @@ bool UInventoryComponent::TakeItem(FInventoryItemHandle Item, int32 Count, bool 
 	return OutError == EInventoryError::None;
 }
 
+bool UInventoryComponent::CanTakeItem(FInventoryItemHandle Item, int32 Count, bool bAllowPartial) const
+{
+	UInventorySubsystem* InventorySubsystem = GetSubsystem();
+	if (!InventorySubsystem)
+	{
+		return false;
+	}
+
+	FInventoryRegistry& Registry = InventorySubsystem->GetRegistry();
+	const TArray<FInventoryContainerHandle> Storage = GetStorageContainers();
+	return Registry.DryRun([&]() { return Registry.MoveItemToContainers(Item, Storage, Count, bAllowPartial); }) == EInventoryError::None;
+}
+
 bool UInventoryComponent::TransferItem(FInventoryItemHandle Item, UInventoryComponent* Target, int32 Count, bool bAllowPartial, EInventoryError& OutError)
 {
 	if (!Target)
@@ -258,6 +290,32 @@ bool UInventoryComponent::TransferItem(FInventoryItemHandle Item, UInventoryComp
 		return false;
 	}
 	return Target->TakeItem(Item, Count, bAllowPartial, OutError);
+}
+
+bool UInventoryComponent::TakeAll(FInventoryContainerHandle Container)
+{
+	UInventorySubsystem* InventorySubsystem = GetSubsystem();
+	const FInventoryContainerRecord* Record = InventorySubsystem ? InventorySubsystem->GetRegistry().FindContainer(Container) : nullptr;
+	if (!Record)
+	{
+		return false;
+	}
+
+	// One change for listeners, however many items move.
+	FInventoryRegistry& Registry = InventorySubsystem->GetRegistry();
+	const TArray<FInventoryItemHandle> Contents = Record->Items;
+	const TArray<FInventoryContainerHandle> Storage = GetStorageContainers();
+	Registry.RunTransaction([&]()
+	{
+		for (const FInventoryItemHandle& Item : Contents)
+		{
+			Registry.MoveItemToContainers(Item, Storage, 0, true);
+		}
+		return EInventoryError::None;
+	});
+
+	const FInventoryContainerRecord* Emptied = Registry.FindContainer(Container);
+	return Emptied && Emptied->Items.IsEmpty();
 }
 
 int32 UInventoryComponent::RemoveItems(const FInventoryItemQuery& Query, int32 Count)
@@ -298,6 +356,12 @@ int32 UInventoryComponent::CountItems(const FInventoryItemQuery& Query) const
 {
 	const UInventorySubsystem* InventorySubsystem = GetSubsystem();
 	return InventorySubsystem ? InventorySubsystem->CountItems(RootContainers, Query, true) : 0;
+}
+
+float UInventoryComponent::GetTotalTagValue(FGameplayTag Tag) const
+{
+	const UInventorySubsystem* InventorySubsystem = GetSubsystem();
+	return InventorySubsystem ? InventorySubsystem->GetTotalTagValue(RootContainers, Tag, true) : 0.0f;
 }
 
 // Crafting
@@ -350,4 +414,67 @@ TArray<UInventoryRecipe*> UInventoryComponent::GetCraftableRecipes(const UInvent
 		}
 	}
 	return Craftable;
+}
+
+TArray<UInventoryRecipe*> UInventoryComponent::GetRecipesUsing(const UInventoryRecipeBook* Book, FInventoryItemHandle Item) const
+{
+	TArray<UInventoryRecipe*> Using;
+	const UInventorySubsystem* InventorySubsystem = GetSubsystem();
+	if (!Book || !InventorySubsystem)
+	{
+		return Using;
+	}
+
+	for (UInventoryRecipe* Recipe : Book->GetRecipes())
+	{
+		const bool bUsesItem = Recipe && Recipe->Ingredients.ContainsByPredicate([InventorySubsystem, &Item](const FInventoryRecipeIngredient& Ingredient)
+		{
+			return InventorySubsystem->MatchesQuery(Item, Ingredient.Query);
+		});
+		if (bUsesItem)
+		{
+			Using.Add(Recipe);
+		}
+	}
+	return Using;
+}
+
+UInventoryRecipe* UInventoryComponent::FindRecipeMadeFrom(const UInventoryRecipeBook* Book, const TArray<FInventoryItemHandle>& Items, const FGameplayTagContainer& ContextTags) const
+{
+	const UInventorySubsystem* InventorySubsystem = GetSubsystem();
+	const bool bOwnsAll = Algo::AllOf(Items, [this](const FInventoryItemHandle& Item) { return OwnsItem(Item); });
+	if (!Book || !InventorySubsystem || !bOwnsAll)
+	{
+		return nullptr;
+	}
+
+	const FGameplayTagContainer AllContextTags = GatherContextTags(ContextTags);
+	for (UInventoryRecipe* Recipe : Book->GetRecipes())
+	{
+		if (Recipe && InventorySubsystem->GetRegistry().IsMadeFrom(*Recipe, Items, AllContextTags))
+		{
+			return Recipe;
+		}
+	}
+	return nullptr;
+}
+
+bool UInventoryComponent::CraftFromItems(const UInventoryRecipe* Recipe, const TArray<FInventoryItemHandle>& Items, const FGameplayTagContainer& ContextTags, TArray<FInventoryItemHandle>& OutItems, EInventoryError& OutError)
+{
+	OutItems.Reset();
+	UInventorySubsystem* InventorySubsystem = GetSubsystem();
+	if (!Recipe || !InventorySubsystem)
+	{
+		OutError = EInventoryError::InvalidDefinition;
+		return false;
+	}
+	if (!Algo::AllOf(Items, [this](const FInventoryItemHandle& Item) { return OwnsItem(Item); }))
+	{
+		OutError = EInventoryError::InvalidItem;
+		return false;
+	}
+
+	FRandomStream Stream(FMath::Rand());
+	OutError = InventorySubsystem->GetRegistry().CraftFromItems(*Recipe, Items, GetStorageContainers(), GatherContextTags(ContextTags), 1, Stream, &OutItems);
+	return OutError == EInventoryError::None;
 }

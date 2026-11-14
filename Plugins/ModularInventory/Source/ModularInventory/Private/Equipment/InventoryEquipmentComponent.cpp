@@ -125,15 +125,21 @@ bool UInventoryEquipmentComponent::EquipInPlace(FInventoryItemHandle Item, FGame
 		OutError = EInventoryError::InvalidItem;
 		return false;
 	}
-	if (!Definition->EquipRules || !Definition->EquipRules->AllowsSlot(Slot))
+	const UInventoryEquipRules* Rules = Definition->EquipRules;
+	if (!Rules || !Rules->AllowsSlot(Slot) || !Rules->MeetsOwnerRequirements(GetOwner()))
 	{
 		OutError = EInventoryError::NotEquippable;
 		return false;
 	}
 
+	// What's in the way stops being equipped, as equipping into a slot makes way: the item in that slot, this item in another,
+	// and items the equip rules keep apart from it, like an off-hand item for a two-handed weapon.
 	for (auto It = InPlaceItems.CreateIterator(); It; ++It)
 	{
-		if (It.Value() == Item)
+		const UInventoryItemDefinition* OtherDefinition = InventorySubsystem->GetItemDefinition(It.Value());
+		const UInventoryEquipRules* OtherRules = OtherDefinition ? OtherDefinition->EquipRules.Get() : nullptr;
+		const bool bInTheWay = It.Key() == Slot || It.Value() == Item || Rules->BlocksSlot(It.Key()) || (OtherRules && OtherRules->BlocksSlot(Slot));
+		if (bInTheWay)
 		{
 			It.RemoveCurrent();
 		}
@@ -199,6 +205,20 @@ TArray<UObject*> UInventoryEquipmentComponent::GetSpawnedPieces(FInventoryItemHa
 		}
 	}
 	return Spawned;
+}
+
+FInventoryItemHandle UInventoryEquipmentComponent::FindEquippedItemFor(FInventoryItemHandle Item) const
+{
+	const UInventorySubsystem* InventorySubsystem = Subsystem.Get();
+	const UInventoryItemDefinition* Definition = InventorySubsystem ? InventorySubsystem->GetItemDefinition(Item) : nullptr;
+	const UInventoryEquipRules* Rules = Definition ? Definition->EquipRules.Get() : nullptr;
+	if (!Rules || IsEquipped(Item))
+	{
+		return FInventoryItemHandle();
+	}
+
+	const FInventoryEquippedItem* Entry = Equipped.FindByPredicate([Rules](const FInventoryEquippedItem& Candidate) { return Rules->AllowsSlot(Candidate.Slot); });
+	return Entry ? Entry->Item : FInventoryItemHandle();
 }
 
 FInventoryItemHandle UInventoryEquipmentComponent::GetItemForAbility(FGameplayAbilitySpecHandle Ability) const

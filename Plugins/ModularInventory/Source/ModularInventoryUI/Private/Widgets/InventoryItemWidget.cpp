@@ -4,6 +4,7 @@
 #include "CommonInputTypeEnum.h"
 #include "Components/Image.h"
 #include "Components/OverlaySlot.h"
+#include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
 #include "InputCoreTypes.h"
 
@@ -12,6 +13,16 @@
 #include "InventoryWidgetHelpers.h"
 #include "Widgets/InventoryDragDropOperation.h"
 #include "Widgets/InventoryItemDetailsWidget.h"
+
+void UInventoryItemWidget::NativeOnInitialized()
+{
+	Super::NativeOnInitialized();
+
+	if (TagTint)
+	{
+		DefaultTagTint = TagTint->GetColorAndOpacity();
+	}
+}
 
 void UInventoryItemWidget::NativeConstruct()
 {
@@ -99,17 +110,71 @@ void UInventoryItemWidget::Refresh()
 
 	if (CountText)
 	{
-		const bool bStackable = Definition && Definition->GetMaxStackSize() > 1;
-		CountText->SetText(FText::AsNumber(GetCount()));
-		CountText->SetVisibility(bStackable ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		const int32 Count = GetCount();
+		const bool bShowCount = Definition && Definition->GetMaxStackSize() > 1 && (Count > 1 || !bHideCountOfOne);
+		CountText->SetText(FText::AsNumber(Count));
+		CountText->SetVisibility(bShowCount ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
 	if (DetailsTooltip)
 	{
 		DetailsTooltip->SetItem(Item);
 	}
+	RefreshMeter();
+	RefreshTagTint();
 
 	NativeOnItemChanged();
 	OnItemChanged();
+}
+
+void UInventoryItemWidget::RefreshMeter()
+{
+	if (!Meter && !MeterText)
+	{
+		return;
+	}
+
+	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
+	float Fraction = 0.0f;
+	const bool bHasMeter = Inventory && Inventory->GetTagValueFraction(Item, MeterTag, MeterMaxTag, Fraction);
+	const bool bShown = bHasMeter && !(bHideFullMeter && Fraction >= 1.0f);
+	const ESlateVisibility MeterVisibility = bShown ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed;
+
+	if (Meter)
+	{
+		Meter->SetVisibility(MeterVisibility);
+		Meter->SetPercent(Fraction);
+		if (bTintMeter)
+		{
+			Meter->SetFillColorAndOpacity(MeterColors.Pick(Fraction));
+		}
+	}
+	if (MeterText)
+	{
+		MeterText->SetVisibility(MeterVisibility);
+		if (bShown)
+		{
+			MeterText->SetText(FText::FormatNamed(MeterFormat,
+				TEXT("Value"), FText::AsNumber(FMath::RoundToInt(Inventory->GetTagValue(Item, MeterTag))),
+				TEXT("Max"), FText::AsNumber(FMath::RoundToInt(Inventory->GetTagValueMax(Item, MeterTag, MeterMaxTag))),
+				TEXT("Percent"), FText::AsNumber(FMath::RoundToInt(Fraction * 100.0f))));
+		}
+		if (bTintMeter)
+		{
+			MeterText->SetColorAndOpacity(FSlateColor(MeterColors.Pick(Fraction)));
+		}
+	}
+}
+
+void UInventoryItemWidget::RefreshTagTint()
+{
+	if (!TagTint)
+	{
+		return;
+	}
+
+	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
+	const FLinearColor* TagColor = Inventory ? InventoryWidgets::FindTagColor(TagColors, Inventory->GetEffectiveItemTags(Item)) : nullptr;
+	TagTint->SetColorAndOpacity(TagColor ? *TagColor : DefaultTagTint);
 }
 
 void UInventoryItemWidget::ApplyCellLayout()
@@ -217,6 +282,7 @@ FReply UInventoryItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
 
 	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
 	{
+		bPressed = true;
 		return FReply::Handled().DetectDrag(TakeWidget(), EKeys::LeftMouseButton);
 	}
 	if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton)
@@ -233,13 +299,24 @@ FReply UInventoryItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
 
 FReply UInventoryItemWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
-	// A press that turned into a drag ends on the drop target instead, so this is a click. It counts even when the press was taken
-	// by a menu over the item and closed it, so a click on another item while a menu is open opens that item's menu.
+	// A press that turned into a drag ends on the drop target instead, so this is a click.
 	if (!bDragVisual && InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
 	{
 		const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
 		UInventoryUISubsystem* Interaction = GetInteraction();
-		if (Inventory && Interaction)
+		const bool bClicked = bPressed || (Interaction && Interaction->GetStyle().bClickOnAnyRelease);
+		bPressed = false;
+		if (!bClicked || !Inventory || !Interaction)
+		{
+			return FReply::Handled();
+		}
+
+		const bool bTransfer = InMouseEvent.IsShiftDown() && Interaction->GetStyle().bShiftClickTransfers && Interaction->GetTransferContainer().IsSet();
+		if (bTransfer)
+		{
+			Interaction->TransferItem(Item);
+		}
+		else
 		{
 			Interaction->ActivatePlacement(Inventory->GetItemContainer(Item), Inventory->GetItemPlacement(Item));
 		}
@@ -275,6 +352,7 @@ void UInventoryItemWidget::NativeOnMouseEnter(const FGeometry& InGeometry, const
 void UInventoryItemWidget::NativeOnMouseLeave(const FPointerEvent& InMouseEvent)
 {
 	Super::NativeOnMouseLeave(InMouseEvent);
+	bPressed = false;
 
 	// Only the mouse moving off ends the hover. A menu opening over the item doesn't, and on a gamepad the focused cell decides,
 	// not the hidden cursor Common UI moves along with focus.
@@ -290,6 +368,8 @@ void UInventoryItemWidget::NativeOnMouseLeave(const FPointerEvent& InMouseEvent)
 
 void UInventoryItemWidget::NativeOnDragDetected(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent, UDragDropOperation*& OutOperation)
 {
+	bPressed = false;
+
 	// Shift drags half the stack.
 	OutOperation = BeginDrag(InMouseEvent.IsShiftDown() ? FMath::Max(1, GetCount() / 2) : 0);
 }
@@ -307,7 +387,7 @@ UInventoryDragDropOperation* UInventoryItemWidget::BeginDrag(int32 Count)
 	Operation->Pivot = EDragPivot::CenterCenter;
 
 	// Grids draw a snapped held item themselves.
-	if (!Interaction->bSnapHeldItem)
+	if (!Interaction->GetStyle().bSnapHeldItem)
 	{
 		UInventoryItemWidget* Visual = CreateWidget<UInventoryItemWidget>(GetOwningPlayer(), DragVisualClass ? DragVisualClass.Get() : GetClass());
 		if (Visual)

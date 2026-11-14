@@ -884,17 +884,25 @@ EInventoryError FInventoryRegistry::SortContainer(FInventoryContainerHandle Cont
 	{
 		return EInventoryError::InvalidContainer;
 	}
-	if (Record->Layout->Type != EInventoryContainerType::Grid)
+	const bool bGrid = Record->Layout->Type == EInventoryContainerType::Grid;
+	if (!bGrid && Record->Layout->Type != EInventoryContainerType::List)
 	{
 		return EInventoryError::Rejected;
 	}
 
+	// Biggest first in a grid, so the big items find room.
 	TArray<FInventoryItemHandle> Sorted = Record->Items;
-	Sorted.StableSort([this](const FInventoryItemHandle& A, const FInventoryItemHandle& B)
+	Sorted.StableSort([this, bGrid](const FInventoryItemHandle& A, const FInventoryItemHandle& B)
 	{
-		const FIntPoint SizeA = Items[A.Index].Definition->Size;
-		const FIntPoint SizeB = Items[B.Index].Definition->Size;
-		return SizeA.X * SizeA.Y > SizeB.X * SizeB.Y;
+		const UInventoryItemDefinition& DefinitionA = *Items[A.Index].Definition;
+		const UInventoryItemDefinition& DefinitionB = *Items[B.Index].Definition;
+		const int32 AreaA = DefinitionA.Size.X * DefinitionA.Size.Y;
+		const int32 AreaB = DefinitionB.Size.X * DefinitionB.Size.Y;
+		if (bGrid && AreaA != AreaB)
+		{
+			return AreaA > AreaB;
+		}
+		return DefinitionA.DisplayName.CompareTo(DefinitionB.DisplayName) < 0;
 	});
 
 	return RunTransaction([&]() -> EInventoryError

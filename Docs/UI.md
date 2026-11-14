@@ -35,7 +35,7 @@ The other pictures on this page were taken before patch 0011 restyled the invent
 - **Common Game** gives each local player a **root layout**, `W_PrimaryGameLayout`, with four layers. Screens are pushed onto a layer by its tag, and the top screen of each layer is the active one.
 - **Every screen is an activatable widget.** While active, it decides whether input goes to the game, the UI or both, and it can stop the world.
 - **The C++ does the work; Widget Blueprints hold the look.** Each widget is a Blueprint child of a C++ class. The class finds the parts it needs by name, such as `MainGrid` or `MenuPanel`, and drives them. Graphs only do small visual things, such as showing a highlight.
-- **The inventory widgets come from the Modular Inventory plugin**: the grid, cells, slots, lists, item details and the Inventory UI Subsystem, which holds the item being moved. Hades adds the screens, the menus and the marks on items. See the plugin's README, 11.
+- **The inventory widgets come from the Modular Inventory plugin**: the grid, cells, slots, lists, item details, the Inventory Screen Widget the inventory screens are built on, and the Inventory UI Subsystem, which holds the item being moved. Hades adds its rules to the screens, the menus and the marks on items. See the plugin's README, 11.
 - **Keys reach screens as UI actions**: two by gameplay tag, the rest as rows of `DT_UIInputActions`, which also give the action bar its names and key icons ([13](#13-input-key-icons-and-the-action-bar)).
 
 ---
@@ -62,7 +62,7 @@ Later stacks draw on top. `W_Message` is the root layout's last child, so messag
 
 ## 3. Screens
 
-`UHadesActivatableWidget` is the base of every Hades screen. It is a Common UI activatable widget that sets the player's input mode while it is active, and can stop the world.
+`UHadesActivatableWidget` is the base of every Hades screen but the two inventory screens and their menus, which are built on the plugin's Inventory Screen Widget ([8](#8-inventory-screen)) and Inventory Item Menu Widget ([7](#7-popup-menus)). It is a Common UI activatable widget that sets the player's input mode while it is active, and can stop the world.
 
 | Category | Field | Default | Description |
 | --- | --- | --- | --- |
@@ -81,13 +81,13 @@ Later stacks draw on top. `W_Message` is the root layout's last child, so messag
 | Screen | Class | Input Config | Pause Game | Is Back Handler |
 | --- | --- | --- | --- | --- |
 | `W_HUD` | `HadesHUDLayout` | Game and Menu | | |
-| `W_InventoryScreen`, `W_ItemBoxScreen` | `HadesInventoryScreen` | Menu | ticked | ticked |
+| `W_InventoryScreen`, `W_ItemBoxScreen` | `HadesInventoryScreen` | Menu, from the plugin's screen | always | ticked |
 | `W_EscapeMenu` | `HadesActivatableWidget` | Menu | ticked | ticked |
-| `W_ItemMenu`, `W_ShortcutMenu` | `HadesItemMenu`, `HadesShortcutMenu` | Menu | | ticked |
+| `W_ItemMenu`, `W_ShortcutMenu` | `HadesItemMenu`, `HadesShortcutMenu` | Menu, from the plugin's item menu | | ticked |
 
-The defaults in the C++ classes already match the table, except for `W_EscapeMenu`, which sets its own.
+The defaults in the C++ classes already match the table, except for `W_EscapeMenu`, which sets its own. The inventory screens and menus have no Input Config or Pause Game to set: the plugin's classes take Menu input, and `UHadesInventoryScreen` always stops the world.
 
-Compiling a screen whose Blueprint doesn't implement **Get Desired Focus Target** gives a note: gamepads then have nothing to start on. The inventory screens and menus focus something in C++, so the note can be ignored for them.
+Compiling a `UHadesActivatableWidget` screen whose Blueprint doesn't implement **Get Desired Focus Target** gives a note: gamepads then have nothing to start on.
 
 Close a screen with Back or **Deactivate Widget**, never **Remove From Parent**: a screen that stops the world releases its pause request when it is deactivated.
 
@@ -95,7 +95,7 @@ Close a screen with Back or **Deactivate Widget**, never **Remove From Parent**:
 
 ## 4. Pausing
 
-- A screen with **Pause Game** adds a pause request to the player controller when it is activated, and removes it when it is deactivated.
+- A screen with **Pause Game** adds a pause request to the player controller when it is activated, and removes it when it is deactivated. The inventory screens always do.
 - While any request is open, the controller pauses the game, collapses the HUD, and turns on its `PausedPostProcess`, which takes all color out of the world ([Gameplay 2](Gameplay.md#2-player-controller)).
 - The UI is drawn after post processing, so menus keep their colors. Behind the inventory, a light blur and dim let the grey room show through, as in Requiem.
 - Widget animations play while the game is paused, so messages fade in menus too.
@@ -139,7 +139,7 @@ The player controller's **Show Message** tells the player something, such as "It
 
 ## 7. Popup menus
 
-`UHadesPopupMenu` is a small menu pushed onto `UI.Layer.Modal` beside something on screen, such as an item. The item menu and the shortcut menu are popup menus.
+The item menu and the shortcut menu are small menus pushed onto `UI.Layer.Modal` beside an item. Both are built on the plugin's **Inventory Item Menu Widget** (plugin README, 11.9), which does everything below; Hades only fills them in.
 
 | Named part | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -147,9 +147,11 @@ The player controller's **Show Message** tells the player something, such as "It
 
 **How it works**
 
-- **Placing.** It opens beside its anchor, a box on screen such as the item's, toward the middle of the screen, so it never runs off an edge: to the right of an anchor on the left half of the screen and to the left of one on the right half; level with the anchor's top and running down in the upper half, level with its bottom and running up in the lower half. `PlaceBeside` is C++ only.
-- **Clicks.** The menu's root is a full-screen, hit-testable border, so every click reaches the menu and nothing behind it can be hovered while it's open. A click inside `MenuPanel` works as normal. A click anywhere else closes the menu, except on the anchor, as in Requiem: there, a click does nothing, and dragging closes the menu and starts dragging the item.
-- **Back** closes it. Its input config is **Menu**.
+- **Opening.** The inventory screen pushes the menu and calls its **Set Item** with the item and the screen's **Find Item Widget**, which finds the item in the pockets, the item box or the key item list.
+- **Placing.** It opens beside the item's widget, toward the middle of the screen, so it never runs off an edge: to the right of an item on the left half of the screen and to the left of one on the right half; level with the item's top and running down in the upper half, level with its bottom and running up in the lower half. Without a widget, it opens beside the gamepad's focus, or at the cursor.
+- **While open**, the item is selected, which lights it up, and anything held is put back. Closing unselects it, unless Combine is now choosing a second item.
+- **Clicks.** The menu's root is a full-screen, hit-testable border, so every click reaches the menu and nothing behind it can be hovered while it's open. A click inside `MenuPanel` works as normal. A click anywhere else closes the menu, except on the item, as in Requiem: there, a click does nothing, and dragging closes the menu and starts dragging the item.
+- **Back** closes it. Its input config is **Menu**. Gamepad focus starts on the first button that shows.
 - Since a click elsewhere closes the menu on the press, letting go over another item opens that item's menu: one click switches menus.
 
 ---
@@ -157,6 +159,8 @@ The player controller's **Show Message** tells the player something, such as "It
 ## 8. Inventory screen
 
 `UHadesInventoryScreen` is the player's inventory. `W_InventoryScreen` and `W_ItemBoxScreen` are made from it ([UI Reference 7](UIReference.md#7-screens)). The HUD pushes the inventory on Tab; an item box pushes the item box screen.
+
+It is built on the plugin's **Inventory Screen Widget**, which handles holding and moving items, Back, the Move, Rotate and Split actions, and cleaning up on closing (plugin README, 11.8). `UHadesInventoryScreen` adds the game's rules: stopping the world, the tabs, the item and shortcut menus and their actions, the hints, Auto Sort and the item box.
 
 ![The same screen with the name of each widget](Images/ui-inventory-anatomy.png)
 
@@ -184,7 +188,7 @@ All are optional. A screen without `Pages` has no tabs; a screen with `ItemBoxLi
 
 | Named part | Type | Description |
 | --- | --- | --- |
-| `MainGrid` | Inventory Grid Widget | The pockets. Its first cell takes gamepad focus when the screen opens, and menus open beside its items. |
+| `MainGrid` | Inventory Grid Widget | The pockets. Its first cell takes gamepad focus when the screen opens, as on any of the plugin's screens. |
 | `ItemBoxList` | Inventory List Widget | Shows the item box and turns on Store and Take ([8.6](#86-item-box-mode)). |
 | `ActionHint` | Any widget | Holds `ActionHintText`. Hidden, not collapsed, while there's nothing to say, so the page above doesn't move. |
 | `ActionHintText` | Text Block | What to do now, or what the highlighted menu option does. |
@@ -197,26 +201,27 @@ All are optional. A screen without `Pages` has no tabs; a screen with `ItemBoxLi
 | --- | --- | --- | --- | --- |
 | Inventory | Item Menu Class | none | `W_ItemMenu` | Pushed onto `UI.Layer.Modal` beside the item clicked. |
 | Inventory | Shortcut Menu Class | none | `W_ShortcutMenu` | Pushed by Register Shortcut. Empty hides Register Shortcut. |
+| Inventory › Screen | Interaction Style | set by the C++ | as set by the C++ | How items are handled ([8.5](#85-item-menus-and-actions)). From the plugin's screen. |
 | Tabs | Items Page | 1 | 1 | The page with the items, counting from 0. The screen opens on it. |
-| Input | Move Action | none | `Move` | Picks up the item under the cursor or focus, and puts the held item down. |
+| Input | Move Action | none | `Move` | Picks up the item under the cursor or focus, and puts the held item down. From the plugin's screen. |
+| Input | Rotate Action | none | `Rotate` | Turns the held item. From the plugin's screen. |
+| Input | Split Action | none | empty | Halves the held stack. Requiem has none. From the plugin's screen. |
+| Input | Confirm Action | none | `Confirm` | Shown in the action bar ([3](#3-screens)). From the plugin's screen. |
 | Input | Organize Action | none | `Organize` | Auto Sort. |
-| Input | Rotate Action | none | `Rotate` | Turns the held item. |
-| Input | Split Action | none | empty | Halves the held stack. Requiem has none. |
 | Input | Previous Tab Action, Next Tab Action | none | `PreviousTab`, `NextTab` | Change the page, or turn the held item. |
-| Input | Confirm Action | none | `Confirm` | Shown in the action bar ([3](#3-screens)). |
 | Hints | Move Hint | "Select an area to place this item." | | The hint while an item is moved. |
 | Hints | Combine Hint | "Select an item to combine with." | | The hint while choosing the second item to combine. |
 | Hints | Idle Hint | empty | empty | The hint the rest of the time. Empty hides it. |
 
-The actions are rows of `DT_UIInputActions`; an action left empty does nothing and isn't shown. The C++ sets **Input Config** Menu, **Pause Game** and **Is Back Handler**. `W_InventoryScreen` also ticks **Is Back Action Displayed in Action Bar** and **Auto Restore Focus**.
+The actions are rows of `DT_UIInputActions`; an action left empty does nothing and isn't shown. The plugin's screen sets **Is Back Handler** and takes Menu input. `W_InventoryScreen` also ticks **Is Back Action Displayed in Action Bar** and **Auto Restore Focus**.
 
 ### 8.4 Actions
 
-Each action is only bound while it can work, so the action bar always shows what works now:
+Each action is only bound while it can work, so the action bar always shows what works now. The plugin's screen binds Move, Rotate and Split; `UHadesInventoryScreen` adds Organize and the tabs.
 
 | Action | Bound while | Does |
 | --- | --- | --- |
-| Move | On the Items page, and something is held, or the item under the cursor or focus can be moved | Puts the held item down where it's drawn, or picks up the item under the cursor or focus. Not while choosing an item to combine. |
+| Move | On the Items page, and something is held, or the item under the cursor or focus can be moved. Not while choosing an item to combine. | Puts the held item down where it's drawn, or picks up the item under the cursor or focus. |
 | Organize | On the Items page | Puts back anything held, then Organize Pockets. "Couldn't organize your pockets." if it fails. Not while choosing an item to combine. |
 | Rotate | On the Items page, while the held item can turn and still fit | Rotate Held. |
 | Split | On the Items page, while holding a stack of more than one that can split | Split Held. |
@@ -228,11 +233,11 @@ Items in the key item list can't be moved: Move isn't bound over them.
 
 ### 8.5 Item menus and actions
 
-- **On opening**, the screen sets the plugin's Inventory UI Subsystem to play like Requiem: **Click Opens Item Menu**, **Swap Picks Up Other** and **Snap Held Item** on. It listens to the subsystem for item menus, held items, hovering and combining, and opens on the Items page.
-- **A click or Accept on an item** asks for its item menu. The screen opens `W_ItemMenu` beside it if the item can do anything, it isn't choosing an item to combine, and it's on the Items page. It puts back anything held and marks the item as selected, which lights it up.
+- **Its Interaction Style** plays like Requiem: **Click Opens Item Menu**, **Snap Held Item**, **Swap Picks Up Other** and **Click On Any Release** on, and **Swap Items** left on (plugin README, 11.4). The plugin's screen applies it while the inventory is open. The screen opens on the Items page.
+- **A click or Accept on an item** asks for its item menu. The screen opens `W_ItemMenu` beside it if the item can do anything, it isn't choosing an item to combine, and it's on the Items page. The menu puts back anything held and marks the item as selected, which lights it up ([7](#7-popup-menus)). With a menu open, a click on another item opens that item's menu at once, as Click On Any Release counts the release over it.
 - **When a menu closes**, the hint goes back to the screen's own, and the item is unselected, unless the player is now choosing an item to combine with.
 - **Dragging the item a menu is open on** closes the menu and starts dragging the item.
-- **Running an action** ([Inventory 6](Inventory.md#6-item-actions)): the menu closes first, so the screen has focus again for whatever the action starts. Combine marks the first item, and the next item picked completes it. Store and Take tell the player when they fail.
+- **Running an action** ([Inventory 6](Inventory.md#6-item-actions)): the menu closes first, so the screen has focus again for whatever the action starts. Combine starts the subsystem's choosing for the first item, which keeps it lit, and the next item picked completes it with exactly those two items; picking the same item again does nothing. Store and Take tell the player when they fail.
 - **Can Run Item Action** and **Run Item Action** (Action, Item) are Blueprint-callable, for screens of your own.
 - **On closing**, the screen drops whatever is held, chosen, hovered or selected. Nothing moves until an item is put down, so closing is always safe.
 
@@ -242,7 +247,7 @@ A screen with `ItemBoxList` is an item box screen:
 
 - On opening, the list is pointed at the player controller's item box storage ([Inventory 11](Inventory.md#11-the-item-box)).
 - **Store** and **Take** appear in the item menu.
-- Menus for items outside the pockets' grid, such as in the box or the key item list, open beside the gamepad's focus, or at the cursor.
+- Menus for items in the box or the key item list open beside them, as for items in the pockets.
 - `W_ItemBoxScreen` has no `Pages`, so no tabs.
 
 ![The item box screen: the box's contents on the left as rows with names](Images/ui-item-box.png)
@@ -257,7 +262,7 @@ A screen with `ItemBoxList` is an item box screen:
 
 ## 9. Item menu
 
-`UHadesItemMenu` lists what can be done with one item. `W_ItemMenu` is made from it ([UI Reference 6.11](UIReference.md#611-w_itemmenu)).
+`UHadesItemMenu` lists what can be done with one item. It is an Inventory Item Menu Widget ([7](#7-popup-menus)) that fills its buttons from the inventory screen's actions. `W_ItemMenu` is made from it ([UI Reference 6.11](UIReference.md#611-w_itemmenu)).
 
 | Named part | Type | Description |
 | --- | --- | --- |
@@ -288,7 +293,7 @@ The first button that shows takes focus, and its description shows. Gamepad focu
 
 ## 10. Shortcut menu
 
-`UHadesShortcutMenu` is the list **Register Shortcut** opens: one entry per quick slot, with its key's icon and what's on it now. `W_ShortcutMenu` and `W_ShortcutEntry` are made from it and from `UHadesShortcutEntry` ([UI Reference 6.13](UIReference.md#613-w_shortcutmenu)).
+`UHadesShortcutMenu` is the list **Register Shortcut** opens: one entry per quick slot, with its key's icon and what's on it now. It is an Inventory Item Menu Widget too ([7](#7-popup-menus)). `W_ShortcutMenu` and `W_ShortcutEntry` are made from it and from `UHadesShortcutEntry` ([UI Reference 6.13](UIReference.md#613-w_shortcutmenu)).
 
 ![Register Shortcut opens a list of the shortcuts beside the item](Images/ui-shortcut-menu.png)
 
@@ -489,7 +494,7 @@ The look follows the Example: neutral greys, thin drafting lines, white for what
 
 ### 16.2 A new popup menu
 
-1. In C++, make a child of `UHadesPopupMenu`. Push it with `UPrimaryGameLayout::PushWidgetToLayerStack` onto `UI.Layer.Modal`, and call `PlaceBeside` with the box it belongs beside from the push's init function, as `UHadesInventoryScreen::OpenItemMenu` does.
+1. In C++, make a child of the plugin's `UInventoryItemMenuWidget` and fill it in `NativeOnItemChanged`. Push it with `UPrimaryGameLayout::PushWidgetToLayerStack` onto `UI.Layer.Modal`, and call `SetItem` (Item, `FindItemWidget(Item)`) from the push's init function, as `UHadesInventoryScreen::OpenItemMenu` does. A Blueprint-only menu works too: push it with **Push Content To Layer For Player**, then call **Set Item**.
 2. Its Widget Blueprint: a root Overlay with a `ClickCatcher` Border (Fill/Fill, Brush Color `00000000`, **Visible**), then a Canvas Panel (Fill/Fill) holding `MenuPanel` with **Size To Content** ticked. See `W_ItemMenu` in the [UI Reference](UIReference.md#611-w_itemmenu).
 
 ### 16.3 A new item action
@@ -497,7 +502,7 @@ The look follows the Example: neutral greys, thin drafting lines, white for what
 1. In `HadesInventoryScreen.h`, add it to `EHadesItemAction`, before `Take`, or update `ENUM_RANGE_BY_FIRST_AND_LAST` if it goes last.
 2. In `UHadesInventoryScreen`, add its case to `CanRunItemAction` and `RunItemAction`.
 3. In `UHadesItemMenu`, add a `BindWidgetOptional` button for it, return it from `GetButton`, and give it a description.
-4. In `W_ItemMenu`, add a `W_MenuButton` with the button's exact name.
+4. In `W_ItemMenu`, add a `W_ItemMenuButton` with the button's exact name.
 
 ### 16.4 Something new in the HUD
 

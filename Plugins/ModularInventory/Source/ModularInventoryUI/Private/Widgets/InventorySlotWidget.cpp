@@ -1,6 +1,7 @@
 #include "Widgets/InventorySlotWidget.h"
 
 #include "Components/TextBlock.h"
+#include "GameFramework/PlayerController.h"
 
 #include "Data/InventoryContainerLayout.h"
 #include "Data/InventoryItemDefinition.h"
@@ -23,6 +24,10 @@ void UInventorySlotWidget::NativeConstruct()
 
 	if (ContainerTag.IsValid())
 	{
+		if (APlayerController* Player = GetOwningPlayer())
+		{
+			Player->OnPossessedPawnChanged.AddUniqueDynamic(this, &ThisClass::HandlePawnChanged);
+		}
 		SetContainer(InventoryWidgets::FindPlayerContainer(*this, ContainerTag));
 	}
 	else
@@ -34,6 +39,10 @@ void UInventorySlotWidget::NativeConstruct()
 void UInventorySlotWidget::NativeDestruct()
 {
 	RegistryListener.Unbind();
+	if (APlayerController* Player = GetOwningPlayer())
+	{
+		Player->OnPossessedPawnChanged.RemoveDynamic(this, &ThisClass::HandlePawnChanged);
+	}
 	if (UInventoryUISubsystem* Interaction = GetInteraction())
 	{
 		Interaction->OnTargetChanged.RemoveDynamic(this, &ThisClass::HandleTargetChanged);
@@ -60,6 +69,16 @@ void UInventorySlotWidget::SetContainerPlacement(FInventoryContainerHandle InCon
 {
 	SetPlacement(InContainer, InPlacement);
 	Refresh();
+}
+
+UInventoryItemWidget* UInventorySlotWidget::GetItemWidget(FInventoryItemHandle Item) const
+{
+	return Item.IsSet() && GetItem() == Item ? ItemWidget.Get() : nullptr;
+}
+
+void UInventorySlotWidget::HandlePawnChanged(APawn* OldPawn, APawn* NewPawn)
+{
+	SetContainer(InventoryWidgets::FindPawnContainer(NewPawn, ContainerTag));
 }
 
 void UInventorySlotWidget::Refresh()
@@ -121,7 +140,7 @@ void UInventorySlotWidget::NativeOnDragLeave(const FDragDropEvent& InDragDropEve
 {
 	Super::NativeOnDragLeave(InDragDropEvent, InOperation);
 
-	if (IsTargeted() && !GetInteraction()->bSnapHeldItem)
+	if (IsTargeted() && !GetInteraction()->GetStyle().bSnapHeldItem)
 	{
 		GetInteraction()->ClearTarget();
 	}

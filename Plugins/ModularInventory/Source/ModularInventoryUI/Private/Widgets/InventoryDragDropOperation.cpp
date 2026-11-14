@@ -8,8 +8,15 @@ void UInventoryDragDropOperation::DragCancelled_Implementation(const FPointerEve
 
 	// Dropped on nothing, or on a spot that refused it. A snapped held item goes where it's drawn, if it can.
 	UInventoryUISubsystem* Subsystem = Interaction.Get();
-	if (Subsystem && !(Subsystem->bSnapHeldItem && Subsystem->PlaceHeld(Subsystem->GetTargetContainer(), Subsystem->GetTargetPlacement())))
+	if (!Subsystem || (Subsystem->GetStyle().bSnapHeldItem && Subsystem->PlaceHeld(Subsystem->GetTargetContainer(), Subsystem->GetTargetPlacement())))
 	{
-		Subsystem->CancelHold();
+		return;
 	}
+
+	// Inventory widgets stop aiming it as the cursor leaves them, so no target means it was let go outside them all.
+	if (!Subsystem->GetTargetContainer().IsSet())
+	{
+		Subsystem->OnDroppedOutside.Broadcast(Subsystem->GetHeldItem(), Subsystem->GetHeldCount());
+	}
+	Subsystem->CancelHold();
 }

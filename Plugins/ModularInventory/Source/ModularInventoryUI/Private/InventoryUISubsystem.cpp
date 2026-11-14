@@ -1,6 +1,8 @@
 #include "InventoryUISubsystem.h"
 
 #include "Engine/LocalPlayer.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerController.h"
 
 #include "Data/InventoryContainerLayout.h"
 #include "Data/InventoryItemDefinition.h"
@@ -14,6 +16,18 @@ namespace
 	{
 		const FInventoryContainerRecord* Record = Registry.FindContainer(Container);
 		return Record && Record->Layout->bReadOnlyInUI;
+	}
+
+	bool IsGrid(const FInventoryRegistry& Registry, FInventoryContainerHandle Container)
+	{
+		const FInventoryContainerRecord* Record = Registry.FindContainer(Container);
+		return Record && Record->Layout->Type == EInventoryContainerType::Grid;
+	}
+
+	FInventoryContainerHandle GetItemContainer(const FInventoryRegistry& Registry, FInventoryItemHandle Item)
+	{
+		const FInventoryItemRecord* Record = Registry.FindItem(Item);
+		return Record ? Record->Container : FInventoryContainerHandle();
 	}
 }
 
@@ -35,19 +49,32 @@ FInventoryRegistry* UInventoryUISubsystem::GetRegistry() const
 	return Inventory ? &Inventory->GetRegistry() : nullptr;
 }
 
+// Style
+void UInventoryUISubsystem::SetStyle(const FInventoryInteractionStyle& InStyle)
+{
+	Style = InStyle;
+	RefreshTarget();
+}
+
 // Holding
 bool UInventoryUISubsystem::BeginHold(FInventoryItemHandle Item, int32 Count)
 {
-	const FInventoryRegistry* Registry = GetRegistry();
-	const FInventoryItemRecord* Record = Registry ? Registry->FindItem(Item) : nullptr;
-	if (!Record || bChoosingItem || IsReadOnly(*Registry, Record->Container))
+	if (!CanBeginHold(Item))
 	{
 		return false;
 	}
 
+	const FInventoryItemRecord* Record = GetRegistry()->FindItem(Item);
 	const bool bWholeStack = Count <= 0 || Count >= Record->Count || !Record->Definition->CanSplit();
 	SetHeld(Item, bWholeStack ? Record->Count : Count, Record->Placement.bRotated);
 	return true;
+}
+
+bool UInventoryUISubsystem::CanBeginHold(FInventoryItemHandle Item) const
+{
+	const FInventoryRegistry* Registry = GetRegistry();
+	const FInventoryItemRecord* Record = Registry ? Registry->FindItem(Item) : nullptr;
+	return Record && !bChoosingItem && !IsReadOnly(*Registry, Record->Container);
 }
 
 void UInventoryUISubsystem::CancelHold()
@@ -89,6 +116,13 @@ void UInventoryUISubsystem::SplitHeld()
 	{
 		SetHeldCount(HeldCount > 1 ? HeldCount / 2 : Record->Count);
 	}
+}
+
+bool UInventoryUISubsystem::CanSplitHeld() const
+{
+	const FInventoryRegistry* Registry = GetRegistry();
+	const FInventoryItemRecord* Record = Registry ? Registry->FindItem(HeldItem) : nullptr;
+	return Record && Record->Count > 1 && Record->Definition->CanSplit();
 }
 
 void UInventoryUISubsystem::SetHeldCount(int32 Count)
@@ -164,7 +198,7 @@ bool UInventoryUISubsystem::PlaceHeld(FInventoryContainerHandle Container, const
 	}
 
 	CancelHold();
-	if (Action == EInventoryDropAction::Swap && bSwapPicksUpOther && Other.IsSet())
+	if (Action == EInventoryDropAction::Swap && Style.bSwapPicksUpOther && Other.IsSet())
 	{
 		BeginHold(Other);
 	}
@@ -176,7 +210,7 @@ bool UInventoryUISubsystem::ActivatePlacement(FInventoryContainerHandle Containe
 	if (IsHolding())
 	{
 		// Where grids draw it, when they do.
-		const bool bAtTarget = bSnapHeldItem && TargetContainer.IsSet();
+		const bool bAtTarget = Style.bSnapHeldItem && TargetContainer.IsSet();
 		return PlaceHeld(bAtTarget ? TargetContainer : Container, bAtTarget ? TargetPlacement : Placement);
 	}
 
@@ -188,16 +222,46 @@ bool UInventoryUISubsystem::ActivatePlacement(FInventoryContainerHandle Containe
 	}
 	if (bChoosingItem)
 	{
-		bChoosingItem = false;
-		OnItemChosen.Broadcast(Item);
+		// An item can't be used on itself, so the choosing goes on.
+		if (Item == ChoosingFor)
+		{
+			return false;
+		}
+		const FInventoryItemHandle For = ChoosingFor;
+		CancelChoosingItem();
+		OnItemChosen.Broadcast(For, Item);
 		return true;
 	}
-	if (bClickOpensItemMenu)
+	if (Style.bClickOpensItemMenu)
 	{
 		RequestContext(Item);
 		return true;
 	}
 	return BeginHold(Item);
+}
+
+bool UInventoryUISubsystem::PickUpOrPlace()
+{
+	if (IsHolding())
+	{
+		return PlaceHeld(TargetContainer, TargetPlacement);
+	}
+
+	const FInventoryItemHandle Item = HoveredItem;
+	if (!CanBeginHold(Item))
+	{
+		return false;
+	}
+
+	// Aimed where it lies, so it's drawn there until the cursor or focus moves on.
+	const FInventoryRegistry* Registry = GetRegistry();
+	SetTarget(Registry->FindItem(Item)->Container, Registry->GetItemPlacement(Item));
+	return BeginHold(Item);
+}
+
+bool UInventoryUISubsystem::CanPickUpOrPlace() const
+{
+	return IsHolding() || CanBeginHold(HoveredItem);
 }
 
 EInventoryDropAction UInventoryUISubsystem::PreviewPlacement(FInventoryContainerHandle Container, const FInventoryPlacement& Placement)
@@ -266,13 +330,12 @@ EInventoryDropAction UInventoryUISubsystem::ResolvePlacement(FInventoryContainer
 	const bool bOccupiedByOther = OccupantRecord && Occupant != HeldItem;
 	const bool bMerge = bOccupiedByOther && Registry->CanStack(HeldItem, Occupant);
 
-	// Only an item of the same size and shape swaps, so a swap never depends on what space is free. A long item turned while
-	// held no longer has the shape of the spot it left, so it doesn't swap. Only whole stacks swap: the rest of a split stack
-	// would have nowhere to go.
-	const FIntPoint HeldSize = GetHeldSize();
-	const bool bKeepsShape = bHeldRotated == Held->Placement.bRotated || HeldSize.X == HeldSize.Y;
-	const bool bCanSwap = bOccupiedByOther && !bMerge && MoveCount == 0 && bKeepsShape
-		&& OccupantRecord->Definition->GetSize(OccupantRecord->Placement.bRotated) == HeldSize;
+	// Only whole stacks swap: the rest of a split stack would have nowhere to go. Each item lands where the other was, so in a grid
+	// it must take the same cells; a long item turned while held no longer has the shape of the spot it left.
+	const FIntPoint OccupantSize = OccupantRecord ? OccupantRecord->Definition->GetSize(OccupantRecord->Placement.bRotated) : FIntPoint::ZeroValue;
+	const bool bFitsTarget = !IsGrid(*Registry, Container) || OccupantSize == GetHeldSize();
+	const bool bFitsSource = !IsGrid(*Registry, Held->Container) || OccupantSize == Held->Definition->GetSize(Held->Placement.bRotated);
+	const bool bCanSwap = Style.bSwapItems && bOccupiedByOther && !bMerge && MoveCount == 0 && bFitsTarget && bFitsSource;
 
 	// Equipment slots make way like the equipment component does: what's in the way goes to the owner's storage.
 	const UInventoryContainerLayout& TargetLayout = *TargetRecord->Layout;
@@ -369,10 +432,105 @@ void UInventoryUISubsystem::RequestContext(FInventoryItemHandle Item)
 	}
 }
 
-void UInventoryUISubsystem::BeginChoosingItem()
+void UInventoryUISubsystem::BeginChoosingItem(FInventoryItemHandle Item)
 {
 	CancelHold();
 	bChoosingItem = true;
+	ChoosingFor = Item;
+	SetSelectedItem(Item);
+}
+
+void UInventoryUISubsystem::CancelChoosingItem()
+{
+	if (bChoosingItem)
+	{
+		bChoosingItem = false;
+		ChoosingFor.Reset();
+		SetSelectedItem(FInventoryItemHandle());
+	}
+}
+
+// Transfer
+UInventoryComponent* UInventoryUISubsystem::GetPlayerInventory() const
+{
+	const ULocalPlayer* LocalPlayer = GetLocalPlayer();
+	const APlayerController* Controller = LocalPlayer ? LocalPlayer->GetPlayerController(LocalPlayer->GetWorld()) : nullptr;
+	return Controller ? UInventoryComponent::FindInventoryComponent(Controller->GetPawn()) : nullptr;
+}
+
+TArray<FInventoryContainerHandle> UInventoryUISubsystem::GetTransferTargets(FInventoryItemHandle Item) const
+{
+	const FInventoryRegistry* Registry = GetRegistry();
+	const FInventoryItemRecord* Record = Registry ? Registry->FindItem(Item) : nullptr;
+	const UInventoryComponent* PlayerInventory = GetPlayerInventory();
+	if (!Record || !PlayerInventory || bChoosingItem || !Registry->IsValid(TransferContainer)
+		|| IsReadOnly(*Registry, Record->Container) || IsReadOnly(*Registry, TransferContainer))
+	{
+		return TArray<FInventoryContainerHandle>();
+	}
+
+	const bool bFromTransfer = Registry->GetRootContainer(Record->Container) == Registry->GetRootContainer(TransferContainer);
+	return bFromTransfer ? PlayerInventory->GetStorageContainers() : TArray<FInventoryContainerHandle>({ TransferContainer });
+}
+
+bool UInventoryUISubsystem::TransferItem(FInventoryItemHandle Item)
+{
+	FInventoryRegistry* Registry = GetRegistry();
+	const TArray<FInventoryContainerHandle> Targets = GetTransferTargets(Item);
+	if (!Registry || Targets.IsEmpty())
+	{
+		return false;
+	}
+
+	if (Item == HeldItem)
+	{
+		CancelHold();
+	}
+	const FInventoryContainerHandle HoveredIn = GetItemContainer(*Registry, HoveredItem);
+	if (Registry->MoveItemToContainers(Item, Targets, 0, true) != EInventoryError::None)
+	{
+		return false;
+	}
+
+	// Gone from under the cursor or focus, unless only some of the stack fit.
+	if (GetItemContainer(*Registry, HoveredItem) != HoveredIn)
+	{
+		SetHoveredItem(FInventoryItemHandle());
+	}
+	return true;
+}
+
+bool UInventoryUISubsystem::CanTransferItem(FInventoryItemHandle Item) const
+{
+	FInventoryRegistry* Registry = GetRegistry();
+	const TArray<FInventoryContainerHandle> Targets = GetTransferTargets(Item);
+	return Registry && !Targets.IsEmpty() && Registry->DryRun([&]() { return Registry->MoveItemToContainers(Item, Targets, 0, true); }) == EInventoryError::None;
+}
+
+bool UInventoryUISubsystem::TakeAll()
+{
+	FInventoryRegistry* Registry = GetRegistry();
+	UInventoryComponent* PlayerInventory = GetPlayerInventory();
+	if (!CanTakeAll() || !PlayerInventory)
+	{
+		return false;
+	}
+
+	CancelHold();
+	const FInventoryContainerHandle HoveredIn = GetItemContainer(*Registry, HoveredItem);
+	const bool bTookEverything = PlayerInventory->TakeAll(TransferContainer);
+	if (GetItemContainer(*Registry, HoveredItem) != HoveredIn)
+	{
+		SetHoveredItem(FInventoryItemHandle());
+	}
+	return bTookEverything;
+}
+
+bool UInventoryUISubsystem::CanTakeAll() const
+{
+	const FInventoryRegistry* Registry = GetRegistry();
+	const FInventoryContainerRecord* Record = Registry ? Registry->FindContainer(TransferContainer) : nullptr;
+	return Record && !Record->Items.IsEmpty() && !bChoosingItem && !IsReadOnly(*Registry, TransferContainer) && GetPlayerInventory();
 }
 
 void UInventoryUISubsystem::ClearInteraction()

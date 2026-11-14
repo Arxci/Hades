@@ -32,9 +32,9 @@ void UHadesShortcutEntry::SetShortcut(const FDataTableRowHandle& Key, FInventory
 }
 
 // Menu
-void UHadesShortcutMenu::SetItem(FInventoryItemHandle InItem, const FBox2D& InAnchor)
+void UHadesShortcutMenu::NativeOnItemChanged()
 {
-	Item = InItem;
+	Super::NativeOnItemChanged();
 
 	// The stack reuses menus, so the entries are made again each time.
 	EntryPanel->ClearChildren();
@@ -49,14 +49,12 @@ void UHadesShortcutMenu::SetItem(FInventoryItemHandle InItem, const FBox2D& InAn
 		Entry->OnClicked().AddUObject(this, &ThisClass::HandleEntryClicked, SlotIndex);
 		Entries.Add(Entry);
 	}
-
-	PlaceBeside(InAnchor);
 }
 
 UWidget* UHadesShortcutMenu::NativeGetDesiredFocusTarget() const
 {
 	const UHadesQuickSlotComponent* QuickSlots = GetQuickSlots();
-	const int32 CurrentSlot = QuickSlots ? QuickSlots->FindSlot(Item) : INDEX_NONE;
+	const int32 CurrentSlot = QuickSlots ? QuickSlots->FindSlot(GetItem()) : INDEX_NONE;
 	if (Entries.IsValidIndex(CurrentSlot))
 	{
 		return Entries[CurrentSlot].Get();
@@ -68,13 +66,13 @@ void UHadesShortcutMenu::HandleEntryClicked(int32 SlotIndex)
 {
 	if (UHadesQuickSlotComponent* QuickSlots = GetQuickSlots())
 	{
-		if (QuickSlots->GetSlotItem(SlotIndex) == Item)
+		if (QuickSlots->GetSlotItem(SlotIndex) == GetItem())
 		{
 			QuickSlots->ClearSlot(SlotIndex);
 		}
 		else
 		{
-			QuickSlots->AssignItem(SlotIndex, Item);
+			QuickSlots->AssignItem(SlotIndex, GetItem());
 		}
 	}
 	DeactivateWidget();

@@ -100,6 +100,22 @@ bool FInventoryRegistry::HasTagValue(FInventoryItemHandle Item, const FGameplayT
 	return Record && (Record->Definition->FindTagValue(Tag) || Record->TagValues.ContainsByPredicate([&Tag](const FInventoryTagValue& TagValue) { return TagValue.Tag == Tag; }));
 }
 
+float FInventoryRegistry::GetTagValueMax(FInventoryItemHandle Item, const FGameplayTag& Tag, const FGameplayTag& MaxTag) const
+{
+	const FInventoryItemRecord* Record = FindItem(Item);
+	if (!Record)
+	{
+		return 0.0f;
+	}
+	if (MaxTag.IsValid() && HasTagValue(Item, MaxTag))
+	{
+		return GetEffectiveTagValue(Item, MaxTag);
+	}
+
+	const FInventoryTagValue* Starting = Record->Definition->FindTagValue(Tag);
+	return Starting ? Starting->Value : 0.0f;
+}
+
 const FInstancedStruct* FInventoryRegistry::FindItemFragment(FInventoryItemHandle Item, const UScriptStruct* Type) const
 {
 	const FInventoryItemRecord* Record = FindItem(Item);
@@ -236,18 +252,61 @@ void FInventoryRegistry::ForEachSocketAffecting(FInventoryItemHandle Item, TFunc
 	}
 }
 
+void FInventoryRegistry::ForEachAttachment(FInventoryItemHandle Item, TFunctionRef<void(FInventoryItemHandle Attachment)> Callback) const
+{
+	const FInventoryItemRecord* Record = FindItem(Item);
+	if (!Record)
+	{
+		return;
+	}
+
+	for (const FInventoryContainerHandle& Container : Record->Containers)
+	{
+		const FInventoryContainerRecord* ContainerRecord = FindContainer(Container);
+		if (!ContainerRecord || !ContainerRecord->Layout->bEquipment)
+		{
+			continue;
+		}
+
+		for (const FInventoryItemHandle& Attachment : ContainerRecord->Items)
+		{
+			Callback(Attachment);
+			ForEachAttachment(Attachment, Callback);
+		}
+	}
+}
+
+TArray<FInventoryItemHandle> FInventoryRegistry::GetAttachments(FInventoryItemHandle Item) const
+{
+	TArray<FInventoryItemHandle> Attachments;
+	ForEachAttachment(Item, [&Attachments](FInventoryItemHandle Attachment)
+	{
+		Attachments.Add(Attachment);
+	});
+	return Attachments;
+}
+
 float FInventoryRegistry::GetEffectiveTagValue(FInventoryItemHandle Item, const FGameplayTag& Tag) const
 {
 	float Value = GetTagValue(Item, Tag);
-	ForEachSocketAffecting(Item, [&](FInventoryItemHandle Source, const FInventoryItemSocket& Socket)
+	auto AddModifiers = [&Tag, &Value](const TArray<FInventoryTagValue>& Modifiers)
 	{
-		for (const FInventoryTagValue& Modifier : Socket.ValueModifiers)
+		for (const FInventoryTagValue& Modifier : Modifiers)
 		{
 			if (Modifier.Tag == Tag)
 			{
 				Value += Modifier.Value;
 			}
 		}
+	};
+
+	ForEachSocketAffecting(Item, [&](FInventoryItemHandle Source, const FInventoryItemSocket& Socket)
+	{
+		AddModifiers(Socket.ValueModifiers);
+	});
+	ForEachAttachment(Item, [&](FInventoryItemHandle Attachment)
+	{
+		AddModifiers(Items[Attachment.Index].Definition->AttachmentValueModifiers);
 	});
 	return Value;
 }
@@ -258,6 +317,10 @@ FGameplayTagContainer FInventoryRegistry::GetEffectiveTags(FInventoryItemHandle 
 	ForEachSocketAffecting(Item, [&Tags](FInventoryItemHandle Source, const FInventoryItemSocket& Socket)
 	{
 		Tags.AppendTags(Socket.GrantedTags);
+	});
+	ForEachAttachment(Item, [this, &Tags](FInventoryItemHandle Attachment)
+	{
+		Tags.AppendTags(Items[Attachment.Index].Definition->AttachmentGrantedTags);
 	});
 	return Tags;
 }
@@ -311,6 +374,20 @@ int32 FInventoryRegistry::CountItems(TConstArrayView<FInventoryContainerHandle> 
 	for (const FInventoryItemHandle& Item : Found)
 	{
 		Total += Items[Item.Index].Count;
+	}
+	return Total;
+}
+
+float FInventoryRegistry::GetTotalTagValue(TConstArrayView<FInventoryContainerHandle> SearchRoots, const FGameplayTag& Tag, bool bRecursive) const
+{
+	TArray<FInventoryItemHandle> Found;
+	FindItems(SearchRoots, FInventoryItemQuery(), bRecursive, Found);
+
+	float Total = 0.0f;
+	for (const FInventoryItemHandle& Item : Found)
+	{
+		const FInventoryItemRecord& Record = Items[Item.Index];
+		Total += GetRecordTagValue(Record, Tag) * Record.Count;
 	}
 	return Total;
 }
@@ -479,11 +556,8 @@ EInventoryError FInventoryRegistry::RemoveContainerFragment(FInventoryContainerH
 }
 
 // Crafting
-bool FInventoryRegistry::AllocateIngredients(const UInventoryRecipe& Recipe, TConstArrayView<FInventoryContainerHandle> Sources, int32 Times, TArray<FIngredientUse>& OutUses) const
+bool FInventoryRegistry::AllocateIngredients(const UInventoryRecipe& Recipe, TConstArrayView<FInventoryItemHandle> Candidates, int32 Times, TArray<FIngredientUse>& OutUses) const
 {
-	TArray<FInventoryContainerHandle> Searched;
-	CollectContainers(Sources, Searched);
-
 	// What earlier ingredients already claimed, so no item counts twice.
 	TMap<int32, int32> Claimed;
 
@@ -492,26 +566,23 @@ bool FInventoryRegistry::AllocateIngredients(const UInventoryRecipe& Recipe, TCo
 		// Tools are only needed once, however many times the recipe runs.
 		int32 Needed = Ingredient.bConsume ? Ingredient.Count * Times : Ingredient.Count;
 
-		for (const FInventoryContainerHandle& Container : Searched)
+		for (const FInventoryItemHandle& Item : Candidates)
 		{
-			for (const FInventoryItemHandle& Item : Containers[Container.Index].Items)
+			const FInventoryItemRecord* Record = FindItem(Item);
+			const int32 Available = Record ? Record->Count - Claimed.FindRef(Item.Index) : 0;
+			if (Needed == 0 || Available <= 0 || !RecordMatchesQuery(*Record, Ingredient.Query))
 			{
-				const FInventoryItemRecord& Record = Items[Item.Index];
-				const int32 Available = Record.Count - Claimed.FindRef(Item.Index);
-				if (Needed == 0 || Available <= 0 || !RecordMatchesQuery(Record, Ingredient.Query))
-				{
-					continue;
-				}
-
-				const int32 Taken = FMath::Min(Available, Needed);
-				Claimed.FindOrAdd(Item.Index) += Taken;
-				Needed -= Taken;
-
-				FIngredientUse& Use = OutUses.AddDefaulted_GetRef();
-				Use.Item = Item;
-				Use.Count = Taken;
-				Use.bConsume = Ingredient.bConsume;
+				continue;
 			}
+
+			const int32 Taken = FMath::Min(Available, Needed);
+			Claimed.FindOrAdd(Item.Index) += Taken;
+			Needed -= Taken;
+
+			FIngredientUse& Use = OutUses.AddDefaulted_GetRef();
+			Use.Item = Item;
+			Use.Count = Taken;
+			Use.bConsume = Ingredient.bConsume;
 		}
 
 		if (Needed > 0)
@@ -533,11 +604,36 @@ EInventoryError FInventoryRegistry::CanCraft(const UInventoryRecipe& Recipe, TCo
 		return EInventoryError::RequirementsNotMet;
 	}
 
+	TArray<FInventoryItemHandle> Candidates;
+	FindItems(Sources, FInventoryItemQuery(), true, Candidates);
+
 	TArray<FIngredientUse> Uses;
-	return AllocateIngredients(Recipe, Sources, Times, Uses) ? EInventoryError::None : EInventoryError::MissingIngredients;
+	return AllocateIngredients(Recipe, Candidates, Times, Uses) ? EInventoryError::None : EInventoryError::MissingIngredients;
+}
+
+bool FInventoryRegistry::IsMadeFrom(const UInventoryRecipe& Recipe, TConstArrayView<FInventoryItemHandle> FromItems, const FGameplayTagContainer& ContextTags) const
+{
+	TArray<FIngredientUse> Uses;
+	if (FromItems.IsEmpty() || !Recipe.IsAvailable(ContextTags) || !AllocateIngredients(Recipe, FromItems, 1, Uses))
+	{
+		return false;
+	}
+
+	return Algo::AllOf(FromItems, [&Uses](const FInventoryItemHandle& Item)
+	{
+		return Uses.ContainsByPredicate([&Item](const FIngredientUse& Use) { return Use.Item == Item; });
+	});
 }
 
 EInventoryError FInventoryRegistry::Craft(const UInventoryRecipe& Recipe, TConstArrayView<FInventoryContainerHandle> Sources, TConstArrayView<FInventoryContainerHandle> Outputs,
+	const FGameplayTagContainer& ContextTags, int32 Times, FRandomStream& Stream, TArray<FInventoryItemHandle>* OutItems)
+{
+	TArray<FInventoryItemHandle> Candidates;
+	FindItems(Sources, FInventoryItemQuery(), true, Candidates);
+	return CraftFromItems(Recipe, Candidates, Outputs, ContextTags, Times, Stream, OutItems);
+}
+
+EInventoryError FInventoryRegistry::CraftFromItems(const UInventoryRecipe& Recipe, TConstArrayView<FInventoryItemHandle> FromItems, TConstArrayView<FInventoryContainerHandle> Outputs,
 	const FGameplayTagContainer& ContextTags, int32 Times, FRandomStream& Stream, TArray<FInventoryItemHandle>* OutItems)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(Inventory_Craft);
@@ -554,7 +650,7 @@ EInventoryError FInventoryRegistry::Craft(const UInventoryRecipe& Recipe, TConst
 	return RunTransaction([&]() -> EInventoryError
 	{
 		TArray<FIngredientUse> Uses;
-		if (!AllocateIngredients(Recipe, Sources, Times, Uses))
+		if (!AllocateIngredients(Recipe, FromItems, Times, Uses))
 		{
 			return EInventoryError::MissingIngredients;
 		}

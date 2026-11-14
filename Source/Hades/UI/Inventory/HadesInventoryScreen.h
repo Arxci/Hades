@@ -6,19 +6,15 @@
 #include "Input/UIActionBindingHandle.h"
 #include "Misc/EnumRange.h"
 
-#include "Hades/UI/Foundation/HadesActivatableWidget.h"
-
 #include "InventoryTypes.h"
+#include "Widgets/InventoryScreenWidget.h"
 
 #include "HadesInventoryScreen.generated.h"
 
-class UDragDropOperation;
 class UHadesInventoryComponent;
 class UHadesItemMenu;
 class UHadesShortcutMenu;
-class UInventoryGridWidget;
 class UInventoryListWidget;
-class UInventoryUISubsystem;
 class UPanelWidget;
 class UTextBlock;
 class UWidgetSwitcher;
@@ -49,7 +45,7 @@ ENUM_RANGE_BY_FIRST_AND_LAST(EHadesItemAction, EHadesItemAction::Shortcut, EHade
  * With a Tab Bar and Pages, Previous Tab and Next Tab change the page, or turn the item being moved; the item actions only work on Items Page.
  */
 UCLASS(Abstract, Blueprintable)
-class HADES_API UHadesInventoryScreen : public UHadesActivatableWidget
+class HADES_API UHadesInventoryScreen : public UInventoryScreenWidget
 {
 	GENERATED_BODY()
 
@@ -74,8 +70,13 @@ protected:
 	virtual void NativeOnActivated() override;
 	virtual void NativeOnDeactivated() override;
 	virtual bool NativeOnHandleBackAction() override;
-	virtual UWidget* NativeGetDesiredFocusTarget() const override;
 	//~ End UCommonActivatableWidget Interface
+
+	//~ Begin UInventoryScreenWidget Interface
+	virtual bool IsInventoryShown() const override;
+	virtual void RefreshActions() override;
+	virtual void NativeOnItemMenuRequested(FInventoryItemHandle Item) override;
+	//~ End UInventoryScreenWidget Interface
 
 	/** Pushed onto the Modal layer beside the item the player clicks. */
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory")
@@ -84,10 +85,6 @@ protected:
 	/** Pushed onto the Modal layer by the item menu's Shortcut button. */
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory")
 	TSubclassOf<UHadesShortcutMenu> ShortcutMenuClass;
-
-	/** Its first cell takes gamepad focus when the screen opens, unless the Blueprint implements Get Desired Focus Target. Menus open beside its items. */
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory", meta = (BindWidgetOptional))
-	TObjectPtr<UInventoryGridWidget> MainGrid;
 
 	/** Shows the item box, which turns on Store and Take. Leave it out of the plain inventory screen. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory", meta = (BindWidgetOptional))
@@ -111,22 +108,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Tabs", meta = (ClampMin = "0"))
 	int32 ItemsPage = 1;
 
-	// Rows of the UI input action table, so a Common Bound Action Bar shows them with their key icons.
-	/** Picks up the item under the cursor or focus, and puts the held item down. */
-	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
-	FDataTableRowHandle MoveAction;
-
-	/** Repacks the pockets. */
+	/** A row of the UI input action table that repacks the pockets. */
 	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
 	FDataTableRowHandle OrganizeAction;
-
-	/** Only works, and shows, while holding something that turns. */
-	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
-	FDataTableRowHandle RotateAction;
-
-	/** Only works, and shows, while holding a stack of more than one. */
-	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
-	FDataTableRowHandle SplitAction;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
 	FDataTableRowHandle PreviousTabAction;
@@ -148,52 +132,27 @@ protected:
 
 private:
 	UFUNCTION()
-	void OpenItemMenu(FInventoryItemHandle Item);
-
-	UFUNCTION()
-	void HandleItemChosen(FInventoryItemHandle Item);
+	void HandleItemChosen(FInventoryItemHandle Item, FInventoryItemHandle Chosen);
 
 	UFUNCTION()
 	void HandleHeldItemChanged();
 
-	UFUNCTION()
-	void HandleHoveredItemChanged(FInventoryItemHandle Item);
-
-	/** Bound only while they can work, so the action bar shows what works now. */
-	UFUNCTION()
-	void RefreshItemActions();
-
-	UInventoryUISubsystem* GetInteraction() const;
 	UHadesInventoryComponent* GetPlayerInventory() const;
 	FInventoryContainerHandle GetItemBox() const;
-	FBox2D FindItemAnchor(FInventoryItemHandle Item) const;
-	bool IsOnItemsPage() const;
+	void OpenItemMenu(FInventoryItemHandle Item);
 	void OpenShortcutMenu(FInventoryItemHandle Item);
 	void HandleMenuClosed();
 
-	/** For a drag that starts on a menu beside the item. */
-	UDragDropOperation* BeginItemDrag(FInventoryItemHandle Item);
-
 	void SetPage(int32 Index);
 	void RefreshActionHint();
-	void SetActionBound(FUIActionBindingHandle& Handle, const FDataTableRowHandle& Row, bool bBound, void (UHadesInventoryScreen::*Handler)());
 
-	void HandleMoveAction();
-	void HandleRotateAction();
-	void HandleSplitAction();
 	void HandleOrganizeAction();
 	void HandleCloseAction();
 	void HandlePreviousTab();
 	void HandleNextTab();
 
-	/** The first of two items to combine, while the player chooses the second. */
-	FInventoryItemHandle CombineItem;
-
 	/** What the highlighted option of an open menu does. */
 	FText MenuHint;
 
-	FUIActionBindingHandle MoveHandle;
 	FUIActionBindingHandle OrganizeHandle;
-	FUIActionBindingHandle RotateHandle;
-	FUIActionBindingHandle SplitHandle;
 };

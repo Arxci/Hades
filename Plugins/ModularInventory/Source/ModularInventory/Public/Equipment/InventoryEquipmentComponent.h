@@ -114,8 +114,9 @@ public:
 	bool EquipItem(FInventoryItemHandle Item, FGameplayTag Slot, EInventoryError& OutError);
 
 	/**
-	 * Equips an item the owner carries without moving it. Its equip rules must allow the slot; use a slot no equipment container has.
-	 * Whatever was equipped in place in that slot stops being equipped. The item stays equipped until unequipped or until it leaves the inventory.
+	 * Equips an item the owner carries without moving it. Its equip rules must allow the slot and the owner meet their requirements;
+	 * use a slot no equipment container has. What's in the way stops being equipped: whatever was equipped in place in that slot, and
+	 * items equipped in place that the equip rules keep apart from it. The item stays equipped until unequipped or until it leaves the inventory.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Equipment")
 	bool EquipInPlace(FInventoryItemHandle Item, FGameplayTag Slot, EInventoryError& OutError);
@@ -136,6 +137,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Inventory|Equipment")
 	bool IsEquipped(FInventoryItemHandle Item) const { return FindEntry(Item) != nullptr; }
+
+	/** The item equipped in a slot Item's equip rules allow, such as the weapon it would replace, to compare them. Unset while Item is equipped itself. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Equipment")
+	FInventoryItemHandle FindEquippedItemFor(FInventoryItemHandle Item) const;
 
 	/** The actors and components the item's pieces spawned. Empty until its cosmetics finish loading. */
 	UFUNCTION(BlueprintPure, Category = "Inventory|Equipment")

@@ -10,6 +10,8 @@
 
 #include "InventoryListWidget.generated.h"
 
+class APawn;
+class UInventoryItemWidget;
 class UInventorySlotWidget;
 class UInventoryUISubsystem;
 class UPanelWidget;
@@ -38,6 +40,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory|List")
 	UInventorySlotWidget* GetEntryWidget(int32 Index) const;
 
+	/** The widget showing the item, such as to open a menu beside it. Null when the item isn't in this list. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|List")
+	UInventoryItemWidget* GetItemWidget(FInventoryItemHandle Item) const;
+
 protected:
 	//~ Begin UUserWidget Interface
 	virtual void NativeConstruct() override;
@@ -51,7 +57,7 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Inventory|List")
 	bool bShowEmptyEntry = true;
 
-	/** A container of the owning player's inventory component, found on construct, such as Container.KeyItems. */
+	/** A container of the owning player's inventory component, such as Container.KeyItems. Found on construct, and again when the player's pawn changes. */
 	UPROPERTY(EditAnywhere, Category = "Inventory|List")
 	FGameplayTag ContainerTag;
 
@@ -63,6 +69,9 @@ protected:
 	TObjectPtr<UPanelWidget> EntryPanel;
 
 private:
+	UFUNCTION()
+	void HandlePawnChanged(APawn* OldPawn, APawn* NewPawn);
+
 	void HandleRegistryChanged(const FInventoryChangeSet& Changes);
 	void Refresh();
 	UInventoryUISubsystem* GetDropInteraction(const UDragDropOperation* Operation) const;

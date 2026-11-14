@@ -11,6 +11,7 @@
 
 #include "InventoryGridWidget.generated.h"
 
+class APawn;
 class UCanvasPanel;
 class UInventoryCellWidget;
 class UInventoryGridLinesWidget;
@@ -68,7 +69,7 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Grid")
 	void OnPlacementPreviewChanged(EInventoryDropAction Action);
 
-	/** A container of the owning player's inventory component, found on construct, such as Container.Pockets. */
+	/** A container of the owning player's inventory component, such as Container.Pockets. Found on construct, and again when the player's pawn changes. */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Grid")
 	FGameplayTag ContainerTag;
 
@@ -117,6 +118,9 @@ private:
 
 	UFUNCTION()
 	void HandleLitItemChanged(FInventoryItemHandle Item);
+
+	UFUNCTION()
+	void HandlePawnChanged(APawn* OldPawn, APawn* NewPawn);
 
 	void HandleRegistryChanged(const FInventoryChangeSet& Changes);
 

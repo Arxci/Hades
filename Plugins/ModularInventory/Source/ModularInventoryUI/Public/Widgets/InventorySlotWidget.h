@@ -9,6 +9,7 @@
 
 #include "InventorySlotWidget.generated.h"
 
+class APawn;
 class UInventoryItemWidget;
 class UTextBlock;
 struct FInventoryChangeSet;
@@ -32,6 +33,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Slot")
 	void SetContainerPlacement(FInventoryContainerHandle InContainer, const FInventoryPlacement& InPlacement);
 
+	/** Item Widget while it shows the item, such as to open a menu beside it; otherwise null. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Slot")
+	UInventoryItemWidget* GetItemWidget(FInventoryItemHandle Item) const;
+
 protected:
 	//~ Begin UUserWidget Interface
 	virtual void NativeConstruct() override;
@@ -49,7 +54,7 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Slot")
 	void OnPlacementPreviewChanged(EInventoryDropAction Action);
 
-	/** A container of the owning player's inventory component, found on construct, such as Container.Equipment. */
+	/** A container of the owning player's inventory component, such as Container.Equipment. Found on construct, and again when the player's pawn changes. */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Slot")
 	FGameplayTag ContainerTag;
 
@@ -67,6 +72,9 @@ protected:
 private:
 	UFUNCTION()
 	void HandleTargetChanged();
+
+	UFUNCTION()
+	void HandlePawnChanged(APawn* OldPawn, APawn* NewPawn);
 
 	void HandleRegistryChanged(const FInventoryChangeSet& Changes);
 	void Refresh();

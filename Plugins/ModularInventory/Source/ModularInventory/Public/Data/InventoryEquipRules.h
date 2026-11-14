@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 
+#include "AttributeSet.h"
 #include "Engine/DataAsset.h"
 #include "GameplayEffectTypes.h"
 #include "GameplayTagContainer.h"
@@ -9,6 +10,7 @@
 
 #include "InventoryEquipRules.generated.h"
 
+class AActor;
 class UAttributeSet;
 class UGameplayAbility;
 class UGameplayEffect;
@@ -52,6 +54,20 @@ struct MODULARINVENTORY_API FInventoryEffectGrant
 };
 
 
+USTRUCT(BlueprintType)
+struct MODULARINVENTORY_API FInventoryAttributeRequirement
+{
+	GENERATED_BODY()
+
+	/** An attribute of the owner's ability system, such as a level or strength. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Requirement")
+	FGameplayAttribute Attribute;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Requirement")
+	float MinValue = 0.0f;
+};
+
+
 /**
  * Where an item can be equipped and what it grants while it is. Shared between definitions, e.g. one asset for all pistols.
  * The item's level is its Inventory.Item.Level tag value.
@@ -64,6 +80,9 @@ class MODULARINVENTORY_API UInventoryEquipRules : public UDataAsset
 public:
 	bool AllowsSlot(const FGameplayTag& SlotTag) const { return SlotTag.MatchesAny(Slots); }
 	bool BlocksSlot(const FGameplayTag& SlotTag) const { return SlotTag.MatchesAny(BlockedSlots); }
+
+	/** Owners without an ability system always pass. */
+	bool MeetsOwnerRequirements(const AActor* Owner) const;
 
 #if WITH_EDITOR
 	virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;
@@ -81,6 +100,10 @@ public:
 	/** Checked against the owner's ability system tags when equipping. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Requirements")
 	FGameplayTagRequirements OwnerRequirements;
+
+	/** Attribute values the owner's ability system needs when equipping, such as a level or strength. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Requirements")
+	TArray<FInventoryAttributeRequirement> AttributeRequirements;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Granted", meta = (TitleProperty = "Ability"))
 	TArray<FInventoryAbilityGrant> Abilities;

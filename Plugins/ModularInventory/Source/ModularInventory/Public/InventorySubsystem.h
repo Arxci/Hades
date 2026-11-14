@@ -71,6 +71,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory|Items")
 	bool IsItemEquipped(FInventoryItemHandle Item) const;
 
+	/** The items in its equipment containers, such as a rifle's scope, and those attached to them in turn. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Items")
+	TArray<FInventoryItemHandle> GetAttachments(FInventoryItemHandle Item) const { return Registry.GetAttachments(Item); }
+
 	UFUNCTION(BlueprintPure, Category = "Inventory|Items")
 	bool CanStack(FInventoryItemHandle Item, FInventoryItemHandle Other) const { return Registry.CanStack(Item, Other); }
 
@@ -93,12 +97,24 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory|Tags")
 	float GetTagValue(FInventoryItemHandle Item, FGameplayTag Tag) const { return Registry.GetTagValue(Item, Tag); }
 
-	/** Tag value plus bonuses from the sockets of neighbouring items. */
+	/** Tag value plus bonuses from the sockets of neighbouring items and from attachments. */
 	UFUNCTION(BlueprintPure, Category = "Inventory|Tags")
 	float GetEffectiveTagValue(FInventoryItemHandle Item, FGameplayTag Tag) const { return Registry.GetEffectiveTagValue(Item, Tag); }
 
 	UFUNCTION(BlueprintPure, Category = "Inventory|Tags")
 	bool HasTagValue(FInventoryItemHandle Item, FGameplayTag Tag) const { return Registry.HasTagValue(Item, Tag); }
+
+	/** The most Tag's value can be, such as full durability: Max Tag's effective value when the item has one, else the value the definition starts Tag at. 0 when neither. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Tags")
+	float GetTagValueMax(FInventoryItemHandle Item, FGameplayTag Tag, FGameplayTag MaxTag) const { return Registry.GetTagValueMax(Item, Tag, MaxTag); }
+
+	/** Tag's value as a part of Get Tag Value Max, such as durability for a bar. False when the item has no Tag value or no maximum. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Tags")
+	bool GetTagValueFraction(FInventoryItemHandle Item, FGameplayTag Tag, FGameplayTag MaxTag, float& OutFraction) const;
+
+	/** The sum of a tag value over the items in the containers, each times its count, such as the weight of what they hold. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Tags")
+	float GetTotalTagValue(const TArray<FInventoryContainerHandle>& Containers, FGameplayTag Tag, bool bRecursive = true) const { return Registry.GetTotalTagValue(Containers, Tag, bRecursive); }
 
 	/** Items whose sockets currently affect this one. */
 	UFUNCTION(BlueprintPure, Category = "Inventory|Tags")
@@ -184,7 +200,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
 	bool SetContainerLayout(FInventoryContainerHandle Container, const UInventoryContainerLayout* Layout, EInventoryError& OutError);
 
-	/** Repacks a grid, biggest items first, and merges partial stacks. All or nothing. */
+	/** Sorts a grid or list: merges partial stacks, then orders the items biggest first in a grid, then by name. All or nothing. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
 	bool SortContainer(FInventoryContainerHandle Container, EInventoryError& OutError);
 

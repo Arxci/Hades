@@ -7,10 +7,12 @@
 #include "Engine/AssetManager.h"
 #include "Engine/StreamableManager.h"
 #include "Engine/Texture2D.h"
+#include "GameFramework/Pawn.h"
 
 #include "Data/InventoryItemCosmetics.h"
 #include "Data/InventoryItemDefinition.h"
 #include "InventoryComponent.h"
+#include "InventoryUITypes.h"
 
 namespace InventoryWidgets
 {
@@ -62,10 +64,22 @@ namespace InventoryWidgets
 		}));
 	}
 
-	/** The container with Tag on the owning player's pawn, for widgets that bind themselves. */
+	/** The container with Tag on the pawn's inventory component, for widgets that bind themselves. */
+	inline FInventoryContainerHandle FindPawnContainer(const APawn* Pawn, const FGameplayTag& Tag)
+	{
+		const UInventoryComponent* Inventory = UInventoryComponent::FindInventoryComponent(Pawn);
+		return Inventory && Tag.IsValid() ? Inventory->GetContainer(Tag) : FInventoryContainerHandle();
+	}
+
 	inline FInventoryContainerHandle FindPlayerContainer(const UUserWidget& Widget, const FGameplayTag& Tag)
 	{
-		const UInventoryComponent* Inventory = UInventoryComponent::FindInventoryComponent(Widget.GetOwningPlayerPawn());
-		return Inventory && Tag.IsValid() ? Inventory->GetContainer(Tag) : FInventoryContainerHandle();
+		return FindPawnContainer(Widget.GetOwningPlayerPawn(), Tag);
+	}
+
+	/** The color of the first entry whose tag is among the item's tags, or null. */
+	inline const FLinearColor* FindTagColor(const TArray<FInventoryTagColor>& TagColors, const FGameplayTagContainer& ItemTags)
+	{
+		const FInventoryTagColor* Found = TagColors.FindByPredicate([&ItemTags](const FInventoryTagColor& Entry) { return ItemTags.HasTag(Entry.Tag); });
+		return Found ? &Found->Color : nullptr;
 	}
 }

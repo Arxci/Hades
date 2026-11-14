@@ -94,6 +94,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	int32 AddItem(const FInventoryItemSpec& Spec, bool bAllowPartial, TArray<FInventoryItemHandle>& OutItems);
 
+	/** Whether Add Item would succeed, without adding anything. With Allow Partial, whether any of it fits. */
+	UFUNCTION(BlueprintPure, Category = "Inventory")
+	bool CanAddItem(const FInventoryItemSpec& Spec, bool bAllowPartial) const;
+
 	/** Rolls the table and adds the results. With Allow Partial, whatever doesn't fit is discarded; otherwise all or nothing. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	bool AddLoot(const UInventoryLootTable* LootTable, const FGameplayTagContainer& ContextTags, bool bAllowPartial = true);
@@ -102,9 +106,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	bool TakeItem(FInventoryItemHandle Item, int32 Count, bool bAllowPartial, EInventoryError& OutError);
 
+	/** Whether Take Item would succeed, without moving anything, such as to grey out a pickup the player has no room for. */
+	UFUNCTION(BlueprintPure, Category = "Inventory")
+	bool CanTakeItem(FInventoryItemHandle Item, int32 Count, bool bAllowPartial) const;
+
 	/** Moves an item into Target's storage. Count 0 moves the whole stack. With Allow Partial, what doesn't fit stays behind. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	bool TransferItem(FInventoryItemHandle Item, UInventoryComponent* Target, int32 Count, bool bAllowPartial, EInventoryError& OutError);
+
+	/** Takes as much as fits of everything in Container, such as a chest's, into storage. True when nothing is left behind. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory")
+	bool TakeAll(FInventoryContainerHandle Container);
 
 	/** Removes up to Count matching items from everything this component holds; 0 removes them all. Returns how many were removed. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
@@ -117,6 +129,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory")
 	int32 CountItems(const FInventoryItemQuery& Query) const;
 
+	/** The sum of a tag value over everything this component holds, each times its count, such as the weight carried. */
+	UFUNCTION(BlueprintPure, Category = "Inventory")
+	float GetTotalTagValue(FGameplayTag Tag) const;
+
 	// Crafting. Ingredients come from storage, and the owner's ability system tags join the context tags.
 	UFUNCTION(BlueprintPure, Category = "Inventory|Crafting")
 	bool CanCraft(const UInventoryRecipe* Recipe, const FGameplayTagContainer& ContextTags, int32 Times = 1) const;
@@ -127,6 +143,18 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Inventory|Crafting")
 	TArray<UInventoryRecipe*> GetCraftableRecipes(const UInventoryRecipeBook* Book, const FGameplayTagContainer& ContextTags) const;
+
+	/** The recipes in Book with an ingredient this item can be, such as to offer Combine for it, or to show what it makes. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Crafting")
+	TArray<UInventoryRecipe*> GetRecipesUsing(const UInventoryRecipeBook* Book, FInventoryItemHandle Item) const;
+
+	/** The first recipe in Book made from exactly these items held here, every one of them used, such as two herbs combined. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Crafting")
+	UInventoryRecipe* FindRecipeMadeFrom(const UInventoryRecipeBook* Book, const TArray<FInventoryItemHandle>& Items, const FGameplayTagContainer& ContextTags) const;
+
+	/** Crafts once taking ingredients only from these items held here, such as the ones a player chose to combine. The results go to storage. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Crafting")
+	bool CraftFromItems(const UInventoryRecipe* Recipe, const TArray<FInventoryItemHandle>& Items, const FGameplayTagContainer& ContextTags, TArray<FInventoryItemHandle>& OutItems, EInventoryError& OutError);
 
 	/** Fires once per committed change touching any of this component's containers, nested ones included. */
 	UPROPERTY(BlueprintAssignable, Category = "Inventory")

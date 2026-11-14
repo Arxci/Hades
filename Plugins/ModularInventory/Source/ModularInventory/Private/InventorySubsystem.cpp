@@ -1,7 +1,5 @@
 #include "InventorySubsystem.h"
 
-#include "AbilitySystemComponent.h"
-#include "AbilitySystemGlobals.h"
 #include "Components/ActorComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
@@ -67,7 +65,7 @@ EInventoryError UInventorySubsystem::CheckOwnerRequirements(const FInventoryRegi
 {
 	const FInventoryContainerRecord* ContainerRecord = InRegistry.FindContainer(Container);
 	const UInventoryEquipRules* Rules = Item.Definition ? Item.Definition->EquipRules.Get() : nullptr;
-	if (!ContainerRecord || !ContainerRecord->Layout->bEquipment || !Rules || Rules->OwnerRequirements.IsEmpty())
+	if (!ContainerRecord || !ContainerRecord->Layout->bEquipment || !Rules)
 	{
 		return EInventoryError::None;
 	}
@@ -75,17 +73,7 @@ EInventoryError UInventorySubsystem::CheckOwnerRequirements(const FInventoryRegi
 	UObject* Owner = InRegistry.GetOwner(Container);
 	const UActorComponent* OwnerComponent = Cast<UActorComponent>(Owner);
 	const AActor* OwnerActor = OwnerComponent ? OwnerComponent->GetOwner() : Cast<AActor>(Owner);
-
-	// Without an ability system there is nothing to check, which keeps looting corpses and chests simple.
-	const UAbilitySystemComponent* AbilitySystem = UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(OwnerActor);
-	if (!AbilitySystem)
-	{
-		return EInventoryError::None;
-	}
-
-	FGameplayTagContainer OwnerTags;
-	AbilitySystem->GetOwnedGameplayTags(OwnerTags);
-	return Rules->OwnerRequirements.RequirementsMet(OwnerTags) ? EInventoryError::None : EInventoryError::NotEquippable;
+	return Rules->MeetsOwnerRequirements(OwnerActor) ? EInventoryError::None : EInventoryError::NotEquippable;
 }
 
 // Items
@@ -120,6 +108,19 @@ bool UInventorySubsystem::IsItemEquipped(FInventoryItemHandle Item) const
 }
 
 // Tags, values and fragments
+bool UInventorySubsystem::GetTagValueFraction(FInventoryItemHandle Item, FGameplayTag Tag, FGameplayTag MaxTag, float& OutFraction) const
+{
+	OutFraction = 0.0f;
+	const float Max = Registry.GetTagValueMax(Item, Tag, MaxTag);
+	if (!Registry.HasTagValue(Item, Tag) || Max <= 0.0f)
+	{
+		return false;
+	}
+
+	OutFraction = FMath::Clamp(Registry.GetTagValue(Item, Tag) / Max, 0.0f, 1.0f);
+	return true;
+}
+
 bool UInventorySubsystem::SetTagValue(FInventoryItemHandle Item, FGameplayTag Tag, float Value)
 {
 	return Registry.SetTagValue(Item, Tag, Value) == EInventoryError::None;

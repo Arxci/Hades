@@ -134,6 +134,17 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sockets")
 	TArray<FInventoryItemSocket> Sockets;
 
+	/**
+	 * While this item is attached, in an equipment container of another item such as a rifle's attachment slots or a sword's gem
+	 * sockets, these are added to that item's effective tag values: a scope's zoom, a magazine's capacity.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Attachment", meta = (TitleProperty = "Tag"))
+	TArray<FInventoryTagValue> AttachmentValueModifiers;
+
+	/** While this item is attached, these are added to that item's effective tags, such as Item.Trait.Silenced for a suppressor. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Attachment")
+	FGameplayTagContainer AttachmentGrantedTags;
+
 	/** Static data shared by every item of this kind. Any struct works, Blueprint structs included. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fragments")
 	TArray<FInstancedStruct> Fragments;

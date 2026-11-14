@@ -4,9 +4,8 @@
 
 #include "CommonButtonBase.h"
 
-#include "Hades/UI/Foundation/HadesPopupMenu.h"
-
 #include "InventoryTypes.h"
+#include "Widgets/InventoryItemMenuWidget.h"
 
 #include "HadesShortcutMenu.generated.h"
 
@@ -49,18 +48,18 @@ protected:
  * picking the slot it's already on takes it off.
  */
 UCLASS(Abstract, Blueprintable)
-class HADES_API UHadesShortcutMenu : public UHadesPopupMenu
+class HADES_API UHadesShortcutMenu : public UInventoryItemMenuWidget
 {
 	GENERATED_BODY()
-
-public:
-	/** InAnchor is where the item is on screen, in absolute coordinates. */
-	void SetItem(FInventoryItemHandle InItem, const FBox2D& InAnchor);
 
 protected:
 	//~ Begin UCommonActivatableWidget Interface
 	virtual UWidget* NativeGetDesiredFocusTarget() const override;
 	//~ End UCommonActivatableWidget Interface
+
+	//~ Begin UInventoryItemMenuWidget Interface
+	virtual void NativeOnItemChanged() override;
+	//~ End UInventoryItemMenuWidget Interface
 
 	UPROPERTY(EditDefaultsOnly, Category = "Shortcut Menu")
 	TSubclassOf<UHadesShortcutEntry> EntryClass;
@@ -72,8 +71,6 @@ protected:
 private:
 	void HandleEntryClicked(int32 SlotIndex);
 	UHadesQuickSlotComponent* GetQuickSlots() const;
-
-	FInventoryItemHandle Item;
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UHadesShortcutEntry>> Entries;

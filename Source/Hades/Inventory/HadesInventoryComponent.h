@@ -11,7 +11,6 @@ class AHadesItemPickup;
 class UGameplayEffect;
 class UInventoryContainerLayout;
 class UInventoryItemDefinition;
-class UInventoryRecipe;
 class UInventoryRecipeBook;
 
 
@@ -152,7 +151,5 @@ private:
 
 	/** Whichever of the two is a gun the other one loads. */
 	FInventoryItemHandle FindGunLoadedBy(FInventoryItemHandle Item, FInventoryItemHandle Other) const;
-	UInventoryRecipe* FindCombineRecipe(FInventoryItemHandle Item, FInventoryItemHandle Other) const;
-	bool IsMadeFrom(const UInventoryRecipe& Recipe, FInventoryItemHandle Item, FInventoryItemHandle Other) const;
 	FTransform FindDropTransform() const;
 };

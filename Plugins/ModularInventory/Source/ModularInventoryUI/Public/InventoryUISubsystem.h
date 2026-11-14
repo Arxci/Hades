@@ -9,6 +9,7 @@
 
 #include "InventoryUISubsystem.generated.h"
 
+class UInventoryComponent;
 class ULocalPlayer;
 struct FInventoryChangeSet;
 struct FInventoryRegistry;
@@ -18,6 +19,8 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FInventoryUIHeldItemChangedSignature);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FInventoryUITargetChangedSignature);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInventoryUIHoveredItemChangedSignature, FInventoryItemHandle, Item);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInventoryUIItemSignature, FInventoryItemHandle, Item);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FInventoryUIItemChosenSignature, FInventoryItemHandle, Item, FInventoryItemHandle, Chosen);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FInventoryUIDroppedOutsideSignature, FInventoryItemHandle, Item, int32, Count);
 
 
 /**
@@ -37,23 +40,22 @@ public:
 	virtual void Deinitialize() override;
 	//~ End USubsystem Interface
 
-	// Style: set these once, such as when the inventory screen opens. All off is drag-and-drop with click-to-move.
-	/** A click or Accept on an item asks for its item menu instead of picking it up. Items are then picked up by dragging, or with Begin Hold from a Move button. */
-	UPROPERTY(BlueprintReadWrite, Category = "Inventory UI|Style")
-	bool bClickOpensItemMenu = false;
+	// Style
+	/** Inventory screens set their own while they're open. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
+	void SetStyle(const FInventoryInteractionStyle& InStyle);
 
-	/** Swapping with another item picks that one up from where the held item was, instead of only trading places. Letting go of it finishes the swap. */
-	UPROPERTY(BlueprintReadWrite, Category = "Inventory UI|Style")
-	bool bSwapPicksUpOther = false;
-
-	/** Grids draw the held item on the cells it would land on instead of under the cursor. It stays on the last cells aimed at, and a mouse drag let go anywhere puts it there. */
-	UPROPERTY(BlueprintReadWrite, Category = "Inventory UI|Style")
-	bool bSnapHeldItem = false;
+	UFUNCTION(BlueprintPure, Category = "Inventory UI")
+	FInventoryInteractionStyle GetStyle() const { return Style; }
 
 	// Holding
 	/** Count 0 holds the whole stack. Items that can't split are always held whole. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	bool BeginHold(FInventoryItemHandle Item, int32 Count = 0);
+
+	/** False for items in read-only containers, and while choosing an item. */
+	UFUNCTION(BlueprintPure, Category = "Inventory UI")
+	bool CanBeginHold(FInventoryItemHandle Item) const;
 
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	void CancelHold();
@@ -69,6 +71,10 @@ public:
 	/** Halves the held count. From one, goes back to the whole stack. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	void SplitHeld();
+
+	/** Whether the held item is a stack of more than one that can split. */
+	UFUNCTION(BlueprintPure, Category = "Inventory UI")
+	bool CanSplitHeld() const;
 
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	void SetHeldCount(int32 Count);
@@ -97,6 +103,13 @@ public:
 	/** What a click or Accept does: places the held item, or picks up the item there or asks for its item menu. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	bool ActivatePlacement(FInventoryContainerHandle Container, const FInventoryPlacement& Placement);
+
+	/** What a Move action does, whatever the style: puts the held item down where it's aimed, or picks up the hovered item. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
+	bool PickUpOrPlace();
+
+	UFUNCTION(BlueprintPure, Category = "Inventory UI")
+	bool CanPickUpOrPlace() const;
 
 	/** What placing the held item there would do, worked out with the real rules but without changing anything. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
@@ -142,15 +155,45 @@ public:
 	void RequestContext(FInventoryItemHandle Item);
 
 	// Choosing: for "use this on that" actions, such as combining two items.
-	/** Until an item is chosen, a click or Accept on an item fires On Item Chosen instead of picking it up. Puts down anything held. */
+	/**
+	 * Until another item is chosen, a click or Accept on an item fires On Item Chosen instead of picking it up. Puts down anything held,
+	 * and selects Item, the one being used, until the choosing ends.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
-	void BeginChoosingItem();
+	void BeginChoosingItem(FInventoryItemHandle Item);
 
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
-	void CancelChoosingItem() { bChoosingItem = false; }
+	void CancelChoosingItem();
 
 	UFUNCTION(BlueprintPure, Category = "Inventory UI")
 	bool IsChoosingItem() const { return bChoosingItem; }
+
+	/** The item Begin Choosing Item was called for. */
+	UFUNCTION(BlueprintPure, Category = "Inventory UI")
+	FInventoryItemHandle GetChoosingFor() const { return ChoosingFor; }
+
+	// Transfer: moving items straight between the player and another container, such as an open chest.
+	/** The other side, such as an open chest's container. Inventory screens set their own while they're open. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
+	void SetTransferContainer(FInventoryContainerHandle Container) { TransferContainer = Container; }
+
+	UFUNCTION(BlueprintPure, Category = "Inventory UI")
+	FInventoryContainerHandle GetTransferContainer() const { return TransferContainer; }
+
+	/** Moves as much of the item as fits to the other side: into the transfer container, or out of it into the player's storage. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
+	bool TransferItem(FInventoryItemHandle Item);
+
+	UFUNCTION(BlueprintPure, Category = "Inventory UI")
+	bool CanTransferItem(FInventoryItemHandle Item) const;
+
+	/** Moves as much as fits of everything in the transfer container into the player's storage. True when nothing is left behind. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
+	bool TakeAll();
+
+	/** Whether the transfer container holds anything to take. */
+	UFUNCTION(BlueprintPure, Category = "Inventory UI")
+	bool CanTakeAll() const;
 
 	/** Drops the hold, the choosing, the target, the hover and the selection. Call it when an inventory screen closes. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
@@ -173,17 +216,28 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Inventory UI")
 	FInventoryUIItemSignature OnContextRequested;
 
-	/** The item picked after Begin Choosing Item. */
+	/** Chosen was picked after Begin Choosing Item was called for Item. */
 	UPROPERTY(BlueprintAssignable, Category = "Inventory UI")
-	FInventoryUIItemSignature OnItemChosen;
+	FInventoryUIItemChosenSignature OnItemChosen;
+
+	/**
+	 * A mouse drag of the held item ended outside every inventory widget, such as to drop it in the world, as many games do.
+	 * Never with Snap Held Item, which puts the item where it's drawn instead. The hold is dropped after.
+	 */
+	UPROPERTY(BlueprintAssignable, Category = "Inventory UI")
+	FInventoryUIDroppedOutsideSignature OnDroppedOutside;
 
 private:
 	FInventoryRegistry* GetRegistry() const;
+	UInventoryComponent* GetPlayerInventory() const;
+	TArray<FInventoryContainerHandle> GetTransferTargets(FInventoryItemHandle Item) const;
 	FInventoryPlacement FitInGrid(FInventoryContainerHandle Container, const FInventoryPlacement& Placement) const;
 	EInventoryDropAction ResolvePlacement(FInventoryContainerHandle Container, const FInventoryPlacement& Placement, bool bApply);
 	void SetHeld(FInventoryItemHandle Item, int32 Count, bool bRotated);
 	void RefreshTarget();
 	void HandleRegistryChanged(const FInventoryChangeSet& Changes);
+
+	FInventoryInteractionStyle Style;
 
 	FInventoryItemHandle HeldItem;
 	int32 HeldCount = 0;
@@ -197,6 +251,9 @@ private:
 	FInventoryItemHandle SelectedItem;
 
 	bool bChoosingItem = false;
+	FInventoryItemHandle ChoosingFor;
+
+	FInventoryContainerHandle TransferContainer;
 
 	/** Only listens while holding, to drop the hold when the item goes away. */
 	FInventoryRegistryListener RegistryListener;

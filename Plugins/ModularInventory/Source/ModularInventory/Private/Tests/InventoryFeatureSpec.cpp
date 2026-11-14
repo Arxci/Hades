@@ -6,6 +6,7 @@
 
 #include "Crafting/InventoryRecipe.h"
 #include "Data/InventoryContainerLayout.h"
+#include "Data/InventoryEquipRules.h"
 #include "Data/InventoryItemDefinition.h"
 #include "Loot/InventoryLootTable.h"
 
@@ -153,6 +154,25 @@ void FInventoryFeatureSpec::Define()
 			TestEqual(TEXT("One ammo stack"), AmmoStacks.Num(), 1);
 			TestEqual(TEXT("All the ammo"), Count(Data->Ammo), 15);
 		});
+
+		It("sort lists by name and merge partial stacks", [this]()
+		{
+			Data->Stone->DisplayName = FText::FromString(TEXT("Stone"));
+			Data->Ammo->DisplayName = FText::FromString(TEXT("Ammo"));
+			UInventoryContainerLayout* ListLayout = Data->Make<UInventoryContainerLayout>();
+			ListLayout->Type = EInventoryContainerType::List;
+			const FInventoryContainerHandle List = Registry->CreateContainer(ListLayout, FGameplayTag(), nullptr);
+
+			const FInventoryItemHandle Stone = AddTestItem(*Registry, Data->Stone, List);
+			AddTestItem(*Registry, Data->Ammo, List, 10, FInventoryPlacement::AtIndex(1));
+			AddTestItem(*Registry, Data->Ammo, List, 5, FInventoryPlacement::AtIndex(2));
+
+			TestTrue(TEXT("Sorted"), Registry->SortContainer(List) == EInventoryError::None);
+			const TArray<FInventoryItemHandle>& Sorted = Registry->FindContainer(List)->Items;
+			TestEqual(TEXT("The ammo merged"), Sorted.Num(), 2);
+			TestTrue(TEXT("Ammo first"), Sorted.Num() == 2 && Registry->FindItem(Sorted[0])->Definition.Get() == Data->Ammo);
+			TestTrue(TEXT("Stone last"), Sorted.Num() == 2 && Sorted[1] == Stone);
+		});
 	});
 
 	Describe("Batches", [this]()
@@ -276,6 +296,66 @@ void FInventoryFeatureSpec::Define()
 		});
 	});
 
+	Describe("Attachments", [this]()
+	{
+		It("add their modifiers and tags to the item they're attached to", [this]()
+		{
+			UInventoryContainerLayout* Mounts = Data->Make<UInventoryContainerLayout>();
+			Mounts->Type = EInventoryContainerType::Slots;
+			Mounts->bEquipment = true;
+			Mounts->Slots.AddDefaulted_GetRef().Tag = Slot_MainHand;
+
+			UInventoryItemDefinition* Gun = Data->Make<UInventoryItemDefinition>();
+			Gun->TagValues.Emplace(Stat_Fire, 10.0f);
+			FInventoryItemContainer& GunMounts = Gun->Containers.AddDefaulted_GetRef();
+			GunMounts.Tag = Container_Main;
+			GunMounts.Layout = Mounts;
+
+			UInventoryItemDefinition* Scope = Data->Make<UInventoryItemDefinition>();
+			Scope->EquipRules = Data->Make<UInventoryEquipRules>();
+			Scope->EquipRules->Slots.AddTag(Slot_MainHand);
+			Scope->AttachmentValueModifiers.Emplace(Stat_Fire, 3.0f);
+			Scope->AttachmentGrantedTags.AddTag(Type_Herb);
+
+			const FInventoryItemHandle GunItem = AddTestItem(*Registry, Gun, Grid);
+			const FInventoryItemHandle ScopeItem = AddTestItem(*Registry, Scope, Registry->FindItemContainer(GunItem, Container_Main), 1, FInventoryPlacement::AtIndex(0));
+
+			TestTrue(TEXT("Scope attached"), ScopeItem.IsSet());
+			TestEqual(TEXT("Plain value untouched"), Registry->GetTagValue(GunItem, Stat_Fire), 10.0f);
+			TestEqual(TEXT("Effective value with the scope"), Registry->GetEffectiveTagValue(GunItem, Stat_Fire), 13.0f);
+			TestTrue(TEXT("Tag from the scope"), Registry->GetEffectiveTags(GunItem).HasTag(Type_Herb));
+			TestEqual(TEXT("One attachment"), Registry->GetAttachments(GunItem).Num(), 1);
+		});
+	});
+
+	Describe("Tag value maximums", [this]()
+	{
+		It("come from the max tag, or else from the starting value", [this]()
+		{
+			const FInventoryItemHandle Knife = AddTestItem(*Registry, Data->Knife, Grid);
+			Registry->SetTagValue(Knife, Stat_Durability, 40.0f);
+			TestEqual(TEXT("Starting durability"), Registry->GetTagValueMax(Knife, Stat_Durability, Stat_Fire), 100.0f);
+
+			Registry->SetTagValue(Knife, Stat_Fire, 50.0f);
+			TestEqual(TEXT("The max tag's value"), Registry->GetTagValueMax(Knife, Stat_Durability, Stat_Fire), 50.0f);
+			TestEqual(TEXT("No starting value"), Registry->GetTagValueMax(Knife, Type_Herb, FGameplayTag()), 0.0f);
+		});
+	});
+
+	Describe("Totals", [this]()
+	{
+		It("add up a tag value over stacks and nested items", [this]()
+		{
+			Data->Ammo->TagValues.Emplace(Stat_Durability, 2.0f);
+			AddTestItem(*Registry, Data->Ammo, Grid, 10);
+			const FInventoryItemHandle Backpack = AddTestItem(*Registry, Data->Backpack, Grid);
+			AddTestItem(*Registry, Data->Knife, Registry->FindItemContainer(Backpack, Container_Main));
+
+			TestEqual(TEXT("Each round, and the knife in the backpack"), Registry->GetTotalTagValue(MakeArrayView(&Grid, 1), Stat_Durability, true), 120.0f);
+			TestEqual(TEXT("Only the top level"), Registry->GetTotalTagValue(MakeArrayView(&Grid, 1), Stat_Durability, false), 20.0f);
+		});
+	});
+
 	Describe("Loot", [this]()
 	{
 		It("rolls the same items for the same seed", [this]()
@@ -390,6 +470,32 @@ void FInventoryFeatureSpec::Define()
 
 			TestTrue(TEXT("Crafted"), Registry->Craft(*Recipe, MakeArrayView(&Grid, 1), MakeArrayView(&Grid, 1), FGameplayTagContainer(), 1, Stream) == EInventoryError::None);
 			TestTrue(TEXT("Knife kept"), Registry->IsValid(Knife));
+		});
+
+		It("uses only the chosen items", [this]()
+		{
+			const FInventoryItemHandle First = AddTestItem(*Registry, Data->Herb, Grid, 1, FInventoryPlacement::AtCell(FIntPoint(0, 0)));
+			const FInventoryItemHandle Second = AddTestItem(*Registry, Data->Herb, Grid, 1, FInventoryPlacement::AtCell(FIntPoint(1, 0)));
+			const FInventoryItemHandle Third = AddTestItem(*Registry, Data->Herb, Grid, 1, FInventoryPlacement::AtCell(FIntPoint(2, 0)));
+			const TArray<FInventoryItemHandle> Chosen = { Second, Third };
+			FRandomStream Stream(1);
+
+			const EInventoryError Error = Registry->CraftFromItems(*MakeMedkitRecipe(2), Chosen, MakeArrayView(&Grid, 1), FGameplayTagContainer(), 1, Stream);
+			TestTrue(*DescribeErrors(TEXT("Crafting from two chosen herbs"), Error, EInventoryError::None), Error == EInventoryError::None);
+			TestTrue(TEXT("The herb not chosen is kept"), Registry->IsValid(First));
+			TestFalse(TEXT("The chosen herbs are used up"), Registry->IsValid(Second) || Registry->IsValid(Third));
+		});
+
+		It("is made from items only when every one of them is used", [this]()
+		{
+			const FInventoryItemHandle First = AddTestItem(*Registry, Data->Herb, Grid, 1, FInventoryPlacement::AtCell(FIntPoint(0, 0)));
+			const FInventoryItemHandle Second = AddTestItem(*Registry, Data->Herb, Grid, 1, FInventoryPlacement::AtCell(FIntPoint(1, 0)));
+			const TArray<FInventoryItemHandle> Both = { First, Second };
+			const TArray<FInventoryItemHandle> One = { First };
+
+			TestTrue(TEXT("Two herbs for two"), Registry->IsMadeFrom(*MakeMedkitRecipe(2), Both, FGameplayTagContainer()));
+			TestFalse(TEXT("One herb for two"), Registry->IsMadeFrom(*MakeMedkitRecipe(2), One, FGameplayTagContainer()));
+			TestFalse(TEXT("Two herbs for one, one left over"), Registry->IsMadeFrom(*MakeMedkitRecipe(1), Both, FGameplayTagContainer()));
 		});
 	});
 }

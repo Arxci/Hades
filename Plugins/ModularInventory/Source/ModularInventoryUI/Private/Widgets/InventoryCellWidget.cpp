@@ -92,7 +92,7 @@ void UInventoryCellWidget::StopAiming()
 {
 	// A snapped held item stays on the last cells aimed at.
 	const UInventoryUISubsystem* Interaction = GetInteraction();
-	if (IsTargeted() && !(Interaction->bSnapHeldItem && Interaction->IsHolding()))
+	if (IsTargeted() && !(Interaction->GetStyle().bSnapHeldItem && Interaction->IsHolding()))
 	{
 		GetInteraction()->ClearTarget();
 	}

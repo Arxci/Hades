@@ -93,6 +93,12 @@ EDataValidationResult UInventoryItemDefinition::IsDataValid(FDataValidationConte
 		}
 	}
 
+	const bool bHasAttachmentModifiers = !AttachmentValueModifiers.IsEmpty() || !AttachmentGrantedTags.IsEmpty();
+	if (bHasAttachmentModifiers && !EquipRules)
+	{
+		Context.AddWarning(LOCTEXT("UnattachableModifiers", "The attachment modifiers do nothing: without equip rules, this item can't go in an attachment slot."));
+	}
+
 	Result = CombineDataValidationResults(Result, InventoryValidation::ValidateFragments(Fragments, LOCTEXT("Fragments", "Fragments"), Context));
 	Result = CombineDataValidationResults(Result, InventoryValidation::ValidateFragments(InstanceFragments, LOCTEXT("InstanceFragments", "Instance Fragments"), Context));
 

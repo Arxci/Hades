@@ -1,6 +1,7 @@
 ﻿#include "Widgets/InventoryListWidget.h"
 
 #include "Components/PanelWidget.h"
+#include "GameFramework/PlayerController.h"
 
 #include "Data/InventoryContainerLayout.h"
 #include "InventorySubsystem.h"
@@ -16,6 +17,10 @@ void UInventoryListWidget::NativeConstruct()
 	RegistryListener.Bind(this, FOnInventoryRegistryChanged::FDelegate::CreateUObject(this, &ThisClass::HandleRegistryChanged));
 	if (ContainerTag.IsValid())
 	{
+		if (APlayerController* Player = GetOwningPlayer())
+		{
+			Player->OnPossessedPawnChanged.AddUniqueDynamic(this, &ThisClass::HandlePawnChanged);
+		}
 		Container = InventoryWidgets::FindPlayerContainer(*this, ContainerTag);
 	}
 	Refresh();
@@ -24,6 +29,10 @@ void UInventoryListWidget::NativeConstruct()
 void UInventoryListWidget::NativeDestruct()
 {
 	RegistryListener.Unbind();
+	if (APlayerController* Player = GetOwningPlayer())
+	{
+		Player->OnPossessedPawnChanged.RemoveDynamic(this, &ThisClass::HandlePawnChanged);
+	}
 
 	Super::NativeDestruct();
 }
@@ -34,9 +43,26 @@ void UInventoryListWidget::SetContainer(FInventoryContainerHandle InContainer)
 	Refresh();
 }
 
+void UInventoryListWidget::HandlePawnChanged(APawn* OldPawn, APawn* NewPawn)
+{
+	SetContainer(InventoryWidgets::FindPawnContainer(NewPawn, ContainerTag));
+}
+
 UInventorySlotWidget* UInventoryListWidget::GetEntryWidget(int32 Index) const
 {
 	return Entries.IsValidIndex(Index) ? Entries[Index].Get() : nullptr;
+}
+
+UInventoryItemWidget* UInventoryListWidget::GetItemWidget(FInventoryItemHandle Item) const
+{
+	for (const UInventorySlotWidget* Entry : Entries)
+	{
+		if (UInventoryItemWidget* Found = Entry ? Entry->GetItemWidget(Item) : nullptr)
+		{
+			return Found;
+		}
+	}
+	return nullptr;
 }
 
 void UInventoryListWidget::HandleRegistryChanged(const FInventoryChangeSet& Changes)
@@ -108,7 +134,7 @@ void UInventoryListWidget::NativeOnDragLeave(const FDragDropEvent& InDragDropEve
 	Super::NativeOnDragLeave(InDragDropEvent, InOperation);
 
 	UInventoryUISubsystem* Interaction = GetDropInteraction(InOperation);
-	if (Interaction && !Interaction->bSnapHeldItem && Interaction->GetTargetContainer() == Container)
+	if (Interaction && !Interaction->GetStyle().bSnapHeldItem && Interaction->GetTargetContainer() == Container)
 	{
 		Interaction->ClearTarget();
 	}

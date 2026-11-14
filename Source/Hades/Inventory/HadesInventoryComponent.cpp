@@ -2,7 +2,6 @@
 
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
-#include "Algo/AllOf.h"
 #include "Engine/World.h"
 #include "GameplayEffect.h"
 
@@ -166,8 +165,7 @@ FTransform UHadesInventoryComponent::FindDropTransform() const
 
 bool UHadesInventoryComponent::CanCombine(FInventoryItemHandle Item) const
 {
-	const UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
-	if (!InventorySubsystem || !OwnsItem(Item))
+	if (!OwnsItem(Item))
 	{
 		return false;
 	}
@@ -176,27 +174,7 @@ bool UHadesInventoryComponent::CanCombine(FInventoryItemHandle Item) const
 	{
 		return FindGunLoadedBy(Item, Other).IsSet();
 	});
-	if (bHasGunPartner)
-	{
-		return true;
-	}
-	if (!CombineRecipes)
-	{
-		return false;
-	}
-
-	for (const UInventoryRecipe* Recipe : CombineRecipes->GetRecipes())
-	{
-		const bool bUsesItem = Recipe->Ingredients.ContainsByPredicate([&](const FInventoryRecipeIngredient& Ingredient)
-		{
-			return InventorySubsystem->MatchesQuery(Item, Ingredient.Query);
-		});
-		if (bUsesItem)
-		{
-			return true;
-		}
-	}
-	return false;
+	return bHasGunPartner || !GetRecipesUsing(CombineRecipes, Item).IsEmpty();
 }
 
 bool UHadesInventoryComponent::CombineItems(FInventoryItemHandle Item, FInventoryItemHandle Other)
@@ -212,7 +190,9 @@ bool UHadesInventoryComponent::CombineItems(FInventoryItemHandle Item, FInventor
 		return false;
 	}
 
-	UInventoryRecipe* Recipe = FindCombineRecipe(Item, Other);
+	// Made from these two, not others like them, so items with their own state are the ones used up.
+	const TArray<FInventoryItemHandle> Ingredients = { Item, Other };
+	UInventoryRecipe* Recipe = Item != Other ? FindRecipeMadeFrom(CombineRecipes, Ingredients, FGameplayTagContainer()) : nullptr;
 	if (!Recipe)
 	{
 		AHadesPlayerController::ShowMessageTo(GetOwner(), LOCTEXT("CantCombine", "Those can't be combined."));
@@ -221,7 +201,7 @@ bool UHadesInventoryComponent::CombineItems(FInventoryItemHandle Item, FInventor
 
 	TArray<FInventoryItemHandle> Made;
 	EInventoryError Error;
-	if (Craft(Recipe, FGameplayTagContainer(), 1, Made, Error))
+	if (CraftFromItems(Recipe, Ingredients, FGameplayTagContainer(), Made, Error))
 	{
 		return true;
 	}
@@ -308,47 +288,6 @@ FInventoryItemHandle UHadesInventoryComponent::FindGunLoadedBy(FInventoryItemHan
 		return InventorySubsystem && GunData && GunData->Ammo && InventorySubsystem->GetItemDefinition(Ammo) == GunData->Ammo;
 	};
 	return Loads(Item, Other) ? Item : Loads(Other, Item) ? Other : FInventoryItemHandle();
-}
-
-UInventoryRecipe* UHadesInventoryComponent::FindCombineRecipe(FInventoryItemHandle Item, FInventoryItemHandle Other) const
-{
-	if (!CombineRecipes || Item == Other || !OwnsItem(Item) || !OwnsItem(Other))
-	{
-		return nullptr;
-	}
-
-	for (UInventoryRecipe* Recipe : CombineRecipes->GetRecipes())
-	{
-		if (IsMadeFrom(*Recipe, Item, Other))
-		{
-			return Recipe;
-		}
-	}
-	return nullptr;
-}
-
-bool UHadesInventoryComponent::IsMadeFrom(const UInventoryRecipe& Recipe, FInventoryItemHandle Item, FInventoryItemHandle Other) const
-{
-	const UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
-	if (!InventorySubsystem || Recipe.Ingredients.IsEmpty() || Recipe.Ingredients.Num() > 2)
-	{
-		return false;
-	}
-
-	// Every ingredient comes from one of the two, and both are used: green + green for one ingredient of two, or green + red for two.
-	auto Feeds = [InventorySubsystem](FInventoryItemHandle Candidate, const FInventoryRecipeIngredient& Ingredient)
-	{
-		return InventorySubsystem->MatchesQuery(Candidate, Ingredient.Query);
-	};
-	auto FeedsAny = [&](FInventoryItemHandle Candidate)
-	{
-		return Recipe.Ingredients.ContainsByPredicate([&](const FInventoryRecipeIngredient& Ingredient) { return Feeds(Candidate, Ingredient); });
-	};
-	const bool bAllFed = Algo::AllOf(Recipe.Ingredients, [&](const FInventoryRecipeIngredient& Ingredient)
-	{
-		return Feeds(Item, Ingredient) || Feeds(Other, Ingredient);
-	});
-	return bAllFed && FeedsAny(Item) && FeedsAny(Other);
 }
 
 bool UHadesInventoryComponent::IsKeyItem(FInventoryItemHandle Item) const

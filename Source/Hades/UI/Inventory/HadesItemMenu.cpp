@@ -35,17 +35,17 @@ void UHadesItemMenu::NativeOnInitialized()
 	}
 }
 
-void UHadesItemMenu::SetItem(UHadesInventoryScreen* InScreen, FInventoryItemHandle InItem, const FBox2D& InAnchor)
+void UHadesItemMenu::NativeOnItemChanged()
 {
-	Screen = InScreen;
-	Item = InItem;
+	Super::NativeOnItemChanged();
 
+	const UHadesInventoryScreen* InventoryScreen = Screen.Get();
 	TOptional<EHadesItemAction> FirstAction;
 	for (const EHadesItemAction Action : TEnumRange<EHadesItemAction>())
 	{
 		if (UCommonButtonBase* Button = GetButton(Action))
 		{
-			const bool bCanRun = InScreen && InScreen->CanRunItemAction(Action, InItem);
+			const bool bCanRun = InventoryScreen && InventoryScreen->CanRunItemAction(Action, GetItem());
 			Button->SetVisibility(bCanRun ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 			if (bCanRun && !FirstAction.IsSet())
 			{
@@ -59,26 +59,11 @@ void UHadesItemMenu::SetItem(UHadesInventoryScreen* InScreen, FInventoryItemHand
 	}
 
 	const UInventorySubsystem* Subsystem = UInventorySubsystem::Get(this);
-	const UInventoryItemDefinition* Definition = Subsystem ? Subsystem->GetItemDefinition(InItem) : nullptr;
+	const UInventoryItemDefinition* Definition = Subsystem ? Subsystem->GetItemDefinition(GetItem()) : nullptr;
 	if (ItemNameText)
 	{
 		ItemNameText->SetText(Definition ? Definition->DisplayName : FText::GetEmpty());
 	}
-
-	PlaceBeside(InAnchor);
-}
-
-UWidget* UHadesItemMenu::NativeGetDesiredFocusTarget() const
-{
-	for (const EHadesItemAction Action : TEnumRange<EHadesItemAction>())
-	{
-		UCommonButtonBase* Button = GetButton(Action);
-		if (Button && Button->IsVisible())
-		{
-			return Button;
-		}
-	}
-	return Super::NativeGetDesiredFocusTarget();
 }
 
 UCommonButtonBase* UHadesItemMenu::GetButton(EHadesItemAction Action) const
@@ -104,7 +89,7 @@ void UHadesItemMenu::HandleButtonClicked(EHadesItemAction Action)
 
 	if (UHadesInventoryScreen* InventoryScreen = Screen.Get())
 	{
-		InventoryScreen->RunItemAction(Action, Item);
+		InventoryScreen->RunItemAction(Action, GetItem());
 	}
 }
 

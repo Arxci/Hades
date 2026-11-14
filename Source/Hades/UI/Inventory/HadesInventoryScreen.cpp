@@ -7,7 +7,6 @@
 #include "Components/TextBlock.h"
 #include "Components/WidgetSwitcher.h"
 #include "Engine/LocalPlayer.h"
-#include "Framework/Application/SlateUser.h"
 #include "GameFramework/Pawn.h"
 #include "Input/CommonUIInputTypes.h"
 #include "PrimaryGameLayout.h"
@@ -20,23 +19,19 @@
 #include "Hades/UI/Inventory/HadesItemMenu.h"
 #include "Hades/UI/Inventory/HadesShortcutMenu.h"
 
-#include "Data/InventoryContainerLayout.h"
-#include "Data/InventoryItemDefinition.h"
 #include "InventorySubsystem.h"
 #include "InventoryUISubsystem.h"
-#include "Widgets/InventoryCellWidget.h"
-#include "Widgets/InventoryDragDropOperation.h"
-#include "Widgets/InventoryGridWidget.h"
-#include "Widgets/InventoryItemWidget.h"
 #include "Widgets/InventoryListWidget.h"
 
 #define LOCTEXT_NAMESPACE "HadesInventoryScreen"
 
 UHadesInventoryScreen::UHadesInventoryScreen(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
-	bIsBackHandler = true;
-	InputConfig = EHadesWidgetInputMode::Menu;
-	bPauseGame = true;
+	// Plays like the RE games.
+	InteractionStyle.bClickOpensItemMenu = true;
+	InteractionStyle.bSnapHeldItem = true;
+	InteractionStyle.bSwapPicksUpOther = true;
+	InteractionStyle.bClickOnAnyRelease = true;
 
 	MoveHint = LOCTEXT("MoveHint", "Select an area to place this item.");
 	CombineHint = LOCTEXT("CombineHint", "Select an item to combine with.");
@@ -67,18 +62,14 @@ void UHadesInventoryScreen::NativeOnActivated()
 {
 	Super::NativeOnActivated();
 
+	if (AHadesPlayerController* Controller = Cast<AHadesPlayerController>(GetOwningPlayer()))
+	{
+		Controller->AddPauseRequest(this);
+	}
 	if (UInventoryUISubsystem* Interaction = GetInteraction())
 	{
-		// Plays like the RE games.
-		Interaction->bClickOpensItemMenu = true;
-		Interaction->bSwapPicksUpOther = true;
-		Interaction->bSnapHeldItem = true;
-
-		Interaction->OnContextRequested.AddUniqueDynamic(this, &ThisClass::OpenItemMenu);
 		Interaction->OnItemChosen.AddUniqueDynamic(this, &ThisClass::HandleItemChosen);
 		Interaction->OnHeldItemChanged.AddUniqueDynamic(this, &ThisClass::HandleHeldItemChanged);
-		Interaction->OnHoveredItemChanged.AddUniqueDynamic(this, &ThisClass::HandleHoveredItemChanged);
-		Interaction->OnTargetChanged.AddUniqueDynamic(this, &ThisClass::RefreshItemActions);
 	}
 	if (ItemBoxList)
 	{
@@ -92,44 +83,23 @@ void UHadesInventoryScreen::NativeOnDeactivated()
 {
 	if (UInventoryUISubsystem* Interaction = GetInteraction())
 	{
-		Interaction->OnContextRequested.RemoveDynamic(this, &ThisClass::OpenItemMenu);
 		Interaction->OnItemChosen.RemoveDynamic(this, &ThisClass::HandleItemChosen);
 		Interaction->OnHeldItemChanged.RemoveDynamic(this, &ThisClass::HandleHeldItemChanged);
-		Interaction->OnHoveredItemChanged.RemoveDynamic(this, &ThisClass::HandleHoveredItemChanged);
-		Interaction->OnTargetChanged.RemoveDynamic(this, &ThisClass::RefreshItemActions);
-		Interaction->ClearInteraction();
 	}
-	CombineItem.Reset();
+	if (AHadesPlayerController* Controller = Cast<AHadesPlayerController>(GetOwningPlayer()))
+	{
+		Controller->RemovePauseRequest(this);
+	}
 
 	Super::NativeOnDeactivated();
 }
 
 bool UHadesInventoryScreen::NativeOnHandleBackAction()
 {
-	UInventoryUISubsystem* Interaction = GetInteraction();
-	if (Interaction && Interaction->IsChoosingItem())
-	{
-		Interaction->CancelChoosingItem();
-		Interaction->SetSelectedItem(FInventoryItemHandle());
-		CombineItem.Reset();
-		RefreshActionHint();
-		return true;
-	}
-	if (Interaction && Interaction->IsHolding())
-	{
-		Interaction->CancelHold();
-		return true;
-	}
-	return Super::NativeOnHandleBackAction();
-}
-
-UWidget* UHadesInventoryScreen::NativeGetDesiredFocusTarget() const
-{
-	if (UWidget* Target = Super::NativeGetDesiredFocusTarget())
-	{
-		return Target;
-	}
-	return MainGrid ? MainGrid->GetCellWidget(FIntPoint::ZeroValue) : nullptr;
+	// Back may stop the choosing, and the hint only follows the held item by itself.
+	const bool bHandled = Super::NativeOnHandleBackAction();
+	RefreshActionHint();
+	return bHandled;
 }
 
 // Item actions
@@ -188,9 +158,7 @@ void UHadesInventoryScreen::RunItemAction(EHadesItemAction Action, FInventoryIte
 		Inventory->StowItem(Item);
 		break;
 	case EHadesItemAction::Combine:
-		CombineItem = Item;
-		Interaction->BeginChoosingItem();
-		Interaction->SetSelectedItem(Item);
+		Interaction->BeginChoosingItem(Item);
 		RefreshActionHint();
 		break;
 	case EHadesItemAction::Discard:
@@ -211,6 +179,13 @@ void UHadesInventoryScreen::RunItemAction(EHadesItemAction Action, FInventoryIte
 	}
 }
 
+void UHadesInventoryScreen::NativeOnItemMenuRequested(FInventoryItemHandle Item)
+{
+	Super::NativeOnItemMenuRequested(Item);
+
+	OpenItemMenu(Item);
+}
+
 void UHadesInventoryScreen::OpenItemMenu(FInventoryItemHandle Item)
 {
 	bool bHasActions = false;
@@ -220,70 +195,43 @@ void UHadesInventoryScreen::OpenItemMenu(FInventoryItemHandle Item)
 	}
 
 	UPrimaryGameLayout* Layout = UPrimaryGameLayout::GetPrimaryGameLayout(GetOwningLocalPlayer());
-	UInventoryUISubsystem* Interaction = GetInteraction();
-	if (!bHasActions || !ItemMenuClass || !Layout || !Interaction || Interaction->IsChoosingItem() || !IsOnItemsPage())
+	if (!bHasActions || !ItemMenuClass || !Layout)
 	{
 		return;
 	}
 
-	Interaction->CancelHold();
-	Interaction->SetSelectedItem(Item);
-	const FBox2D Anchor = FindItemAnchor(Item);
-	UHadesItemMenu* Menu = Layout->PushWidgetToLayerStack<UHadesItemMenu>(HadesGameplayTags::UI_Layer_Modal, ItemMenuClass.Get(), [this, Item, Anchor](UHadesItemMenu& NewMenu)
+	UHadesItemMenu* Menu = Layout->PushWidgetToLayerStack<UHadesItemMenu>(HadesGameplayTags::UI_Layer_Modal, ItemMenuClass.Get(), [this, Item](UHadesItemMenu& NewMenu)
 	{
-		NewMenu.SetItem(this, Item, Anchor);
+		NewMenu.SetScreen(this);
+		NewMenu.SetItem(Item, FindItemWidget(Item));
 	});
-	if (Menu)
+	if (Menu && !Menu->OnDeactivated().IsBoundToObject(this))
 	{
-		Menu->OnAnchorDragged.BindUObject(this, &ThisClass::BeginItemDrag, Item);
-		if (!Menu->OnDeactivated().IsBoundToObject(this))
-		{
-			Menu->OnDeactivated().AddUObject(this, &ThisClass::HandleMenuClosed);
-		}
+		Menu->OnDeactivated().AddUObject(this, &ThisClass::HandleMenuClosed);
 	}
 }
 
 void UHadesInventoryScreen::OpenShortcutMenu(FInventoryItemHandle Item)
 {
 	UPrimaryGameLayout* Layout = UPrimaryGameLayout::GetPrimaryGameLayout(GetOwningLocalPlayer());
-	UInventoryUISubsystem* Interaction = GetInteraction();
-	if (!ShortcutMenuClass || !Layout || !Interaction)
+	if (!ShortcutMenuClass || !Layout)
 	{
 		return;
 	}
 
-	Interaction->SetSelectedItem(Item);
-	const FBox2D Anchor = FindItemAnchor(Item);
-	UHadesShortcutMenu* Menu = Layout->PushWidgetToLayerStack<UHadesShortcutMenu>(HadesGameplayTags::UI_Layer_Modal, ShortcutMenuClass.Get(), [Item, Anchor](UHadesShortcutMenu& NewMenu)
+	UHadesShortcutMenu* Menu = Layout->PushWidgetToLayerStack<UHadesShortcutMenu>(HadesGameplayTags::UI_Layer_Modal, ShortcutMenuClass.Get(), [this, Item](UHadesShortcutMenu& NewMenu)
 	{
-		NewMenu.SetItem(Item, Anchor);
+		NewMenu.SetItem(Item, FindItemWidget(Item));
 	});
-	if (Menu)
+	if (Menu && !Menu->OnDeactivated().IsBoundToObject(this))
 	{
-		Menu->OnAnchorDragged.BindUObject(this, &ThisClass::BeginItemDrag, Item);
-		if (!Menu->OnDeactivated().IsBoundToObject(this))
-		{
-			Menu->OnDeactivated().AddUObject(this, &ThisClass::HandleMenuClosed);
-		}
+		Menu->OnDeactivated().AddUObject(this, &ThisClass::HandleMenuClosed);
 	}
-}
-
-UDragDropOperation* UHadesInventoryScreen::BeginItemDrag(FInventoryItemHandle Item)
-{
-	UInventoryItemWidget* ItemWidget = MainGrid ? MainGrid->GetItemWidget(Item) : nullptr;
-	return ItemWidget ? ItemWidget->BeginDrag() : nullptr;
 }
 
 void UHadesInventoryScreen::HandleMenuClosed()
 {
 	ShowActionHint(FText::GetEmpty());
-
-	// Combining keeps the first item selected while the second is chosen.
-	UInventoryUISubsystem* Interaction = GetInteraction();
-	if (Interaction && !Interaction->IsChoosingItem())
-	{
-		Interaction->SetSelectedItem(FInventoryItemHandle());
-	}
 }
 
 void UHadesInventoryScreen::ShowActionHint(const FText& Hint)
@@ -311,53 +259,19 @@ void UHadesInventoryScreen::RefreshActionHint()
 	}
 }
 
-FBox2D UHadesInventoryScreen::FindItemAnchor(FInventoryItemHandle Item) const
+void UHadesInventoryScreen::HandleItemChosen(FInventoryItemHandle Item, FInventoryItemHandle Chosen)
 {
-	if (const UInventoryItemWidget* ItemWidget = MainGrid ? MainGrid->GetItemWidget(Item) : nullptr)
-	{
-		const FGeometry& Geometry = ItemWidget->GetCachedGeometry();
-		return FBox2D(Geometry.GetAbsolutePosition(), Geometry.LocalToAbsolute(Geometry.GetLocalSize()));
-	}
-
-	// Outside the grid, such as in the item box: beside the focused widget on a gamepad, or at the cursor.
-	ULocalPlayer* LocalPlayer = GetOwningLocalPlayer();
-	const TSharedPtr<FSlateUser> SlateUser = LocalPlayer ? LocalPlayer->GetSlateUser() : TSharedPtr<FSlateUser>();
-	if (!SlateUser)
-	{
-		return FBox2D(ForceInit);
-	}
-
-	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(LocalPlayer);
-	const TSharedPtr<SWidget> Focused = SlateUser->GetFocusedWidget();
-	if (Focused && Input && Input->GetCurrentInputType() == ECommonInputType::Gamepad)
-	{
-		const FGeometry& Geometry = Focused->GetCachedGeometry();
-		return FBox2D(Geometry.GetAbsolutePosition(), Geometry.LocalToAbsolute(Geometry.GetLocalSize()));
-	}
-
-	const FVector2D CursorPosition = SlateUser->GetCursorPosition();
-	return FBox2D(CursorPosition, CursorPosition);
-}
-
-void UHadesInventoryScreen::HandleItemChosen(FInventoryItemHandle Item)
-{
-	const FInventoryItemHandle First = CombineItem;
-	CombineItem.Reset();
-	if (UInventoryUISubsystem* Interaction = GetInteraction())
-	{
-		Interaction->SetSelectedItem(FInventoryItemHandle());
-	}
 	RefreshActionHint();
 
 	UHadesInventoryComponent* Inventory = GetPlayerInventory();
-	if (Inventory && First.IsSet())
+	if (Inventory && Item.IsSet())
 	{
-		Inventory->CombineItems(First, Item);
+		Inventory->CombineItems(Item, Chosen);
 	}
 }
 
 // Pages
-bool UHadesInventoryScreen::IsOnItemsPage() const
+bool UHadesInventoryScreen::IsInventoryShown() const
 {
 	return !Pages || Pages->GetActiveWidgetIndex() == ItemsPage;
 }
@@ -377,15 +291,15 @@ void UHadesInventoryScreen::SetPage(int32 Index)
 	}
 
 	UInventoryUISubsystem* Interaction = GetInteraction();
-	if (Interaction && !IsOnItemsPage())
+	if (Interaction && !IsInventoryShown())
 	{
 		Interaction->ClearInteraction();
 	}
-	RefreshItemActions();
+	RefreshActions();
 
 	// Back on the items, gamepad focus returns to them. The mouse aims for itself.
 	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
-	UWidget* FocusTarget = IsOnItemsPage() ? GetDesiredFocusTarget() : nullptr;
+	UWidget* FocusTarget = IsInventoryShown() ? GetDesiredFocusTarget() : nullptr;
 	if (FocusTarget && Input && Input->GetCurrentInputType() == ECommonInputType::Gamepad)
 	{
 		FocusTarget->SetFocus();
@@ -426,87 +340,16 @@ void UHadesInventoryScreen::HandleNextTab()
 }
 
 // Actions
-void UHadesInventoryScreen::RefreshItemActions()
+void UHadesInventoryScreen::RefreshActions()
 {
-	const bool bOnItems = IsOnItemsPage();
-	const UInventoryUISubsystem* Interaction = GetInteraction();
-	const UInventorySubsystem* Subsystem = UInventorySubsystem::Get(this);
-	const FInventoryItemHandle Held = Interaction ? Interaction->GetHeldItem() : FInventoryItemHandle();
-	const UInventoryItemDefinition* HeldDefinition = Subsystem ? Subsystem->GetItemDefinition(Held) : nullptr;
-	const bool bCanSplit = HeldDefinition && HeldDefinition->CanSplit() && Subsystem->GetItemCount(Held) > 1;
+	Super::RefreshActions();
 
-	// Move picks up what's under the cursor or focus, or puts down what's held.
-	const FInventoryItemHandle Hovered = Interaction ? Interaction->GetHoveredItem() : FInventoryItemHandle();
-	const UInventoryContainerLayout* HoveredLayout = Subsystem && Hovered.IsSet() ? Subsystem->GetContainerLayout(Subsystem->GetItemContainer(Hovered)) : nullptr;
-	const bool bCanMove = Held.IsSet() || (HoveredLayout && !HoveredLayout->bReadOnlyInUI);
-
-	SetActionBound(MoveHandle, MoveAction, bOnItems && bCanMove, &ThisClass::HandleMoveAction);
-	SetActionBound(OrganizeHandle, OrganizeAction, bOnItems, &ThisClass::HandleOrganizeAction);
-	SetActionBound(RotateHandle, RotateAction, bOnItems && Interaction && Interaction->CanRotateHeld(), &ThisClass::HandleRotateAction);
-	SetActionBound(SplitHandle, SplitAction, bOnItems && bCanSplit, &ThisClass::HandleSplitAction);
-}
-
-void UHadesInventoryScreen::HandleHoveredItemChanged(FInventoryItemHandle Item)
-{
-	RefreshItemActions();
-}
-
-void UHadesInventoryScreen::SetActionBound(FUIActionBindingHandle& Handle, const FDataTableRowHandle& Row, bool bBound, void (UHadesInventoryScreen::*Handler)())
-{
-	if (bBound && !Handle.IsValid() && !Row.IsNull())
-	{
-		Handle = RegisterUIActionBinding(FBindUIActionArgs(Row, true, FSimpleDelegate::CreateUObject(this, Handler)));
-	}
-	else if (!bBound && Handle.IsValid())
-	{
-		Handle.Unregister();
-		Handle = FUIActionBindingHandle();
-	}
+	SetActionBound(OrganizeHandle, OrganizeAction, IsInventoryShown(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleOrganizeAction));
 }
 
 void UHadesInventoryScreen::HandleHeldItemChanged()
 {
-	RefreshItemActions();
 	RefreshActionHint();
-}
-
-void UHadesInventoryScreen::HandleMoveAction()
-{
-	UInventoryUISubsystem* Interaction = GetInteraction();
-	const UInventorySubsystem* Subsystem = UInventorySubsystem::Get(this);
-	if (!Interaction || !Subsystem || Interaction->IsChoosingItem())
-	{
-		return;
-	}
-
-	if (Interaction->IsHolding())
-	{
-		Interaction->PlaceHeld(Interaction->GetTargetContainer(), Interaction->GetTargetPlacement());
-		return;
-	}
-
-	const FInventoryItemHandle Item = Interaction->GetHoveredItem();
-	if (Interaction->BeginHold(Item))
-	{
-		// Drawn where it is until the mouse or focus moves.
-		Interaction->SetTarget(Subsystem->GetItemContainer(Item), Subsystem->GetItemPlacement(Item));
-	}
-}
-
-void UHadesInventoryScreen::HandleRotateAction()
-{
-	if (UInventoryUISubsystem* Interaction = GetInteraction())
-	{
-		Interaction->RotateHeld();
-	}
-}
-
-void UHadesInventoryScreen::HandleSplitAction()
-{
-	if (UInventoryUISubsystem* Interaction = GetInteraction())
-	{
-		Interaction->SplitHeld();
-	}
 }
 
 void UHadesInventoryScreen::HandleOrganizeAction()
@@ -531,11 +374,6 @@ void UHadesInventoryScreen::HandleCloseAction()
 }
 
 // Helpers
-UInventoryUISubsystem* UHadesInventoryScreen::GetInteraction() const
-{
-	return UInventoryUISubsystem::Get(GetOwningLocalPlayer());
-}
-
 UHadesInventoryComponent* UHadesInventoryScreen::GetPlayerInventory() const
 {
 	return Cast<UHadesInventoryComponent>(UInventoryComponent::FindInventoryComponent(GetOwningPlayerPawn()));

@@ -175,7 +175,7 @@ The item menu shows only the actions an item can do now. The inventory screen de
 **Combine.** After choosing Combine, the player picks the second item; Back cancels. Then:
 
 1. If one of the two is a gun and the other its ammo, the gun loads ([7](#7-guns-and-ammo)). If it's already full, the player is told "It's already fully loaded."
-2. Otherwise the first recipe in **Combine Recipes** made from the two is crafted. A recipe is made from them when every ingredient matches one of the two, and both are used: green + green for one ingredient of two, or green + red for two ingredients. The ingredients are used up and the result goes into the pockets.
+2. Otherwise the first recipe in **Combine Recipes** made from the two is crafted, from exactly those two items, never others like them elsewhere in the pockets. A recipe is made from them when every ingredient matches one of the two, and both are used: green + green for one ingredient of two, or green + red for two ingredients. The two are used up and the result goes into the pockets. This is the plugin's **Find Recipe Made From** and **Craft From Items**.
 3. With no such recipe, the player is told "Those can't be combined."; with no room for the result, "Not enough space."
 
 **Can Combine** is true when any of Combine Recipes uses the item, or when it's a gun or ammo whose partner the player carries. "Green + Red + Yellow" takes two steps, as in the RE games: G+R, then the result + Y.
@@ -410,6 +410,6 @@ From your fire ability or input: **Get Item In Hand**; if **Get Capacity** is ab
 | Discard drops the item | It can be undone, and players like dropping items anywhere. | Clear **Dropped Pickup Class** to destroy discarded items, as the RE games do. |
 | Four shortcuts | Matches the D-pad, as in RE7 and the RE2 remake. | **Num Slots** and **Slot Keys**, plus more `Input.QuickSlot` tags and bindings in C++. |
 | Items keep their shapes | A shotgun takes more room than a herb, which makes packing a choice. | Set every item's Size to 1 × 1, and clear **Rotate Action** on the screens. |
-| Only items of the same size and shape swap | A swap then never depends on what space is free. | The plugin's Inventory UI Subsystem; see its README, 11.4. |
+| Only items of the same size and shape swap | A swap then never depends on what space is free. | The plugin enforces it in grids. Untick **Swap Items** in the inventory screens' Interaction Style to stop swapping altogether; see the plugin README, 11.4. |
 
 With one item in hand, the flashlight and a gun can't be held together yet. Requiem keeps a light on the player all the time; a head lamp, or a light on the gun through the plugin's attachment slots, would do the same.

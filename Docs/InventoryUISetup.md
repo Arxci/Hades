@@ -5,12 +5,80 @@ The editor steps for bringing the inventory UI up to date after a patch. Every w
 ## Contents
 
 1. [Updating from an earlier patch](#updating-from-an-earlier-patch)
+   - [From patch 0012 to 0013: the plugin's item menu](#from-patch-0012-to-0013-the-plugins-item-menu)
+   - [From patch 0011 to 0012: the plugin's inventory screen](#from-patch-0011-to-0012-the-plugins-inventory-screen)
    - [From patch 0010 to 0011: the restyle](#from-patch-0010-to-0011-the-restyle)
 2. [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Updating from an earlier patch
+
+### From patch 0012 to 0013: the plugin's item menu
+
+Patch 0013 changes no looks and no widget layouts. The popup behaviour the item and shortcut menus shared moved from Hades's `UHadesPopupMenu` into the Modular Inventory plugin's new **Inventory Item Menu Widget**, and the plugin gained features Hades doesn't use yet: transfer and Take All for chests, item meters, tag colors, stat rows and dropping items outside the inventory (plugin README, 11).
+
+**What changes**
+
+- `UHadesItemMenu` and `UHadesShortcutMenu` are built on the plugin's **Inventory Item Menu Widget**. `UHadesPopupMenu` is gone. Placing, closing on Back or a click outside, the drag from the item, and the selection while a menu is open now come from the plugin.
+- The menus no longer have **Input Config**, **Game Mouse Capture Mode** or **Pause Game**: they always take menu input and never stop the world, as they were set before.
+- Menus for items in the item box or the key item list now open beside the item, instead of beside the gamepad's focus or at the cursor.
+- Combine uses exactly the two items picked. Before, a recipe could use up another herb of the same kind from elsewhere in the pockets.
+
+**Steps**
+
+1. Close the editor, pull the branch, and build **Development Editor** for **Win64**.
+2. Open `W_ItemMenu` (`Content/UI/Inventory`). Check that it compiles, and that **Class Defaults** › Input › **Confirm Action** is still `Confirm`. It moved into the plugin's class under the same name, so it should have kept its row; set it again if it's empty (Data Table `DT_UIInputActions`). Compile and save.
+3. Do the same for `W_ShortcutMenu`.
+
+**Check it**
+
+1. Click an item: its menu opens beside it, the item lights up, and the first row takes the gamepad's focus. Click outside the menu: it closes and the item goes dark.
+2. With a menu open, drag the item: the menu closes and the item moves.
+3. At an item box, open the menu of an item in the box: it opens beside that row.
+4. Register Shortcut opens the shortcut menu beside the item, on the shortcut the item is on.
+5. Combine a green herb with another green herb: those two are used, and any third herb stays.
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `W_ItemMenu` or `W_ShortcutMenu` fails to compile, saying its parent class is missing | The C++ wasn't built | Build Development Editor (step 1) |
+| The action bar has no Confirm while a menu is open | The row was cleared when it moved to the plugin's class | Set it again (step 2) |
+
+### From patch 0011 to 0012: the plugin's inventory screen
+
+Patch 0012 changes no looks and no widgets. It moves code: what any inventory screen needs now lives in the Modular Inventory plugin, and Hades's inventory screen is built on it.
+
+**What changes**
+
+- `UHadesInventoryScreen` is built on the plugin's new **Inventory Screen Widget** instead of `UHadesActivatableWidget`. Move, Rotate, Split, Back, the focus on the first pocket cell and the cleanup on closing come from the plugin; the tabs, menus, item actions, hints, Auto Sort, the item box and stopping the world stay in Hades.
+- The RE-style switches are now the screen's **Interaction Style** in Class Defaults, set by the C++, instead of being set on the subsystem when the screen opens.
+- A click on an item must start and end on it, unless the style's **Click On Any Release** is on. Hades turns it on, so one click still goes from one item's menu to another's.
+- The inventory screens no longer show **Input Config** or **Pause Game**: they always take menu input and always stop the world.
+- Equipping in place now checks the equip rules' Owner Requirements and Blocked Slots. Hades's equip rules have neither set, so nothing changes in play.
+
+**Steps**
+
+1. Close the editor, pull the branch, and build **Development Editor** for **Win64**.
+2. Open the project and open `W_InventoryScreen` (`Content/UI/Inventory`). In **Class Defaults**, check:
+   - Input: **Confirm Action** `Confirm`, **Move Action** `Move`, **Rotate Action** `Rotate`, **Split Action** empty, **Organize Action** `Organize`, **Previous Tab Action** `PreviousTab`, **Next Tab Action** `NextTab`. The first four moved into the plugin's class under the same names, so they should have kept their rows; set any that are empty again (Data Table `DT_UIInputActions`).
+   - Inventory › Screen › **Interaction Style**: Click Opens Item Menu, Snap Held Item, Swap Items, Swap Picks Up Other and Click On Any Release ticked.
+3. Compile and save.
+4. Do the same for `W_ItemBoxScreen`.
+
+**Check it**
+
+1. Tab opens the inventory, the world stops and turns grey, and the action bar shows Auto Sort, Confirm and Close, with Move while the cursor or focus is on an item.
+2. Click an item: its menu opens. With the menu open, click another item: that item's menu opens straight away.
+3. Move picks up the item under the cursor; Q, E or Rotate turn it; Back puts it back; a second Back closes the inventory and the world runs again.
+4. Combine a green herb, then click the same herb: nothing happens. Click a red herb: they combine.
+5. At an item box, Store and Take still work, and a drag between the box and the pockets still works.
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| The action bar has no Move, Rotate or Confirm | The rows were cleared when they moved to the plugin's class | Set them again (step 2) |
+| Clicking another item while a menu is open only closes the menu | Click On Any Release is off | Tick it in Interaction Style (step 2) |
+| Clicking an item picks it up instead of opening its menu | Click Opens Item Menu is off | Tick it in Interaction Style (step 2) |
+| The world keeps running behind the inventory | The C++ wasn't built | Build Development Editor (step 1) |
 
 ### From patch 0010 to 0011: the restyle
 

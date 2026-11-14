@@ -170,18 +170,15 @@ void AHadesItemPickup::RefreshRoom()
 
 bool AHadesItemPickup::HasRoomFor(const UInventoryComponent& Taker) const
 {
-	UInventorySubsystem* Subsystem = UInventorySubsystem::Get(this);
+	const UInventorySubsystem* Subsystem = UInventorySubsystem::Get(this);
 	if (!Subsystem)
 	{
 		return true;
 	}
 
-	FInventoryRegistry& Registry = Subsystem->GetRegistry();
-	const TArray<FInventoryContainerHandle> Storage = Taker.GetStorageContainers();
 	for (const FInventoryItemHandle& Item : GetItems())
 	{
-		const bool bPouch = Subsystem->HasItemTag(Item, HadesGameplayTags::Item_Type_Pouch);
-		if (bPouch || Registry.DryRun([&]() { return Registry.MoveItemToContainers(Item, Storage, 0, true); }) == EInventoryError::None)
+		if (Subsystem->HasItemTag(Item, HadesGameplayTags::Item_Type_Pouch) || Taker.CanTakeItem(Item, 0, true))
 		{
 			return true;
 		}

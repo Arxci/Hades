@@ -149,23 +149,29 @@ public:
 	/** The item's own value, else its definition's, else 0. */
 	float GetTagValue(FInventoryItemHandle Item, const FGameplayTag& Tag) const;
 	bool HasTagValue(FInventoryItemHandle Item, const FGameplayTag& Tag) const;
+	/** The most Tag's value can be, such as full durability: MaxTag's effective value when the item has one, else the value the definition starts Tag at. 0 when neither. */
+	float GetTagValueMax(FInventoryItemHandle Item, const FGameplayTag& Tag, const FGameplayTag& MaxTag) const;
 	const FInstancedStruct* FindItemFragment(FInventoryItemHandle Item, const UScriptStruct* Type) const;
 	const FInstancedStruct* FindContainerFragment(FInventoryContainerHandle Container, const UScriptStruct* Type) const;
 	bool MatchesQuery(FInventoryItemHandle Item, const FInventoryItemQuery& Query) const;
 	bool CanStack(FInventoryItemHandle Item, FInventoryItemHandle Other) const;
 
-	// Sockets
-	/** Tag value plus bonuses from the sockets of neighbouring items. */
+	// Sockets and attachments
+	/** Tag value plus bonuses from the sockets of neighbouring items and from attachments. */
 	float GetEffectiveTagValue(FInventoryItemHandle Item, const FGameplayTag& Tag) const;
-	/** Item tags plus tags granted by the sockets of neighbouring items. */
+	/** Item tags plus tags granted by the sockets of neighbouring items and by attachments. */
 	FGameplayTagContainer GetEffectiveTags(FInventoryItemHandle Item) const;
 	/** Items whose sockets currently affect Item. */
 	TArray<FInventoryItemHandle> GetSocketSources(FInventoryItemHandle Item) const;
+	/** The items in Item's equipment containers, such as a rifle's scope, and those attached to them in turn. */
+	TArray<FInventoryItemHandle> GetAttachments(FInventoryItemHandle Item) const;
 
 	// Search
 	void FindItems(TConstArrayView<FInventoryContainerHandle> SearchRoots, const FInventoryItemQuery& Query, bool bRecursive, TArray<FInventoryItemHandle>& OutItems) const;
 	/** Total stack count of matching items. */
 	int32 CountItems(TConstArrayView<FInventoryContainerHandle> SearchRoots, const FInventoryItemQuery& Query, bool bRecursive) const;
+	/** The sum of a tag value over the items, each times its count, such as the weight of everything carried. */
+	float GetTotalTagValue(TConstArrayView<FInventoryContainerHandle> SearchRoots, const FGameplayTag& Tag, bool bRecursive) const;
 
 	// Placement
 	EInventoryError CanPlace(FInventoryItemHandle Item, FInventoryContainerHandle Container, const FInventoryPlacement& Placement) const;
@@ -181,7 +187,10 @@ public:
 	 * Fails without changing anything when an item no longer fits or the new filter refuses it.
 	 */
 	EInventoryError SetContainerLayout(FInventoryContainerHandle Container, const UInventoryContainerLayout* Layout);
-	/** Repacks a grid, biggest items first, each on the first spot that fits, and merges partial stacks. All or nothing. */
+	/**
+	 * Sorts a grid or list: merges partial stacks, then orders the items biggest first in a grid, then by name, so the same items sit
+	 * together. A grid puts each on the first spot that fits. All or nothing.
+	 */
 	EInventoryError SortContainer(FInventoryContainerHandle Container);
 
 	// Operations. An unset Placement means "find a free spot".
@@ -232,6 +241,11 @@ public:
 	/** Takes ingredients from Sources and their nested containers, then adds the outputs to Outputs. All or nothing. */
 	EInventoryError Craft(const UInventoryRecipe& Recipe, TConstArrayView<FInventoryContainerHandle> Sources, TConstArrayView<FInventoryContainerHandle> Outputs,
 		const FGameplayTagContainer& ContextTags, int32 Times, FRandomStream& Stream, TArray<FInventoryItemHandle>* OutItems = nullptr);
+	/** Like Craft, taking ingredients only from FromItems, such as the items a player chose to combine. */
+	EInventoryError CraftFromItems(const UInventoryRecipe& Recipe, TConstArrayView<FInventoryItemHandle> FromItems, TConstArrayView<FInventoryContainerHandle> Outputs,
+		const FGameplayTagContainer& ContextTags, int32 Times, FRandomStream& Stream, TArray<FInventoryItemHandle>* OutItems = nullptr);
+	/** Whether the recipe can be made once from FromItems with every one of them used, as when combining exactly those items. */
+	bool IsMadeFrom(const UInventoryRecipe& Recipe, TConstArrayView<FInventoryItemHandle> FromItems, const FGameplayTagContainer& ContextTags) const;
 
 	// Batches
 	/** Runs the operations in order. If one fails, all of them are undone. */
@@ -313,6 +327,7 @@ private:
 	FGameplayTagContainer GetRecordTags(const FInventoryItemRecord& Item) const;
 	float GetRecordTagValue(const FInventoryItemRecord& Item, const FGameplayTag& Tag) const;
 	void ForEachSocketAffecting(FInventoryItemHandle Item, TFunctionRef<void(FInventoryItemHandle Source, const FInventoryItemSocket& Socket)> Callback) const;
+	void ForEachAttachment(FInventoryItemHandle Item, TFunctionRef<void(FInventoryItemHandle Attachment)> Callback) const;
 
 	struct FIngredientUse
 	{
@@ -320,7 +335,7 @@ private:
 		int32 Count = 0;
 		bool bConsume = true;
 	};
-	bool AllocateIngredients(const UInventoryRecipe& Recipe, TConstArrayView<FInventoryContainerHandle> Sources, int32 Times, TArray<FIngredientUse>& OutUses) const;
+	bool AllocateIngredients(const UInventoryRecipe& Recipe, TConstArrayView<FInventoryItemHandle> Candidates, int32 Times, TArray<FIngredientUse>& OutUses) const;
 
 	void UpdateTraceCounters() const;
 

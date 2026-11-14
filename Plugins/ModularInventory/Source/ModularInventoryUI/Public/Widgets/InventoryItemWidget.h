@@ -6,6 +6,7 @@
 #include "Engine/StreamableManager.h"
 
 #include "InventoryTypes.h"
+#include "InventoryUITypes.h"
 
 #include "InventoryItemWidget.generated.h"
 
@@ -14,6 +15,7 @@ class UInventoryDragDropOperation;
 class UInventoryItemDefinition;
 class UInventoryItemDetailsWidget;
 class UInventoryUISubsystem;
+class UProgressBar;
 class UTextBlock;
 
 
@@ -67,6 +69,7 @@ public:
 
 protected:
 	//~ Begin UUserWidget Interface
+	virtual void NativeOnInitialized() override;
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
 	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
@@ -82,7 +85,7 @@ protected:
 	/** After On Held Changed, On Hovered Changed or On Selected Changed, for C++ subclasses. */
 	virtual void NativeOnInteractionChanged() {}
 
-	/** The item or its state changed. Update what the base doesn't, like a durability bar from a tag value. */
+	/** The item or its state changed. Update what the base doesn't, like a mark for an item that's in hand. */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Item")
 	void OnItemChanged();
 
@@ -117,6 +120,48 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> CountText;
 
+	/** Collapses Count Text for a stack of one too, so only real stacks show a number. */
+	UPROPERTY(EditAnywhere, Category = "Inventory|Item")
+	bool bHideCountOfOne = false;
+
+	/** Tinted by the item's tags, such as a rarity border: the first Tag Colors entry whose tag the item has. Without one, it keeps its own color. */
+	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
+	TObjectPtr<UImage> TagTint;
+
+	UPROPERTY(EditAnywhere, Category = "Inventory|Item")
+	TArray<FInventoryTagColor> TagColors;
+
+	/** Filled to Meter Tag's value out of its maximum, such as durability or rounds. Collapsed for items without the value. */
+	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
+	TObjectPtr<UProgressBar> Meter;
+
+	/** Meter Tag's value in Meter Format. Shown and hidden with the meter. */
+	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> MeterText;
+
+	/** The tag value Meter and Meter Text show, such as Item.Durability. */
+	UPROPERTY(EditAnywhere, Category = "Inventory|Item|Meter")
+	FGameplayTag MeterTag;
+
+	/** The tag value that fills the meter, such as Item.MaxDurability. Without it, the value the definition starts Meter Tag at fills it. */
+	UPROPERTY(EditAnywhere, Category = "Inventory|Item|Meter")
+	FGameplayTag MeterMaxTag;
+
+	/** {Value} is Meter Tag's value, {Max} what fills the meter and {Percent} how full it is, out of 100. */
+	UPROPERTY(EditAnywhere, Category = "Inventory|Item|Meter")
+	FText MeterFormat = INVTEXT("{Value}");
+
+	/** Hides the meter while it's full, so only worn or spent items show one. */
+	UPROPERTY(EditAnywhere, Category = "Inventory|Item|Meter")
+	bool bHideFullMeter = false;
+
+	/** Colors Meter and Meter Text by how full the meter is. Off, they keep their own colors. */
+	UPROPERTY(EditAnywhere, Category = "Inventory|Item|Meter")
+	bool bTintMeter = false;
+
+	UPROPERTY(EditAnywhere, Category = "Inventory|Item|Meter", meta = (EditCondition = "bTintMeter"))
+	FInventoryMeterColors MeterColors;
+
 	/** Follows the cursor while dragging, unless the Inventory UI Subsystem's Snap Held Item is on. None uses this widget's own class. */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Item")
 	TSubclassOf<UInventoryItemWidget> DragVisualClass;
@@ -141,6 +186,8 @@ private:
 
 	UInventoryUISubsystem* GetInteraction() const;
 	void Refresh();
+	void RefreshMeter();
+	void RefreshTagTint();
 	void RefreshInteraction();
 	void ApplyCellLayout();
 
@@ -151,6 +198,8 @@ private:
 	bool bHovered = false;
 	bool bSelected = false;
 	bool bDragVisual = false;
+	bool bPressed = false;
+	FLinearColor DefaultTagTint = FLinearColor::White;
 
 	TWeakObjectPtr<const UInventoryItemDefinition> ShownDefinition;
 	TSharedPtr<FStreamableHandle> IconHandle;

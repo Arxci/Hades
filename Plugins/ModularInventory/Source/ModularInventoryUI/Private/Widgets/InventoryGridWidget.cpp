@@ -4,6 +4,7 @@
 #include "CommonInputTypeEnum.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
+#include "GameFramework/PlayerController.h"
 
 #include "Data/InventoryContainerLayout.h"
 #include "InventorySubsystem.h"
@@ -52,6 +53,10 @@ void UInventoryGridWidget::NativeConstruct()
 
 	if (ContainerTag.IsValid())
 	{
+		if (APlayerController* Player = GetOwningPlayer())
+		{
+			Player->OnPossessedPawnChanged.AddUniqueDynamic(this, &ThisClass::HandlePawnChanged);
+		}
 		Container = InventoryWidgets::FindPlayerContainer(*this, ContainerTag);
 	}
 	Refresh();
@@ -60,6 +65,10 @@ void UInventoryGridWidget::NativeConstruct()
 void UInventoryGridWidget::NativeDestruct()
 {
 	RegistryListener.Unbind();
+	if (APlayerController* Player = GetOwningPlayer())
+	{
+		Player->OnPossessedPawnChanged.RemoveDynamic(this, &ThisClass::HandlePawnChanged);
+	}
 	if (UInventoryUISubsystem* Interaction = GetInteraction())
 	{
 		Interaction->OnTargetChanged.RemoveDynamic(this, &ThisClass::HandleTargetChanged);
@@ -82,6 +91,11 @@ void UInventoryGridWidget::SetContainer(FInventoryContainerHandle InContainer)
 {
 	Container = InContainer;
 	Refresh();
+}
+
+void UInventoryGridWidget::HandlePawnChanged(APawn* OldPawn, APawn* NewPawn)
+{
+	SetContainer(InventoryWidgets::FindPawnContainer(NewPawn, ContainerTag));
 }
 
 UInventoryCellWidget* UInventoryGridWidget::GetCellWidget(FIntPoint Cell) const
@@ -277,7 +291,7 @@ void UInventoryGridWidget::RefreshPreview()
 	const FIntPoint Start = LandingCell.ComponentMax(FIntPoint::ZeroValue).ComponentMin(BuiltGridSize);
 	const FIntPoint End = bAimedHere ? (LandingCell + Interaction->GetHeldSize()).ComponentMin(BuiltGridSize).ComponentMax(Start) : Start;
 
-	const bool bShowHeld = bAimedHere && Interaction->bSnapHeldItem && ItemClass;
+	const bool bShowHeld = bAimedHere && Interaction->GetStyle().bSnapHeldItem && ItemClass;
 	if (bShowHeld && !HeldVisual)
 	{
 		HeldVisual = CreateWidget<UInventoryItemWidget>(this, ItemClass);
@@ -418,7 +432,7 @@ void UInventoryGridWidget::NativeOnDragLeave(const FDragDropEvent& InDragDropEve
 
 	DragScreenPosition.Reset();
 	UInventoryUISubsystem* Interaction = GetInteraction();
-	if (Interaction && !Interaction->bSnapHeldItem && Interaction->GetTargetContainer() == Container)
+	if (Interaction && !Interaction->GetStyle().bSnapHeldItem && Interaction->GetTargetContainer() == Container)
 	{
 		Interaction->ClearTarget();
 	}
