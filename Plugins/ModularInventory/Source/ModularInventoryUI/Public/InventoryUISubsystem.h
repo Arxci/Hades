@@ -22,6 +22,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInventoryUIItemSignature, FInventor
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FInventoryUIItemChosenSignature, FInventoryItemHandle, Item, FInventoryItemHandle, Chosen);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FInventoryUIDroppedOutsideSignature, FInventoryItemHandle, Item, int32, Count);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInventoryUIHoldEventSignature, EInventoryHoldEvent, Event);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FInventoryUIPutDownSignature, FInventoryItemHandle, Item, EInventoryHoldEvent, Event);
 
 
 /**
@@ -116,6 +117,16 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory UI")
 	bool CanPickUpOrPlace() const;
 
+	/**
+	 * What a Confirm key does with the mouse, where keyboard focus isn't on what the mouse is: what a click on the hovered item does, or
+	 * puts the held item down where it's aimed. On the focused cell, a gamepad's Accept does the same.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
+	bool ActivateAimed();
+
+	UFUNCTION(BlueprintPure, Category = "Inventory UI")
+	bool CanActivateAimed() const;
+
 	/** What placing the held item there would do, worked out with the real rules but without changing anything. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	EInventoryDropAction PreviewPlacement(FInventoryContainerHandle Container, const FInventoryPlacement& Placement);
@@ -162,7 +173,10 @@ public:
 	FInventoryItemHandle GetSelectedItem() const { return SelectedItem; }
 
 	// Item menus
-	/** Asks whoever shows item menus, usually the screen, to open one. Item widgets call it on right click; call it from your gamepad binding. */
+	/**
+	 * Asks whoever shows item menus, usually the screen, to open one. Item widgets call it on right click, unless the style turns that
+	 * off, and clicks and Accept do with Click Opens Item Menu; call it from your own binding otherwise.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	void RequestContext(FInventoryItemHandle Item);
 
@@ -221,6 +235,14 @@ public:
 	 */
 	UPROPERTY(BlueprintAssignable, Category = "Inventory UI")
 	FInventoryUIHoldEventSignature OnHoldEvent;
+
+	/**
+	 * The held item went down, with the item now there: the one placed, the stack it joined, or the item put back. Event is Placed,
+	 * Merged, Swapped or Put Back. After On Hold Event, once grids and lists show the item where it went. Item widgets showing it get
+	 * On Put Down.
+	 */
+	UPROPERTY(BlueprintAssignable, Category = "Inventory UI")
+	FInventoryUIPutDownSignature OnItemPutDown;
 
 	/** The target moved, or what placing there would do changed. */
 	UPROPERTY(BlueprintAssignable, Category = "Inventory UI")

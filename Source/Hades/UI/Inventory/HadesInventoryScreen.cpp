@@ -29,10 +29,14 @@ UHadesInventoryScreen::UHadesInventoryScreen(const FObjectInitializer& ObjectIni
 {
 	// Plays like the RE games.
 	InteractionStyle.bClickOpensItemMenu = true;
+	InteractionStyle.bRightClickOpensItemMenu = false;
 	InteractionStyle.bSnapHeldItem = true;
 	InteractionStyle.bSwapPicksUpOther = true;
-	InteractionStyle.bClickOnAnyRelease = true;
 	InteractionStyle.bKeepLastHoveredItem = true;
+
+	// Opens on the item last lit, or the first pocket, lit and in the details, with the mouse too.
+	bAimOnOpen = true;
+	bStartOnLastItem = true;
 
 	MoveHint = LOCTEXT("MoveHint", "Select an area to place this item.");
 	CombineHint = LOCTEXT("CombineHint", "Select an item to combine with.");
@@ -310,12 +314,16 @@ void UHadesInventoryScreen::SetPage(int32 Index)
 	}
 	RefreshActions();
 
-	// Back on the items, gamepad focus returns to them. The mouse aims for itself.
+	// Back on the items, gamepad focus returns to them. With the mouse, the item focus would start on is lit, until the mouse moves on.
 	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
 	UWidget* FocusTarget = IsInventoryShown() ? GetDesiredFocusTarget() : nullptr;
 	if (FocusTarget && Input && Input->GetCurrentInputType() == ECommonInputType::Gamepad)
 	{
 		FocusTarget->SetFocus();
+	}
+	else if (bAimOnOpen)
+	{
+		AimAtStart();
 	}
 }
 

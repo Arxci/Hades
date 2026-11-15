@@ -115,8 +115,10 @@ void UInventoryUISubsystem::CancelHold()
 {
 	if (IsHolding())
 	{
+		const FInventoryItemHandle Item = GetHeldItem();
 		EndHold();
 		OnHoldEvent.Broadcast(EInventoryHoldEvent::PutBack);
+		OnItemPutDown.Broadcast(Item, EInventoryHoldEvent::PutBack);
 	}
 }
 
@@ -258,9 +260,10 @@ bool UInventoryUISubsystem::PlaceHeld(FInventoryContainerHandle Container, const
 	// Items aren't drawn hovered while one is held, but the hover still follows the cursor over them. Before that shows again, it moves
 	// to what was just put down, or the stack it joined, so the last item passed over doesn't light up for a moment.
 	const bool bPickUpOther = Action == EInventoryDropAction::Swap && Style.bSwapPicksUpOther && Other.IsSet();
+	const FInventoryItemHandle Landed = Registry ? Registry->GetItemAt(Container, Landing) : FInventoryItemHandle();
 	if (!bPickUpOther)
 	{
-		SetHoveredItem(Registry->GetItemAt(Container, Landing));
+		SetHoveredItem(Landed);
 	}
 
 	// The other item had the held one's cells, so it's held by the same cell, and is drawn where it was until the cursor or focus moves on.
@@ -270,9 +273,14 @@ bool UInventoryUISubsystem::PlaceHeld(FInventoryContainerHandle Container, const
 	{
 		BeginHoldBy(Other, 0, GrabCell, false);
 	}
-	OnHoldEvent.Broadcast(Action == EInventoryDropAction::Merge ? EInventoryHoldEvent::Merged
+	const EInventoryHoldEvent Event = Action == EInventoryDropAction::Merge ? EInventoryHoldEvent::Merged
 		: Action == EInventoryDropAction::Swap ? EInventoryHoldEvent::Swapped
-		: EInventoryHoldEvent::Placed);
+		: EInventoryHoldEvent::Placed;
+	OnHoldEvent.Broadcast(Event);
+	if (Landed.IsSet())
+	{
+		OnItemPutDown.Broadcast(Landed, Event);
+	}
 	return true;
 }
 
@@ -342,6 +350,48 @@ bool UInventoryUISubsystem::PickUpOrPlace()
 bool UInventoryUISubsystem::CanPickUpOrPlace() const
 {
 	return IsHolding() || CanBeginHold(HoveredItem);
+}
+
+bool UInventoryUISubsystem::ActivateAimed()
+{
+	if (IsHolding())
+	{
+		return PlaceHeld(TargetContainer, TargetPlacement);
+	}
+
+	const FInventoryRegistry* Registry = GetRegistry();
+	const FInventoryItemRecord* Record = Registry ? Registry->FindItem(HoveredItem) : nullptr;
+	if (!Record)
+	{
+		return false;
+	}
+
+	// On the cell aimed at, such as the focused one, so an item picked up is held by it, as with a click. Otherwise on its middle cell.
+	if (GetTargetedCell(HoveredItem).IsSet())
+	{
+		return ActivatePlacement(TargetContainer, TargetPlacement);
+	}
+	const bool bInGrid = IsGrid(*Registry, Record->Container);
+	return ActivatePlacement(Record->Container, bInGrid ? FInventoryPlacement::AtCell(Record->Placement.Cell + GetMiddleCell(*Record)) : Record->Placement);
+}
+
+bool UInventoryUISubsystem::CanActivateAimed() const
+{
+	if (IsHolding())
+	{
+		return true;
+	}
+
+	const FInventoryRegistry* Registry = GetRegistry();
+	if (!Registry || !Registry->FindItem(HoveredItem))
+	{
+		return false;
+	}
+	if (bChoosingItem)
+	{
+		return HoveredItem != ChoosingFor;
+	}
+	return Style.bClickOpensItemMenu || CanBeginHold(HoveredItem);
 }
 
 EInventoryDropAction UInventoryUISubsystem::PreviewPlacement(FInventoryContainerHandle Container, const FInventoryPlacement& Placement)

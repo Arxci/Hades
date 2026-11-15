@@ -396,13 +396,13 @@ void UInventoryGridWidget::RefreshPreview()
 	{
 		PlacementPreview->SetVisibility(bAimedHere ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
-	if (HeldVisual)
-	{
-		HeldVisual->SetVisibility(bShowHeld ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
-	}
-	if (bShowHeld)
+	if (HeldVisual && bShowHeld)
 	{
 		HeldVisual->ShowHeldItem(CellSize, CellGap);
+	}
+	else if (HeldVisual)
+	{
+		HeldVisual->HideHeldItem();
 	}
 
 	// Sizes change at once. Positions glide there in Native Tick, except when the preview first shows.

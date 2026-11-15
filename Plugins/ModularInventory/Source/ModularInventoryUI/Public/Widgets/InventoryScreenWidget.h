@@ -16,6 +16,7 @@ class UInventoryItemWidget;
 class UInventoryUISubsystem;
 class USoundBase;
 struct FUIInputConfig;
+enum class ECommonInputType : uint8;
 
 
 /**
@@ -48,9 +49,23 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory|Screen")
 	UInventoryItemWidget* FindItemWidget(FInventoryItemHandle Item) const;
 
+	/**
+	 * The item widget at a point in absolute space, such as a mouse event's Screen Space Position, among this screen's grids, lists and
+	 * slots. Only one drawn there now that a press there would reach counts: not one on a page that isn't shown. Null over an empty spot.
+	 * Item menus use it to pass a press outside them to the item under it.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Screen")
+	UInventoryItemWidget* FindItemWidgetAt(const FVector2D& ScreenPosition) const;
+
+	/**
+	 * Aims at the spot focus starts on and hovers its item, so it's lit and shown in details panels with the mouse too, as Aim On Open
+	 * does as the screen opens. Call it as the items show again, such as on going back to their tab. Nothing while an item is held.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Screen")
+	void AimAtStart();
+
 protected:
 	//~ Begin UUserWidget Interface
-	virtual void NativeOnInitialized() override;
 	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	virtual FReply NativeOnMouseWheel(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	//~ End UUserWidget Interface
@@ -98,6 +113,20 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Screen", meta = (BindWidgetOptional))
 	TObjectPtr<UInventoryGridWidget> MainGrid;
 
+	/**
+	 * As the screen opens, the spot focus starts on is aimed at and its item hovered, so an item is lit and shown in details panels with
+	 * the mouse too, as with a gamepad. The mouse takes over as it reaches another item. Off, with the mouse nothing is lit until then.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Screen")
+	bool bAimOnOpen = false;
+
+	/**
+	 * Focus starts on the item that was hovered when the screen last closed, while it's still on the screen, rather than on Main Grid's
+	 * first cell, so the player picks up where they left off.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Screen")
+	bool bStartOnLastItem = false;
+
 	/** The game keeps getting input while this is open, such as to keep walking. Off, only the UI gets it. */
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	bool bGameKeepsInput = false;
@@ -123,7 +152,11 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
 	FDataTableRowHandle TakeAllAction;
 
-	/** Only shown in an action bar, for what Accept does on the focused cell. Accept itself still goes to the cell. */
+	/**
+	 * What Accept does. With a gamepad, it's only shown in an action bar, as Accept itself goes to the focused cell. With the mouse,
+	 * where keyboard focus isn't on what the mouse is, its key does what a click on the hovered item does, or puts the held item down
+	 * where it's aimed, and it's bound only while it can.
+	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
 	FDataTableRowHandle ConfirmAction;
 
@@ -142,6 +175,12 @@ private:
 
 	void PlayInventorySound(USoundBase* Sound) const;
 
+	void HandleInputMethodChanged(ECommonInputType InputType);
+
+	/** Binds Confirm only to show it, without taking Accept from the focused cell, while bShown. */
+	void SetConfirmShown(bool bShown);
+
+	void HandleConfirmAction();
 	void HandleMoveAction();
 	void HandleRotateAction();
 	void HandleSplitAction();
@@ -155,6 +194,14 @@ private:
 	FInventoryContainerHandle LastAimedContainer;
 	FInventoryPlacement LastAimedPlacement;
 
+	/** The item hovered as the screen last closed, for Start On Last Item. */
+	FInventoryItemHandle LastHoveredItem;
+
+	/** Aim At Start is hovering the item the screen starts on, which plays no hover sound. */
+	bool bAimingAtStart = false;
+
+	FUIActionBindingHandle ConfirmHandle;
+	FUIActionBindingHandle ConfirmShownHandle;
 	FUIActionBindingHandle MoveHandle;
 	FUIActionBindingHandle RotateHandle;
 	FUIActionBindingHandle SplitHandle;

@@ -17,7 +17,8 @@ enum class ECommonInputType : uint8;
  * and mouse behave like every other menu. Hovering or focusing it aims the held item here; Accept picks up the item here or
  * puts the held one down. Style it like any Common UI button.
  * Focus aims while a gamepad is in use, or as the keyboard navigates. With a mouse, focus moved by a screen or menu opening or
- * closing doesn't, so the hover stays where the mouse put it.
+ * closing doesn't, so the hover stays where the mouse put it. For the same reason, with the mouse in use, Accept on a focused cell,
+ * such as Enter, acts on what the mouse aims at instead of on the cell (Activate Aimed).
  */
 UCLASS(Abstract)
 class MODULARINVENTORYUI_API UInventoryCellWidget : public UCommonButtonBase
@@ -54,6 +55,7 @@ protected:
 	virtual void NativeDestruct() override;
 	virtual void NativeOnAddedToFocusPath(const FFocusEvent& InFocusEvent) override;
 	virtual void NativeOnRemovedFromFocusPath(const FFocusEvent& InFocusEvent) override;
+	virtual FReply NativeOnPreviewKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
 	//~ End UUserWidget Interface
 
 	UInventoryUISubsystem* GetInteraction() const;

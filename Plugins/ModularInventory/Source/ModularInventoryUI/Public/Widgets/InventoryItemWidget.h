@@ -22,7 +22,8 @@ class UTextBlock;
 /**
  * Shows one item and lets the mouse drag it. Grids position and size it over its cells; elsewhere it takes its icon's size,
  * so put it in a Scale Box to fit a slot.
- * A click does what Accept does on a gamepad: picks the item up or opens its item menu, or puts the held item down on it.
+ * A click does what Accept does on a gamepad: picks the item up or opens its item menu, or puts the held item down on it. A click is a
+ * press and a release on the item, so the release that ends a drag never counts as one.
  * In a grid, an item picked up with the mouse is held by the cell under the cursor, which then follows the cursor from cell to cell.
  * It lights up while hovered, focused or selected: Lit Background and Glow show.
  */
@@ -42,8 +43,14 @@ public:
 	 */
 	void SetCellLayout(float InCellSize, float InCellGap, bool bInRotated);
 
-	/** Makes this widget stand in for the held item: it shows the held item, count and turn, and is never held or hovered itself. */
+	/**
+	 * Makes this widget stand in for the held item: it shows the held item, count and turn, and is never held or hovered itself. Each
+	 * time it starts showing an item, it gets On Held Item Shown.
+	 */
 	void ShowHeldItem(float InCellSize, float InCellGap);
+
+	/** Hides a widget standing in for the held item, such as once the held item is aimed elsewhere, until Show Held Item. */
+	void HideHeldItem();
 
 	/**
 	 * Shows a definition rather than an item, with no inventory needed, such as on a grid's designer preview or in a shop: its icon, the
@@ -61,6 +68,13 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Item")
 	UInventoryDragDropOperation* BeginDrag(int32 Count = 0);
+
+	// What the mouse does to the item, for a press that something over the item took, such as an item menu: it then acts for the item.
+	/** Does what a left click on the item does: with Shift, moves it to the other side where the style allows; otherwise acts on its cell under the cursor. */
+	void Click(const FPointerEvent& MouseEvent);
+
+	/** Picks the item up as a left-button drag on it does: the whole stack, or half of it with Shift. */
+	UInventoryDragDropOperation* BeginMouseDrag(const FPointerEvent& MouseEvent);
 
 	UFUNCTION(BlueprintPure, Category = "Inventory|Item")
 	FInventoryItemHandle GetItem() const { return Item; }
@@ -107,9 +121,27 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Item")
 	void OnItemChanged();
 
-	/** Picked up or put down, by mouse or gamepad. */
+	/**
+	 * Picked up or put down, by mouse or gamepad. This is the item in its own spot, which Held Opacity can hide; the tile that moves
+	 * with the held item is another widget, which gets On Held Item Shown.
+	 */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Item")
 	void OnHeldChanged(bool bIsHeld);
+
+	/**
+	 * On a widget standing in for the held item, such as the tile a grid draws on the cells it would land on, or a drag visual: it
+	 * started showing an item. That's one just picked up, the other item of a swap, or the held item reaching this grid. Play a pick-up
+	 * effect here, such as scaling the icon.
+	 */
+	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Item")
+	void OnHeldItemShown();
+
+	/**
+	 * The held item just went down here: How is Placed on a free spot, Merged onto this stack, Swapped for the item that was here, or
+	 * Put Back where it came from. The widget already shows it where it is. Play a put-down effect here.
+	 */
+	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Item")
+	void OnPutDown(EInventoryHoldEvent How);
 
 	/** The mouse is over it, or gamepad focus is on one of its cells. */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Item")
@@ -119,7 +151,10 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Item")
 	void OnSelectedChanged(bool bIsSelected);
 
-	/** Right click, after the Inventory UI Subsystem's On Context Requested. Open an item menu from either, for game actions like Use or Drop. */
+	/**
+	 * A right-click, after the Inventory UI Subsystem's On Context Requested, unless the style's Right Click Opens Item Menu is off.
+	 * Open an item menu from either, for game actions like Use or Drop.
+	 */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Item")
 	void OnContextRequested();
 
@@ -233,7 +268,14 @@ private:
 	UFUNCTION()
 	void HandleSelectedItemChanged(FInventoryItemHandle SelectedItem);
 
+	UFUNCTION()
+	void HandleItemPutDown(FInventoryItemHandle PutDownItem, EInventoryHoldEvent Event);
+
 	UInventoryUISubsystem* GetInteraction() const;
+
+	/** Asks for the item's menu, as a right-click on it does: the Inventory UI Subsystem's On Context Requested, then this widget's. */
+	void RequestItemMenu();
+
 	void Refresh();
 	void RefreshMeter();
 	void RefreshTagTint();
@@ -255,6 +297,10 @@ private:
 	bool bDragVisual = false;
 	bool bPressed = false;
 	bool bPreview = false;
+
+	/** The item this stand-in last started showing, so On Held Item Shown fires once for it. It waits for the widget to be built. */
+	FInventoryItemHandle ShownHeldItem;
+	bool bHeldItemShownPending = false;
 	FLinearColor DefaultTagTint = FLinearColor::White;
 	float DefaultRenderOpacity = 1.0f;
 

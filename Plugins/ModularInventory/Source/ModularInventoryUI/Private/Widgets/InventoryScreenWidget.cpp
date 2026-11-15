@@ -1,11 +1,16 @@
 ﻿#include "Widgets/InventoryScreenWidget.h"
 
 #include "Blueprint/WidgetTree.h"
+#include "CommonInputSubsystem.h"
+#include "CommonInputTypeEnum.h"
+#include "Framework/Application/SlateApplication.h"
 #include "Input/CommonUIInputTypes.h"
 #include "InputCoreTypes.h"
 #include "Kismet/GameplayStatics.h"
+#include "Layout/WidgetPath.h"
 #include "Sound/SoundBase.h"
 
+#include "InventorySubsystem.h"
 #include "InventoryUISubsystem.h"
 #include "Widgets/InventoryCellWidget.h"
 #include "Widgets/InventoryGridWidget.h"
@@ -47,6 +52,61 @@ namespace
 			}
 		});
 		return Found;
+	}
+
+	/** Every item widget among Parent's widgets and inside the user widgets among them, such as the items in its grids, lists and slots. */
+	void ForEachItemWidgetIn(const UUserWidget& Parent, TFunctionRef<void(UInventoryItemWidget&)> Callback)
+	{
+		if (!Parent.WidgetTree)
+		{
+			return;
+		}
+
+		Parent.WidgetTree->ForEachWidget([&Callback](UWidget* Widget)
+		{
+			if (UInventoryItemWidget* ItemWidget = Cast<UInventoryItemWidget>(Widget))
+			{
+				Callback(*ItemWidget);
+			}
+			else if (const UUserWidget* Group = Cast<UUserWidget>(Widget))
+			{
+				ForEachItemWidgetIn(*Group, Callback);
+			}
+		});
+	}
+
+	/**
+	 * Whether the item widget shows an item under the point, drawn now, where a press would reach it. Cached geometry is only a first
+	 * check, as it's from the last time the widget was drawn: one on a page that's no longer shown keeps it. The path from the window
+	 * only finds widgets drawn now, with where they are now, and through it, whether anything on the way lets presses through.
+	 */
+	bool IsPressableAt(const UInventoryItemWidget& ItemWidget, const FVector2D& ScreenPosition)
+	{
+		const TSharedPtr<SWidget> SlateWidget = ItemWidget.GetCachedWidget();
+		if (!SlateWidget || ItemWidget.IsDragVisual() || !ItemWidget.GetItem().IsSet() || !ItemWidget.GetCachedGeometry().IsUnderLocation(ScreenPosition))
+		{
+			return false;
+		}
+
+		FWidgetPath Path;
+		if (!FSlateApplication::Get().FindPathToWidget(SlateWidget.ToSharedRef(), Path) || Path.Widgets.Num() == 0)
+		{
+			return false;
+		}
+		const int32 Last = Path.Widgets.Num() - 1;
+		if (!Path.Widgets[Last].Geometry.IsUnderLocation(ScreenPosition))
+		{
+			return false;
+		}
+		for (int32 Index = 0; Index < Last; ++Index)
+		{
+			if (!Path.Widgets[Index].Widget->GetVisibility().AreChildrenHitTestVisible())
+			{
+				return false;
+			}
+		}
+		const EVisibility Visibility = SlateWidget->GetVisibility();
+		return Visibility.IsHitTestVisible() || Visibility.AreChildrenHitTestVisible();
 	}
 
 	/** The grid cell, list entry or slot for a spot in a container, among Parent's widgets. */
@@ -112,17 +172,17 @@ UInventoryItemWidget* UInventoryScreenWidget::FindItemWidget(FInventoryItemHandl
 	return Item.IsSet() ? FindItemWidgetIn(*this, Item) : nullptr;
 }
 
-void UInventoryScreenWidget::NativeOnInitialized()
+UInventoryItemWidget* UInventoryScreenWidget::FindItemWidgetAt(const FVector2D& ScreenPosition) const
 {
-	Super::NativeOnInitialized();
-
-	// Not consuming it lets Accept reach the focused cell, so this only shows in the action bar.
-	if (!ConfirmAction.IsNull())
+	UInventoryItemWidget* Found = nullptr;
+	ForEachItemWidgetIn(*this, [&Found, &ScreenPosition](UInventoryItemWidget& ItemWidget)
 	{
-		FBindUIActionArgs ConfirmArgs(ConfirmAction, true, FSimpleDelegate::CreateWeakLambda(this, [] {}));
-		ConfirmArgs.bConsumeInput = false;
-		RegisterUIActionBinding(ConfirmArgs);
-	}
+		if (!Found && IsPressableAt(ItemWidget, ScreenPosition))
+		{
+			Found = &ItemWidget;
+		}
+	});
+	return Found;
 }
 
 // Mouse: clicks and the wheel that nothing on the screen used come here.
@@ -173,6 +233,14 @@ void UInventoryScreenWidget::NativeOnActivated()
 		Interaction->OnHoveredItemChanged.AddUniqueDynamic(this, &ThisClass::HandleHoveredItemChanged);
 		Interaction->OnHoldEvent.AddUniqueDynamic(this, &ThisClass::HandleHoldEvent);
 	}
+	if (UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer()))
+	{
+		Input->OnInputMethodChangedNative.AddUObject(this, &ThisClass::HandleInputMethodChanged);
+	}
+	if (bAimOnOpen)
+	{
+		AimAtStart();
+	}
 	RefreshActions();
 }
 
@@ -186,9 +254,14 @@ void UInventoryScreenWidget::NativeOnDeactivated()
 		Interaction->OnHoveredItemChanged.RemoveDynamic(this, &ThisClass::HandleHoveredItemChanged);
 		Interaction->OnHoldEvent.RemoveDynamic(this, &ThisClass::HandleHoldEvent);
 
+		LastHoveredItem = Interaction->GetHoveredItem();
 		Interaction->ClearInteraction();
 		Interaction->SetStyle(PreviousStyle);
 		Interaction->SetTransferContainer(FInventoryContainerHandle());
+	}
+	if (UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer()))
+	{
+		Input->OnInputMethodChangedNative.RemoveAll(this);
 	}
 
 	// Common UI reuses closed screens, so a chest's container and the last cell aimed at mustn't carry over to the next opening.
@@ -227,7 +300,31 @@ UWidget* UInventoryScreenWidget::NativeGetDesiredFocusTarget() const
 	{
 		return LastAimed;
 	}
+
+	// Then on the item hovered as the screen last closed, wherever it is now.
+	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
+	if (bStartOnLastItem && Inventory && LastHoveredItem.IsSet())
+	{
+		const FInventoryContainerHandle Container = Inventory->GetItemContainer(LastHoveredItem);
+		UInventoryCellWidget* LastItemCell = Container.IsSet() ? FindCellWidgetIn(*this, Container, Inventory->GetItemPlacement(LastHoveredItem)) : nullptr;
+		if (LastItemCell && LastItemCell->IsVisible() && LastItemCell->GetIsEnabled())
+		{
+			return LastItemCell;
+		}
+	}
 	return MainGrid ? MainGrid->GetCellWidget(FIntPoint::ZeroValue) : nullptr;
+}
+
+void UInventoryScreenWidget::AimAtStart()
+{
+	UInventoryUISubsystem* Interaction = GetInteraction();
+	const UInventoryCellWidget* Start = Interaction && IsInventoryShown() && !Interaction->IsHolding() ? Cast<UInventoryCellWidget>(GetDesiredFocusTarget()) : nullptr;
+	if (Start)
+	{
+		TGuardValue<bool> Aiming(bAimingAtStart, true);
+		Interaction->SetTarget(Start->GetContainer(), Start->GetPlacement());
+		Interaction->SetHoveredItem(Start->GetItem());
+	}
 }
 
 UInventoryUISubsystem* UInventoryScreenWidget::GetInteraction() const
@@ -251,6 +348,13 @@ void UInventoryScreenWidget::RefreshActions()
 {
 	const UInventoryUISubsystem* Interaction = GetInteraction();
 	const bool bUsable = Interaction && IsInventoryShown();
+
+	// With a gamepad, Accept goes to the focused cell, which aims, so Confirm is only shown. With the mouse, keyboard focus isn't on what
+	// the mouse is, so Confirm's key acts on the hovered item itself, and only while it can.
+	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
+	const bool bMouse = Input && Input->GetCurrentInputType() == ECommonInputType::MouseAndKeyboard;
+	SetConfirmShown(!bMouse);
+	SetActionBound(ConfirmHandle, ConfirmAction, bUsable && bMouse && Interaction->CanActivateAimed(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleConfirmAction));
 
 	SetActionBound(MoveHandle, MoveAction, bUsable && Interaction->CanPickUpOrPlace(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleMoveAction));
 	SetActionBound(RotateHandle, RotateAction, bUsable && Interaction->CanRotateHeld(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleRotateAction));
@@ -287,9 +391,9 @@ void UInventoryScreenWidget::HandleInteractionChanged()
 
 void UInventoryScreenWidget::HandleHoveredItemChanged(FInventoryItemHandle Item)
 {
-	// Not while an item is held: items aren't drawn hovered then.
+	// Not while an item is held, as items aren't drawn hovered then, nor for the item the screen opens on.
 	const UInventoryUISubsystem* Interaction = GetInteraction();
-	if (Item.IsSet() && Interaction && !Interaction->IsHolding())
+	if (Item.IsSet() && Interaction && !Interaction->IsHolding() && !bAimingAtStart)
 	{
 		PlayInventorySound(Sounds.HoverItem);
 	}
@@ -318,6 +422,35 @@ void UInventoryScreenWidget::PlayInventorySound(USoundBase* Sound) const
 	if (Sound)
 	{
 		UGameplayStatics::PlaySound2D(this, Sound);
+	}
+}
+
+void UInventoryScreenWidget::HandleInputMethodChanged(ECommonInputType InputType)
+{
+	RefreshActions();
+}
+
+void UInventoryScreenWidget::SetConfirmShown(bool bShown)
+{
+	if (bShown && !ConfirmShownHandle.IsValid() && !ConfirmAction.IsNull())
+	{
+		// Not consuming it lets Accept reach the focused cell.
+		FBindUIActionArgs ConfirmArgs(ConfirmAction, true, FSimpleDelegate::CreateWeakLambda(this, [] {}));
+		ConfirmArgs.bConsumeInput = false;
+		ConfirmShownHandle = RegisterUIActionBinding(ConfirmArgs);
+	}
+	else if (!bShown && ConfirmShownHandle.IsValid())
+	{
+		ConfirmShownHandle.Unregister();
+		ConfirmShownHandle = FUIActionBindingHandle();
+	}
+}
+
+void UInventoryScreenWidget::HandleConfirmAction()
+{
+	if (UInventoryUISubsystem* Interaction = GetInteraction())
+	{
+		Interaction->ActivateAimed();
 	}
 }
 

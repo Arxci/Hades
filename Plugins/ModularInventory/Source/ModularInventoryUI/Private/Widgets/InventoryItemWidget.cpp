@@ -36,9 +36,16 @@ void UInventoryItemWidget::NativeConstruct()
 		Interaction->OnHeldItemChanged.AddUniqueDynamic(this, &ThisClass::HandleHeldItemChanged);
 		Interaction->OnHoveredItemChanged.AddUniqueDynamic(this, &ThisClass::HandleHoveredItemChanged);
 		Interaction->OnSelectedItemChanged.AddUniqueDynamic(this, &ThisClass::HandleSelectedItemChanged);
+		Interaction->OnItemPutDown.AddUniqueDynamic(this, &ThisClass::HandleItemPutDown);
 	}
 	Refresh();
 	RefreshInteraction();
+
+	if (bHeldItemShownPending)
+	{
+		bHeldItemShownPending = false;
+		OnHeldItemShown();
+	}
 }
 
 void UInventoryItemWidget::NativeDestruct()
@@ -48,6 +55,7 @@ void UInventoryItemWidget::NativeDestruct()
 		Interaction->OnHeldItemChanged.RemoveDynamic(this, &ThisClass::HandleHeldItemChanged);
 		Interaction->OnHoveredItemChanged.RemoveDynamic(this, &ThisClass::HandleHoveredItemChanged);
 		Interaction->OnSelectedItemChanged.RemoveDynamic(this, &ThisClass::HandleSelectedItemChanged);
+		Interaction->OnItemPutDown.RemoveDynamic(this, &ThisClass::HandleItemPutDown);
 	}
 	InventoryWidgets::CancelLoad(IconHandle);
 	InventoryWidgets::CancelLoad(IconShadowHandle);
@@ -82,6 +90,25 @@ void UInventoryItemWidget::ShowHeldItem(float InCellSize, float InCellGap)
 	SetVisibility(ESlateVisibility::HitTestInvisible);
 	SetCellLayout(InCellSize, InCellGap, Interaction && Interaction->IsHeldRotated());
 	SetItem(Interaction ? Interaction->GetHeldItem() : FInventoryItemHandle());
+
+	// Not as the held item moves from cell to cell. A drag visual is built only as the drag starts, so it waits until then.
+	if (Item.IsSet() && Item != ShownHeldItem)
+	{
+		ShownHeldItem = Item;
+		bHeldItemShownPending = true;
+	}
+	if (bHeldItemShownPending && GetCachedWidget().IsValid())
+	{
+		bHeldItemShownPending = false;
+		OnHeldItemShown();
+	}
+}
+
+void UInventoryItemWidget::HideHeldItem()
+{
+	ShownHeldItem = FInventoryItemHandle();
+	bHeldItemShownPending = false;
+	SetVisibility(ESlateVisibility::Collapsed);
 }
 
 void UInventoryItemWidget::ShowPreview(const FInventoryItemPreview& InPreview, float InCellSize, float InCellGap)
@@ -306,6 +333,15 @@ void UInventoryItemWidget::HandleSelectedItemChanged(FInventoryItemHandle Select
 	RefreshInteraction();
 }
 
+void UInventoryItemWidget::HandleItemPutDown(FInventoryItemHandle PutDownItem, EInventoryHoldEvent Event)
+{
+	// Only where the item now is, not on what stands in for the held item.
+	if (!bDragVisual && !bPreview && Item.IsSet() && PutDownItem == Item)
+	{
+		OnPutDown(Event);
+	}
+}
+
 void UInventoryItemWidget::RefreshInteraction()
 {
 	// A preview keeps the look it was given.
@@ -385,16 +421,14 @@ FReply UInventoryItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
 	if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton)
 	{
 		// While an item is held, the style can make a right-click put it back or turn it instead. The screen does that, anywhere on it.
+		// The style can also leave item menus to clicks, so a right-click does nothing here.
 		UInventoryUISubsystem* Interaction = GetInteraction();
-		if (Interaction && Interaction->IsHolding() && Interaction->GetStyle().HeldRightClick != EInventoryHeldRightClick::AsUsual)
+		const bool bHeldRightClick = Interaction && Interaction->IsHolding() && Interaction->GetStyle().HeldRightClick != EInventoryHeldRightClick::AsUsual;
+		if (bHeldRightClick || (Interaction && !Interaction->GetStyle().bRightClickOpensItemMenu))
 		{
 			return FReply::Unhandled();
 		}
-		if (Interaction)
-		{
-			Interaction->RequestContext(Item);
-		}
-		OnContextRequested();
+		RequestItemMenu();
 		return FReply::Handled();
 	}
 	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
@@ -402,30 +436,48 @@ FReply UInventoryItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
 
 FReply UInventoryItemWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
-	// A press that turned into a drag ends on the drop target instead, so this is a click.
+	// A click needs the press to have been here too, and the mouse leaving the item forgets the press. A press that turned into a drag
+	// ends on the drop target instead, and a release whose press began elsewhere does nothing, such as at the end of a drag whose item
+	// was put back with a right-click.
 	if (!bDragVisual && InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
 	{
-		const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
-		UInventoryUISubsystem* Interaction = GetInteraction();
-		const bool bClicked = bPressed || (Interaction && Interaction->GetStyle().bClickOnAnyRelease);
-		bPressed = false;
-		if (!bClicked || !Inventory || !Interaction)
+		if (bPressed)
 		{
-			return FReply::Handled();
-		}
-
-		const bool bTransfer = InMouseEvent.IsShiftDown() && Interaction->GetStyle().bShiftClickTransfers && Interaction->GetTransferContainer().IsSet();
-		if (bTransfer)
-		{
-			Interaction->TransferItem(Item);
-		}
-		else
-		{
-			Interaction->ActivatePlacement(Inventory->GetItemContainer(Item), GetPlacementAt(InMouseEvent.GetScreenSpacePosition()));
+			bPressed = false;
+			Click(InMouseEvent);
 		}
 		return FReply::Handled();
 	}
 	return Super::NativeOnMouseButtonUp(InGeometry, InMouseEvent);
+}
+
+void UInventoryItemWidget::Click(const FPointerEvent& MouseEvent)
+{
+	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
+	UInventoryUISubsystem* Interaction = GetInteraction();
+	if (bDragVisual || !Inventory || !Interaction)
+	{
+		return;
+	}
+
+	const bool bTransfer = MouseEvent.IsShiftDown() && Interaction->GetStyle().bShiftClickTransfers && Interaction->GetTransferContainer().IsSet();
+	if (bTransfer)
+	{
+		Interaction->TransferItem(Item);
+	}
+	else
+	{
+		Interaction->ActivatePlacement(Inventory->GetItemContainer(Item), GetPlacementAt(MouseEvent.GetScreenSpacePosition()));
+	}
+}
+
+void UInventoryItemWidget::RequestItemMenu()
+{
+	if (UInventoryUISubsystem* Interaction = GetInteraction())
+	{
+		Interaction->RequestContext(Item);
+	}
+	OnContextRequested();
 }
 
 void UInventoryItemWidget::NativeOnMouseEnter(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
@@ -473,9 +525,12 @@ void UInventoryItemWidget::NativeOnMouseLeave(const FPointerEvent& InMouseEvent)
 void UInventoryItemWidget::NativeOnDragDetected(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent, UDragDropOperation*& OutOperation)
 {
 	bPressed = false;
+	OutOperation = BeginMouseDrag(InMouseEvent);
+}
 
-	// Shift drags half the stack.
-	OutOperation = BeginDrag(InMouseEvent.IsShiftDown() ? FMath::Max(1, GetCount() / 2) : 0);
+UInventoryDragDropOperation* UInventoryItemWidget::BeginMouseDrag(const FPointerEvent& MouseEvent)
+{
+	return BeginDrag(MouseEvent.IsShiftDown() ? FMath::Max(1, GetCount() / 2) : 0);
 }
 
 UInventoryDragDropOperation* UInventoryItemWidget::BeginDrag(int32 Count)

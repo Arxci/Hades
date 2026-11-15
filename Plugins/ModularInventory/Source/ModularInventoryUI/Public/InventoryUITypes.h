@@ -90,7 +90,7 @@ struct MODULARINVENTORYUI_API FInventoryUISounds
 UENUM(BlueprintType)
 enum class EInventoryHeldRightClick : uint8
 {
-	/** The same as with nothing held: on an item, it asks for that item's menu, which puts the held item back. */
+	/** The same as with nothing held: on an item, it asks for that item's menu, which puts the held item back, if Right Click Opens Item Menu is on. */
 	AsUsual,
 	/** Puts the held item back where it was. */
 	PutBack,
@@ -109,6 +109,13 @@ struct MODULARINVENTORYUI_API FInventoryInteractionStyle
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
 	bool bClickOpensItemMenu = false;
 
+	/**
+	 * A right-click on an item asks for its item menu. Off, a right-click on an item does nothing, so item menus open from a click or
+	 * Accept with Click Opens Item Menu, or from your own binding. Held Right Click still applies while an item is held.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	bool bRightClickOpensItemMenu = true;
+
 	/** Grids draw the held item on the cells it would land on instead of under the cursor. It stays on the last cells aimed at, and a mouse drag let go anywhere puts it there. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
 	bool bSnapHeldItem = false;
@@ -123,13 +130,6 @@ struct MODULARINVENTORYUI_API FInventoryInteractionStyle
 	/** A swap picks the other item up from where the held one was, instead of only trading places. Letting go of it finishes the swap. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
 	bool bSwapPicksUpOther = false;
-
-	/**
-	 * A mouse release over an item counts as a click even when the press began elsewhere, such as on an item menu that closed when
-	 * pressed, so one click goes straight from one item's menu to another's. Off, a click must start and end on the item.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
-	bool bClickOnAnyRelease = false;
 
 	/** Shift and a click on an item moves it to the other side, such as from a chest into the pockets, while there's a transfer container. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")

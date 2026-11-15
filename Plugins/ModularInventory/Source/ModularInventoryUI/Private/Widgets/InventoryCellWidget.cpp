@@ -2,6 +2,7 @@
 
 #include "CommonInputSubsystem.h"
 #include "CommonInputTypeEnum.h"
+#include "Framework/Application/SlateApplication.h"
 
 #include "InventorySubsystem.h"
 #include "InventoryUISubsystem.h"
@@ -129,6 +130,25 @@ void UInventoryCellWidget::NativeOnRemovedFromFocusPath(const FFocusEvent& InFoc
 {
 	Super::NativeOnRemovedFromFocusPath(InFocusEvent);
 	StopAiming();
+}
+
+// The focused button takes Accept before any action binding sees the key, and keyboard focus doesn't follow the mouse. So with the
+// mouse in use, Accept on a focused cell acts on what the mouse aims at, such as the hovered item, rather than on the cell. Keyboard
+// navigation aims at the cell it focuses, so it still acts on that one.
+FReply UInventoryCellWidget::NativeOnPreviewKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
+{
+	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
+	UInventoryUISubsystem* Interaction = GetInteraction();
+	const bool bMouse = Input && Input->GetCurrentInputType() == ECommonInputType::MouseAndKeyboard;
+	if (bMouse && Interaction && FSlateApplication::Get().GetNavigationActionFromKey(InKeyEvent) == EUINavigationAction::Accept)
+	{
+		if (!InKeyEvent.IsRepeat())
+		{
+			Interaction->ActivateAimed();
+		}
+		return FReply::Handled();
+	}
+	return Super::NativeOnPreviewKeyDown(InGeometry, InKeyEvent);
 }
 
 void UInventoryCellWidget::HandleHovered()

@@ -8,6 +8,7 @@
 #include "CommonInputTypeEnum.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Engine/LocalPlayer.h"
+#include "Framework/Application/SlateApplication.h"
 #include "Framework/Application/SlateUser.h"
 #include "Input/CommonUIInputTypes.h"
 #include "InputCoreTypes.h"
@@ -17,12 +18,49 @@
 #include "InventoryUISubsystem.h"
 #include "Widgets/InventoryDragDropOperation.h"
 #include "Widgets/InventoryItemWidget.h"
+#include "Widgets/InventoryScreenWidget.h"
 
 namespace
 {
 	FBox2D GetAbsoluteBox(const FGeometry& Geometry)
 	{
 		return FBox2D(Geometry.GetAbsolutePosition(), Geometry.LocalToAbsolute(Geometry.GetLocalSize()));
+	}
+
+	/** The inventory screen a widget is drawn in: up through its parents, and from the top of each user widget to the user widget. */
+	const UInventoryScreenWidget* FindScreenOf(const UWidget* Widget)
+	{
+		while (Widget)
+		{
+			if (const UInventoryScreenWidget* Screen = Cast<UInventoryScreenWidget>(Widget))
+			{
+				return Screen;
+			}
+			const UWidget* Parent = Widget->GetParent();
+			Widget = Parent ? Parent : Widget->GetTypedOuter<UUserWidget>();
+		}
+		return nullptr;
+	}
+
+	/** Presses and lets go of the left mouse button where the cursor is, as Common UI does for a gamepad's Accept while its cursor shows. */
+	void ClickAtCursor(ULocalPlayer* LocalPlayer)
+	{
+		const TSharedPtr<FSlateUser> SlateUser = LocalPlayer && FSlateApplication::IsInitialized() ? LocalPlayer->GetSlateUser() : TSharedPtr<FSlateUser>();
+		if (!SlateUser)
+		{
+			return;
+		}
+
+		FSlateApplication& SlateApp = FSlateApplication::Get();
+		const FVector2D Position = SlateUser->GetCursorPosition();
+		const FModifierKeysState Modifiers = SlateApp.GetPlatformApplication()->GetModifierKeys();
+		const uint32 UserIndex = static_cast<uint32>(SlateUser->GetUserIndex());
+
+		const FPointerEvent Press(UserIndex, FSlateApplication::CursorPointerIndex, Position, Position, SlateApp.GetPressedMouseButtons(), EKeys::LeftMouseButton, 0.0f, Modifiers);
+		SlateApp.ProcessMouseButtonDownEvent(TSharedPtr<FGenericWindow>(), Press);
+
+		const FPointerEvent Release(UserIndex, FSlateApplication::CursorPointerIndex, Position, Position, SlateApp.GetPressedMouseButtons(), EKeys::LeftMouseButton, 0.0f, Modifiers);
+		SlateApp.ProcessMouseButtonUpEvent(Release);
 	}
 }
 
@@ -34,19 +72,6 @@ UInventoryItemMenuWidget::UInventoryItemMenuWidget(const FObjectInitializer& Obj
 TOptional<FUIInputConfig> UInventoryItemMenuWidget::GetDesiredInputConfig() const
 {
 	return FUIInputConfig(ECommonInputMode::Menu, EMouseCaptureMode::NoCapture);
-}
-
-void UInventoryItemMenuWidget::NativeOnInitialized()
-{
-	Super::NativeOnInitialized();
-
-	// Not consuming it lets Accept reach the focused button, so this only shows in the action bar.
-	if (!ConfirmAction.IsNull())
-	{
-		FBindUIActionArgs ConfirmArgs(ConfirmAction, true, FSimpleDelegate::CreateWeakLambda(this, [] {}));
-		ConfirmArgs.bConsumeInput = false;
-		RegisterUIActionBinding(ConfirmArgs);
-	}
 }
 
 void UInventoryItemMenuWidget::SetItem(FInventoryItemHandle InItem, UInventoryItemWidget* ItemWidget)
@@ -72,6 +97,12 @@ void UInventoryItemMenuWidget::NativeOnActivated()
 {
 	Super::NativeOnActivated();
 
+	if (UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer()))
+	{
+		Input->OnInputMethodChangedNative.AddUObject(this, &ThisClass::HandleInputMethodChanged);
+	}
+	RefreshConfirm();
+
 	if (OpenSound)
 	{
 		UGameplayStatics::PlaySound2D(this, OpenSound);
@@ -80,6 +111,13 @@ void UInventoryItemMenuWidget::NativeOnActivated()
 
 void UInventoryItemMenuWidget::NativeOnDeactivated()
 {
+	PressedItemWidget.Reset();
+	PressedItem = FInventoryItemHandle();
+	if (UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer()))
+	{
+		Input->OnInputMethodChangedNative.RemoveAll(this);
+	}
+
 	// Choosing keeps the item selected while another one is picked for it.
 	UInventoryUISubsystem* Interaction = GetInteraction();
 	if (Interaction && !Interaction->IsChoosingItem() && Interaction->GetSelectedItem() == Item)
@@ -190,16 +228,30 @@ FVector2D UInventoryItemMenuWidget::MeasureMenuPanel()
 	return MenuPanel ? MenuPanel->GetDesiredSize() : FVector2D::ZeroVector;
 }
 
-// Mouse
+// Mouse: a right-click anywhere, or a press outside Menu Panel, closes the menu. A left press on an item is also the item's, as if the
+// menu weren't open, so the menu waits, as the item would, to see whether it ends in a click or a drag.
 FReply UInventoryItemMenuWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
+	PressedItemWidget.Reset();
+	PressedItem = FInventoryItemHandle();
+
+	if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton)
+	{
+		DeactivateWidget();
+		return FReply::Handled();
+	}
+
 	const FVector2D Position = InMouseEvent.GetScreenSpacePosition();
 	if (MenuPanel && MenuPanel->GetCachedGeometry().IsUnderLocation(Position))
 	{
 		return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
 	}
-	if (Anchor.IsInside(Position) && InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
+
+	UInventoryItemWidget* ItemWidget = InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton ? FindItemWidgetUnder(Position) : nullptr;
+	if (ItemWidget)
 	{
+		PressedItemWidget = ItemWidget;
+		PressedItem = ItemWidget->GetItem();
 		return FReply::Handled().DetectDrag(TakeWidget(), EKeys::LeftMouseButton);
 	}
 
@@ -207,13 +259,148 @@ FReply UInventoryItemMenuWidget::NativeOnMouseButtonDown(const FGeometry& InGeom
 	return FReply::Handled();
 }
 
+FReply UInventoryItemMenuWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	UInventoryItemWidget* ItemWidget = InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton ? TakePressedItemWidget() : nullptr;
+	if (!ItemWidget)
+	{
+		return Super::NativeOnMouseButtonUp(InGeometry, InMouseEvent);
+	}
+
+	// A click on the item the menu is beside does nothing. A press on another item closes the menu, and is a click on that item if it's
+	// let go over it, as a click must start and end on the item. The menu covered the item, so the item takes the hover first.
+	if (ItemWidget != AnchorWidget.Get())
+	{
+		const bool bClicked = ItemWidget->GetCachedGeometry().IsUnderLocation(InMouseEvent.GetScreenSpacePosition());
+		UInventoryUISubsystem* Interaction = GetInteraction();
+		DeactivateWidget();
+		if (bClicked)
+		{
+			if (Interaction)
+			{
+				Interaction->SetHoveredItem(ItemWidget->GetItem());
+			}
+			ItemWidget->Click(InMouseEvent);
+		}
+	}
+	return FReply::Handled();
+}
+
 void UInventoryItemMenuWidget::NativeOnDragDetected(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent, UDragDropOperation*& OutOperation)
 {
-	// A pooled item widget may show another item by now.
-	UInventoryItemWidget* ItemWidget = AnchorWidget.Get();
-	OutOperation = ItemWidget && ItemWidget->GetItem() == Item ? ItemWidget->BeginDrag() : nullptr;
-	if (OutOperation)
+	// The press became a drag of the item it was on, so it won't be a click. Picking the item up closes the menu, and so does a drag on
+	// another item that can't be picked up, as any press on it would.
+	UInventoryItemWidget* ItemWidget = TakePressedItemWidget();
+	if (!ItemWidget)
+	{
+		return;
+	}
+
+	const bool bOtherItem = ItemWidget != AnchorWidget.Get();
+	UInventoryUISubsystem* Interaction = GetInteraction();
+	if (bOtherItem && Interaction)
+	{
+		Interaction->SetHoveredItem(ItemWidget->GetItem());
+	}
+	OutOperation = ItemWidget->BeginMouseDrag(InMouseEvent);
+	if (OutOperation || bOtherItem)
 	{
 		DeactivateWidget();
 	}
+}
+
+UInventoryItemWidget* UInventoryItemMenuWidget::FindItemWidgetUnder(const FVector2D& ScreenPosition) const
+{
+	// A pooled item widget may show another item by now.
+	UInventoryItemWidget* AnchorItemWidget = AnchorWidget.Get();
+	if (AnchorItemWidget && AnchorItemWidget->GetItem() == Item && Anchor.IsInside(ScreenPosition))
+	{
+		return AnchorItemWidget;
+	}
+
+	const UInventoryScreenWidget* Screen = bClickThroughToItems && AnchorItemWidget ? FindScreenOf(AnchorItemWidget) : nullptr;
+	return Screen ? Screen->FindItemWidgetAt(ScreenPosition) : nullptr;
+}
+
+FReply UInventoryItemMenuWidget::NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	RefreshConfirm();
+	return Super::NativeOnMouseMove(InGeometry, InMouseEvent);
+}
+
+// Accept goes to the focused button, before any action binding sees the key, but focus doesn't follow the mouse. So with the mouse on a
+// button, Accept clicks that one. The menu sees the key before its buttons do.
+FReply UInventoryItemMenuWidget::NativeOnPreviewKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
+{
+	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
+	const bool bMouse = Input && Input->GetCurrentInputType() == ECommonInputType::MouseAndKeyboard;
+	if (bMouse && FindHoveredButton() && FSlateApplication::Get().GetNavigationActionFromKey(InKeyEvent) == EUINavigationAction::Accept)
+	{
+		if (!InKeyEvent.IsRepeat())
+		{
+			ClickAtCursor(GetOwningLocalPlayer());
+		}
+		return FReply::Handled();
+	}
+	return Super::NativeOnPreviewKeyDown(InGeometry, InKeyEvent);
+}
+
+// Confirm: shown for what Accept does. If focus has left the buttons, its key comes here and clicks the button under the mouse.
+void UInventoryItemMenuWidget::HandleInputMethodChanged(ECommonInputType InputType)
+{
+	RefreshConfirm();
+}
+
+void UInventoryItemMenuWidget::RefreshConfirm()
+{
+	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
+	const bool bClicks = Input && Input->GetCurrentInputType() == ECommonInputType::MouseAndKeyboard && FindHoveredButton();
+	if (ConfirmHandle.IsValid() && bConfirmClicks != bClicks)
+	{
+		ConfirmHandle.Unregister();
+		ConfirmHandle = FUIActionBindingHandle();
+	}
+	if (!ConfirmHandle.IsValid() && !ConfirmAction.IsNull())
+	{
+		// Without the mouse on a button, it's only shown: not consuming it lets Accept reach the focused button.
+		FBindUIActionArgs ConfirmArgs(ConfirmAction, true, bClicks ? FSimpleDelegate::CreateUObject(this, &ThisClass::HandleConfirmAction) : FSimpleDelegate::CreateWeakLambda(this, [] {}));
+		ConfirmArgs.bConsumeInput = bClicks;
+		ConfirmHandle = RegisterUIActionBinding(ConfirmArgs);
+		bConfirmClicks = bClicks;
+	}
+}
+
+void UInventoryItemMenuWidget::HandleConfirmAction()
+{
+	// A real click, so the button does all it does for one, its sounds included.
+	if (FindHoveredButton())
+	{
+		ClickAtCursor(GetOwningLocalPlayer());
+	}
+}
+
+UCommonButtonBase* UInventoryItemMenuWidget::FindHoveredButton() const
+{
+	UCommonButtonBase* Hovered = nullptr;
+	if (MenuPanel)
+	{
+		UWidgetTree::ForWidgetAndChildren(MenuPanel, [&Hovered](UWidget* Widget)
+		{
+			UCommonButtonBase* Button = Cast<UCommonButtonBase>(Widget);
+			if (!Hovered && Button && Button->IsHovered() && Button->IsVisible() && Button->GetIsEnabled())
+			{
+				Hovered = Button;
+			}
+		});
+	}
+	return Hovered;
+}
+
+UInventoryItemWidget* UInventoryItemMenuWidget::TakePressedItemWidget()
+{
+	UInventoryItemWidget* ItemWidget = PressedItemWidget.Get();
+	const bool bSameItem = ItemWidget && PressedItem.IsSet() && ItemWidget->GetItem() == PressedItem;
+	PressedItemWidget.Reset();
+	PressedItem = FInventoryItemHandle();
+	return bSameItem ? ItemWidget : nullptr;
 }
