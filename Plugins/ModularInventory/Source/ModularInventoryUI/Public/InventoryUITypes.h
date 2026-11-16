@@ -86,11 +86,35 @@ struct MODULARINVENTORYUI_API FInventoryUISounds
 };
 
 
+/**
+ * What pressing on an item does while nothing is held: a left click, a right-click, or Accept on a gamepad or keyboard. While an item is
+ * being chosen for another one, such as to combine them, a left click or Accept on an item chooses it instead.
+ */
+UENUM(BlueprintType)
+enum class EInventoryItemPress : uint8
+{
+	/** Picks the item up, to put down with another click or Accept. */
+	PickUp,
+	/** Asks for the item's menu: the Inventory UI Subsystem's On Context Requested, which an inventory screen passes to On Item Menu Requested. */
+	OpenItemMenu,
+	/** Nothing. The item can still be dragged, and a screen's Move and Item Menu actions still work on it. */
+	None,
+	/**
+	 * Runs the item's default action: the first of the inventory screen's Default Actions that can run for it, such as Use, then Equip.
+	 * Through the Inventory UI Subsystem's On Default Action Requested.
+	 */
+	DefaultAction
+};
+
+
 /** What a right-click does while an item is held. */
 UENUM(BlueprintType)
 enum class EInventoryHeldRightClick : uint8
 {
-	/** The same as with nothing held: on an item, it asks for that item's menu, which puts the held item back, if Right Click Opens Item Menu is on. */
+	/**
+	 * Right Click decides, as with nothing held: with Open Item Menu, a right-click on an item asks for its menu, which puts the held item
+	 * back; with Pick Up, it puts the held item down there, as a click does.
+	 */
 	AsUsual,
 	/** Puts the held item back where it was. */
 	PutBack,
@@ -105,16 +129,36 @@ struct MODULARINVENTORYUI_API FInventoryInteractionStyle
 {
 	GENERATED_BODY()
 
-	/** A click or Accept on an item asks for its item menu instead of picking it up. Items are then picked up by dragging, or with a Move action. */
+	/** What a left click on an item does while nothing is held. A drag always picks the item up. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
-	bool bClickOpensItemMenu = false;
+	EInventoryItemPress LeftClick = EInventoryItemPress::PickUp;
+
+	/** What a right-click on an item does while nothing is held. Held Right Click decides while an item is held. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	EInventoryItemPress RightClick = EInventoryItemPress::OpenItemMenu;
 
 	/**
-	 * A right-click on an item asks for its item menu. Off, a right-click on an item does nothing, so item menus open from a click or
-	 * Accept with Click Opens Item Menu, or from your own binding. Held Right Click still applies while an item is held.
+	 * What Accept on an item does while nothing is held: on the focused cell with a gamepad or the keyboard, or on the hovered item with a
+	 * screen's Confirm action while the mouse is in use. Separate from Left Click, so a gamepad can open item menus while a click picks
+	 * items up, or the other way round.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
-	bool bRightClickOpensItemMenu = true;
+	EInventoryItemPress Accept = EInventoryItemPress::PickUp;
+
+	/**
+	 * What a double-click on an item does while nothing is held, such as Default Action to use or equip it. None leaves the second click a
+	 * click like the first. A first click that picked the item up is undone, so pair it with a Left Click that does little on its own.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	EInventoryItemPress DoubleClick = EInventoryItemPress::None;
+
+	/** What holding a finger on an item does on a touch screen, such as open its menu, as a right-click would. A tap is a left click. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	EInventoryItemPress LongPress = EInventoryItemPress::OpenItemMenu;
+
+	/** How long a finger is held on an item for a long press, in seconds. Moving off the item, or starting a drag, cancels it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (ClampMin = "0.1", Units = "s"))
+	float LongPressTime = 0.5f;
 
 	/** Grids draw the held item on the cells it would land on instead of under the cursor. It stays on the last cells aimed at, and a mouse drag let go anywhere puts it there. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")

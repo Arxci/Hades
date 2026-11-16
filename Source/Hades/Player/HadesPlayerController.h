@@ -43,11 +43,20 @@ public:
 	FHadesMessageSignature OnMessage;
 
 protected:
+	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void SetupInputComponent() override;
 	
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TArray<TObjectPtr<UInputMappingContext>> DefaultMappingContexts;
+
+	/**
+	 * Registers Default Mapping Contexts with Enhanced Input's user settings, as Lyra does, so the player can rebind their keys and the
+	 * keys they chose are used. Needs Enable User Settings in Project Settings > Enhanced Input, and Player Mappable Key Settings on each
+	 * input action that can be rebound.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	bool bRegisterMappingsWithSettings = true;
 	
 	UPROPERTY(VisibleAnywhere, Category = "UI")
 	TObjectPtr<UHadesWorldMarkerManagerComponent> WorldMarkerManager;
@@ -66,6 +75,12 @@ protected:
 
 private:
 	void UpdatePause();
+
+	/**
+	 * Registers Default Mapping Contexts with Enhanced Input's user settings, once each. False while there are no user settings: Enable User
+	 * Settings is off, or Enhanced Input hasn't made them yet.
+	 */
+	bool RegisterMappingContextsWithSettings();
 
 	TWeakObjectPtr<UCommonActivatableWidget> HUDLayout;
 	TArray<TWeakObjectPtr<const UObject>> PauseRequests;

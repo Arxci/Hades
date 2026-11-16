@@ -16,6 +16,7 @@
 #include "GameFramework/Pawn.h"
 
 #include "InputMappingContext.h"
+#include "UserSettings/EnhancedInputUserSettings.h"
 
 #include "InventoryComponent.h"
 
@@ -56,6 +57,18 @@ void AHadesPlayerController::ReceivedPlayer()
 	}
 }
 
+void AHadesPlayerController::BeginPlay()
+{
+	Super::BeginPlay();
+
+	// Again here, as Enhanced Input may only make its user settings once the player is set up, which can be after input was.
+	if (IsLocalController() && bRegisterMappingsWithSettings && !RegisterMappingContextsWithSettings())
+	{
+		UE_LOG(LogHadesInput, Warning, TEXT("[Input] %s: Enhanced Input has no user settings, so the keys in Default Mapping Contexts can't be rebound. Turn on Enable User Settings in Project Settings > Engine > Enhanced Input."),
+			*GetNameSafe(this));
+	}
+}
+
 void AHadesPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	if (UCommonActivatableWidget* Layout = HUDLayout.Get())
@@ -72,11 +85,43 @@ void AHadesPlayerController::SetupInputComponent()
 
 	if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
 	{
+		// Registered before they're added, as Lyra does, so the keys the player rebound are the ones added, when the settings exist yet.
+		// Begin Play tries again if they don't.
+		RegisterMappingContextsWithSettings();
 		for (UInputMappingContext* MappingContext : DefaultMappingContexts)
 		{
-			Subsystem->AddMappingContext(MappingContext, 0);
+			if (MappingContext)
+			{
+				Subsystem->AddMappingContext(MappingContext, 0);
+			}
 		}
 	}
+}
+
+bool AHadesPlayerController::RegisterMappingContextsWithSettings()
+{
+	UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer());
+	UEnhancedInputUserSettings* Settings = bRegisterMappingsWithSettings && Subsystem ? Subsystem->GetUserSettings() : nullptr;
+	if (!Settings)
+	{
+		return false;
+	}
+
+	// Registering a context twice does nothing. One registered after it was added only uses the player's keys once the mappings rebuild.
+	bool bRegisteredAny = false;
+	for (UInputMappingContext* MappingContext : DefaultMappingContexts)
+	{
+		if (MappingContext && Settings->RegisterInputMappingContext(MappingContext))
+		{
+			bRegisteredAny = true;
+			UE_LOG(LogHadesInput, Log, TEXT("[Input] Registered %s with Enhanced Input's user settings. Its player mappable keys can be rebound."), *GetNameSafe(MappingContext));
+		}
+	}
+	if (bRegisteredAny)
+	{
+		Subsystem->RequestRebuildControlMappings();
+	}
+	return true;
 }
 
 void AHadesPlayerController::ShowMessage(const FText& Message)

@@ -106,7 +106,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	bool PlaceHeld(FInventoryContainerHandle Container, const FInventoryPlacement& Placement);
 
-	/** What a click or Accept does: places the held item, or picks up the item there or asks for its item menu. */
+	/**
+	 * What a press on a spot does: places the held item there, or while an item is being chosen, chooses the one there. Otherwise it does
+	 * Press to the item there, such as pick it up or ask for its menu. Item widgets pass the style's Left Click, Right Click, Double Click
+	 * or Long Press.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
+	bool PressPlacement(FInventoryContainerHandle Container, const FInventoryPlacement& Placement, EInventoryItemPress Press);
+
+	/** What Accept does on a spot, such as on a focused cell: Press Placement with the style's Accept. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	bool ActivatePlacement(FInventoryContainerHandle Container, const FInventoryPlacement& Placement);
 
@@ -118,7 +126,7 @@ public:
 	bool CanPickUpOrPlace() const;
 
 	/**
-	 * What a Confirm key does with the mouse, where keyboard focus isn't on what the mouse is: what a click on the hovered item does, or
+	 * What a Confirm key does with the mouse, where keyboard focus isn't on what the mouse is: the style's Accept on the hovered item, or
 	 * puts the held item down where it's aimed. On the focused cell, a gamepad's Accept does the same.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
@@ -174,11 +182,18 @@ public:
 
 	// Item menus
 	/**
-	 * Asks whoever shows item menus, usually the screen, to open one. Item widgets call it on right click, unless the style turns that
-	 * off, and clicks and Accept do with Click Opens Item Menu; call it from your own binding otherwise.
+	 * Asks whoever shows item menus, usually the screen, to open one. Presses on items call it as the style's Left Click, Right Click and
+	 * Accept say, and so does a screen's Item Menu action; call it from your own binding otherwise.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	void RequestContext(FInventoryItemHandle Item);
+
+	/**
+	 * Asks the screen to run the item's default action, the first of its Default Actions that can run, such as Use. Presses on items call
+	 * it as the style says, such as a double-click set to Default Action.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
+	void RequestDefaultAction(FInventoryItemHandle Item);
 
 	// Choosing: for "use this on that" actions, such as combining two items.
 	/**
@@ -256,6 +271,10 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Inventory UI")
 	FInventoryUIItemSignature OnContextRequested;
+
+	/** Request Default Action was called. Inventory screens run their Default Actions for the item. */
+	UPROPERTY(BlueprintAssignable, Category = "Inventory UI")
+	FInventoryUIItemSignature OnDefaultActionRequested;
 
 	/** Chosen was picked after Begin Choosing Item was called for Item. */
 	UPROPERTY(BlueprintAssignable, Category = "Inventory UI")

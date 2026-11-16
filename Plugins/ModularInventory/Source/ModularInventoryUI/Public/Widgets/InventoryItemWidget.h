@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 
 #include "Blueprint/UserWidget.h"
+#include "Containers/Ticker.h"
 #include "Engine/StreamableManager.h"
 
 #include "InventoryTypes.h"
@@ -22,8 +23,8 @@ class UTextBlock;
 /**
  * Shows one item and lets the mouse drag it. Grids position and size it over its cells; elsewhere it takes its icon's size,
  * so put it in a Scale Box to fit a slot.
- * A click does what Accept does on a gamepad: picks the item up or opens its item menu, or puts the held item down on it. A click is a
- * press and a release on the item, so the release that ends a drag never counts as one.
+ * A left click and a right-click on it do what the Inventory UI Subsystem's style says, such as pick it up or open its item menu, or put the
+ * held item down on it. A click is a press and a release on the item, so the release that ends a drag never counts as one.
  * In a grid, an item picked up with the mouse is held by the cell under the cursor, which then follows the cursor from cell to cell.
  * It lights up while hovered, focused or selected: Lit Background and Glow show.
  */
@@ -70,8 +71,17 @@ public:
 	UInventoryDragDropOperation* BeginDrag(int32 Count = 0);
 
 	// What the mouse does to the item, for a press that something over the item took, such as an item menu: it then acts for the item.
-	/** Does what a left click on the item does: with Shift, moves it to the other side where the style allows; otherwise acts on its cell under the cursor. */
+	/** Does what a left click on the item does: with Shift, moves it to the other side where the style allows; otherwise the style's Left Click, on its cell under the cursor. */
 	void Click(const FPointerEvent& MouseEvent);
+
+	/**
+	 * Does what a right-click on the item does, as the style's Right Click says. False when that's nothing, such as while the style's
+	 * Held Right Click leaves right-clicks to the screen.
+	 */
+	bool RightClick(const FPointerEvent& MouseEvent);
+
+	/** Does what a double-click on the item does, as the style's Double Click says. False when that's None, so the click counts as a click. */
+	bool DoubleClick(const FPointerEvent& MouseEvent);
 
 	/** Picks the item up as a left-button drag on it does: the whole stack, or half of it with Shift. */
 	UInventoryDragDropOperation* BeginMouseDrag(const FPointerEvent& MouseEvent);
@@ -106,6 +116,7 @@ protected:
 	virtual void NativeDestruct() override;
 	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	virtual FReply NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+	virtual FReply NativeOnMouseButtonDoubleClick(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	virtual void NativeOnMouseEnter(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	virtual void NativeOnMouseLeave(const FPointerEvent& InMouseEvent) override;
 	virtual void NativeOnDragDetected(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent, UDragDropOperation*& OutOperation) override;
@@ -152,8 +163,8 @@ protected:
 	void OnSelectedChanged(bool bIsSelected);
 
 	/**
-	 * A right-click, after the Inventory UI Subsystem's On Context Requested, unless the style's Right Click Opens Item Menu is off.
-	 * Open an item menu from either, for game actions like Use or Drop.
+	 * A right-click asked for the item's menu, as the style's Right Click is Open Item Menu, after the Inventory UI Subsystem's On Context
+	 * Requested. Open an item menu from either, for game actions like Use or Drop.
 	 */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Item")
 	void OnContextRequested();
@@ -286,6 +297,16 @@ private:
 	/** In a grid, the item's cell at that point on the screen, each cell taking half the gap around it. Elsewhere, the item's own placement. */
 	FInventoryPlacement GetPlacementAt(const FVector2D& ScreenPosition) const;
 	FVector2D GetCursorPosition() const;
+
+	// Long press: a finger held on the item, on a touch screen, does the style's Long Press, timed in real time so it works while paused.
+	void StartLongPress(const FPointerEvent& TouchEvent);
+	void StopLongPress();
+	void HandleLongPress(const FVector2D& ScreenPosition);
+
+	FTSTicker::FDelegateHandle LongPressHandle;
+
+	/** The finger now down did a long press, so neither its lift nor a drag it starts counts. */
+	bool bLongPressed = false;
 
 	FInventoryItemHandle Item;
 	float CellSize = 0.0f;

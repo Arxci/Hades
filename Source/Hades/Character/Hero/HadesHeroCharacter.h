@@ -51,6 +51,9 @@ public:
 	UCameraComponent* GetFirstPersonCamera() const { return FirstPersonCamera; }
 	USkeletalMeshComponent* GetArmsMesh() const { return ArmsMesh; }
 
+	/** Which input action each input tag is, such as for widgets that show the key bound to one. */
+	const UHadesInputConfig* GetInputConfig() const { return InputConfig; }
+
 	/** The live value of the action mapped to InputTag. Zero for unmapped tags and on pawns that aren't locally controlled. */
 	UFUNCTION(BlueprintPure, Category = "Character|Input")
 	FInputActionValue GetInputValue(UPARAM(meta = (Categories = "Input")) FGameplayTag InputTag) const;
@@ -74,7 +77,7 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character|Inventory")
 	TObjectPtr<UInventoryEquipmentComponent> EquipmentComponent;
 
-	/** Input.QuickSlot.1 to 4 activate its slots. */
+	/** The input tags in its Slot Inputs activate its slots, through Input Config. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character|Inventory")
 	TObjectPtr<UHadesQuickSlotComponent> QuickSlotComponent;
 

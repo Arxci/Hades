@@ -284,7 +284,7 @@ bool UInventoryUISubsystem::PlaceHeld(FInventoryContainerHandle Container, const
 	return true;
 }
 
-bool UInventoryUISubsystem::ActivatePlacement(FInventoryContainerHandle Container, const FInventoryPlacement& Placement)
+bool UInventoryUISubsystem::PressPlacement(FInventoryContainerHandle Container, const FInventoryPlacement& Placement, EInventoryItemPress Press)
 {
 	if (IsHolding())
 	{
@@ -299,6 +299,8 @@ bool UInventoryUISubsystem::ActivatePlacement(FInventoryContainerHandle Containe
 	{
 		return false;
 	}
+
+	// Choosing comes first, whatever the press would do otherwise, so the item asked for can always be chosen.
 	if (bChoosingItem)
 	{
 		// An item can't be used on itself, so the choosing goes on.
@@ -311,15 +313,28 @@ bool UInventoryUISubsystem::ActivatePlacement(FInventoryContainerHandle Containe
 		OnItemChosen.Broadcast(For, Item);
 		return true;
 	}
-	if (Style.bClickOpensItemMenu)
+
+	switch (Press)
 	{
+	case EInventoryItemPress::OpenItemMenu:
 		RequestContext(Item);
 		return true;
+	case EInventoryItemPress::PickUp:
+		// Held by the cell pressed.
+		SetTarget(Container, Placement);
+		return BeginHold(Item);
+	case EInventoryItemPress::DefaultAction:
+		RequestDefaultAction(Item);
+		return true;
+	case EInventoryItemPress::None:
+		break;
 	}
+	return false;
+}
 
-	// Held by the cell clicked or accepted on.
-	SetTarget(Container, Placement);
-	return BeginHold(Item);
+bool UInventoryUISubsystem::ActivatePlacement(FInventoryContainerHandle Container, const FInventoryPlacement& Placement)
+{
+	return PressPlacement(Container, Placement, Style.Accept);
 }
 
 bool UInventoryUISubsystem::PickUpOrPlace()
@@ -391,7 +406,14 @@ bool UInventoryUISubsystem::CanActivateAimed() const
 	{
 		return HoveredItem != ChoosingFor;
 	}
-	return Style.bClickOpensItemMenu || CanBeginHold(HoveredItem);
+	switch (Style.Accept)
+	{
+	case EInventoryItemPress::OpenItemMenu:  return true;
+	case EInventoryItemPress::DefaultAction: return true;
+	case EInventoryItemPress::PickUp:        return CanBeginHold(HoveredItem);
+	case EInventoryItemPress::None:          break;
+	}
+	return false;
 }
 
 EInventoryDropAction UInventoryUISubsystem::PreviewPlacement(FInventoryContainerHandle Container, const FInventoryPlacement& Placement)
@@ -573,6 +595,14 @@ void UInventoryUISubsystem::RequestContext(FInventoryItemHandle Item)
 	if (Item.IsSet())
 	{
 		OnContextRequested.Broadcast(Item);
+	}
+}
+
+void UInventoryUISubsystem::RequestDefaultAction(FInventoryItemHandle Item)
+{
+	if (Item.IsSet())
+	{
+		OnDefaultActionRequested.Broadcast(Item);
 	}
 }
 

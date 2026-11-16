@@ -40,8 +40,8 @@ ENUM_RANGE_BY_FIRST_AND_LAST(EHadesItemAction, EHadesItemAction::Shortcut, EHade
 
 /**
  * The player's inventory, pushed onto the GameMenu layer by the HUD, or by an item box when the screen has an Item Box List.
- * The world stops while it's open. It plays like the RE games: a click or Accept on an item opens its item menu beside it, dragging or Move
- * picks it up, and the held item sits on the cells it would land on. Putting it on another item picks that one up.
+ * The world stops while it's open. It plays like the RE games: a right-click or Accept on an item opens its item menu beside it, dragging or
+ * Move picks it up, and the held item sits on the cells it would land on. Putting it on another item picks that one up.
  * With a Tab Bar and Pages, Previous Tab and Next Tab change the page, or turn the item being moved; the item actions only work on Items Page.
  */
 UCLASS(Abstract, Blueprintable)
@@ -58,9 +58,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	void RunItemAction(EHadesItemAction Action, FInventoryItemHandle Item);
 
-	/** Says what the highlighted option of an open menu does, above the action bar. Empty goes back to the screen's own hint. */
-	void ShowActionHint(const FText& Hint);
-
 protected:
 	//~ Begin UUserWidget Interface
 	virtual void NativeOnInitialized() override;
@@ -69,7 +66,6 @@ protected:
 	//~ Begin UCommonActivatableWidget Interface
 	virtual void NativeOnActivated() override;
 	virtual void NativeOnDeactivated() override;
-	virtual bool NativeOnHandleBackAction() override;
 	//~ End UCommonActivatableWidget Interface
 
 	//~ Begin UInventoryScreenWidget Interface
@@ -89,13 +85,6 @@ protected:
 	/** Shows the item box, which turns on Store and Take. Leave it out of the plain inventory screen. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory", meta = (BindWidgetOptional))
 	TObjectPtr<UInventoryListWidget> ItemBoxList;
-
-	/** Says what to do now, or what a menu option does. Hidden while there's nothing to say. Put Action Hint Text inside it. */
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory", meta = (BindWidgetOptional))
-	TObjectPtr<UWidget> ActionHint;
-
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory", meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> ActionHintText;
 
 	/** Holds a button per page, in the same order as Pages. Hades Tab Buttons show which one is open. */
 	UPROPERTY(BlueprintReadOnly, Category = "Tabs", meta = (BindWidgetOptional))
@@ -118,52 +107,21 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
 	FDataTableRowHandle NextTabAction;
 
-	/** The action hint while an item is being moved. */
-	UPROPERTY(EditDefaultsOnly, Category = "Hints")
-	FText MoveHint;
-
-	/** The action hint while the item being moved is over a spot it can't go, by why it can't. Reasons not listed use Invalid Hint. */
-	UPROPERTY(EditDefaultsOnly, Category = "Hints")
-	TMap<EInventoryError, FText> InvalidHints;
-
-	/** The action hint over a spot the moved item can't go, for reasons not in Invalid Hints. Empty keeps Move Hint. */
-	UPROPERTY(EditDefaultsOnly, Category = "Hints")
-	FText InvalidHint;
-
-	/** The action hint while choosing the second item to combine. */
-	UPROPERTY(EditDefaultsOnly, Category = "Hints")
-	FText CombineHint;
-
-	/** The action hint the rest of the time. Empty hides it. */
-	UPROPERTY(EditDefaultsOnly, Category = "Hints")
-	FText IdleHint;
-
 private:
 	UFUNCTION()
 	void HandleItemChosen(FInventoryItemHandle Item, FInventoryItemHandle Chosen);
-
-	UFUNCTION()
-	void HandleHeldItemChanged();
-
-	UFUNCTION()
-	void HandleTargetChanged();
 
 	UHadesInventoryComponent* GetPlayerInventory() const;
 	FInventoryContainerHandle GetItemBox() const;
 	void OpenItemMenu(FInventoryItemHandle Item);
 	void OpenShortcutMenu(FInventoryItemHandle Item);
-	void HandleMenuClosed();
 
 	void SetPage(int32 Index);
-	void RefreshActionHint();
 
 	void HandleOrganizeAction();
 	void HandleCloseAction();
 	void HandlePreviousTab();
 	void HandleNextTab();
-
-	/** What the highlighted option of an open menu does. */
-	FText MenuHint;
 
 	FUIActionBindingHandle OrganizeHandle;
 };

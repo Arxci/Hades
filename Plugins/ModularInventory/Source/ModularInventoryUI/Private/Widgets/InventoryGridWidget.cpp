@@ -184,6 +184,18 @@ UInventoryItemWidget* UInventoryGridWidget::GetItemWidget(FInventoryItemHandle I
 	return ItemWidgets.FindRef(Item).Get();
 }
 
+FBox2D UInventoryGridWidget::GetCellsAbsoluteBox() const
+{
+	if (!GridCanvas || BuiltGridSize.X <= 0 || BuiltGridSize.Y <= 0)
+	{
+		return FBox2D(ForceInit);
+	}
+
+	// The cells start at Grid Canvas's top-left corner.
+	const FGeometry& Geometry = GridCanvas->GetCachedGeometry();
+	return FBox2D(Geometry.LocalToAbsolute(FVector2D::ZeroVector), Geometry.LocalToAbsolute(GetCellsExtent(BuiltGridSize)));
+}
+
 UInventoryUISubsystem* UInventoryGridWidget::GetInteraction() const
 {
 	return UInventoryUISubsystem::Get(GetOwningLocalPlayer());
@@ -461,9 +473,12 @@ void UInventoryGridWidget::NativeTick(const FGeometry& MyGeometry, float InDelta
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 
-	if (PreviewPosition.IsSet() && !PreviewPosition->Equals(PreviewTargetPosition, 0.1))
+	if (PreviewPosition.IsSet() && PreviewPosition.GetValue() != PreviewTargetPosition)
 	{
-		PreviewPosition = FMath::Vector2DInterpTo(PreviewPosition.GetValue(), PreviewTargetPosition, InDeltaTime, PreviewGlideSpeed);
+		// Interp To only ever closes in on the target, so the last step lands on it exactly. Left a fraction of a pixel short, its edges
+		// can round to other pixels than the cells' edges do, and the preview is drawn a pixel off the cells under it.
+		const FVector2D Glided = FMath::Vector2DInterpTo(PreviewPosition.GetValue(), PreviewTargetPosition, InDeltaTime, PreviewGlideSpeed);
+		PreviewPosition = Glided.Equals(PreviewTargetPosition, 0.1) ? PreviewTargetPosition : Glided;
 		PlacePreview(PreviewPosition.GetValue());
 	}
 }

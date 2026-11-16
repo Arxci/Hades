@@ -3,13 +3,16 @@
 #include "Blueprint/WidgetTree.h"
 #include "CommonInputSubsystem.h"
 #include "CommonInputTypeEnum.h"
+#include "Components/TextBlock.h"
 #include "Framework/Application/SlateApplication.h"
+#include "GameFramework/PlayerController.h"
 #include "Input/CommonUIInputTypes.h"
 #include "InputCoreTypes.h"
 #include "Kismet/GameplayStatics.h"
 #include "Layout/WidgetPath.h"
 #include "Sound/SoundBase.h"
 
+#include "Actions/InventoryItemAction.h"
 #include "InventorySubsystem.h"
 #include "InventoryUISubsystem.h"
 #include "Widgets/InventoryCellWidget.h"
@@ -228,9 +231,11 @@ void UInventoryScreenWidget::NativeOnActivated()
 		Interaction->SetTransferContainer(TransferContainer);
 
 		Interaction->OnContextRequested.AddUniqueDynamic(this, &ThisClass::HandleItemMenuRequested);
+		Interaction->OnDefaultActionRequested.AddUniqueDynamic(this, &ThisClass::HandleDefaultActionRequested);
 		Interaction->OnHeldItemChanged.AddUniqueDynamic(this, &ThisClass::HandleInteractionChanged);
 		Interaction->OnTargetChanged.AddUniqueDynamic(this, &ThisClass::HandleInteractionChanged);
 		Interaction->OnHoveredItemChanged.AddUniqueDynamic(this, &ThisClass::HandleHoveredItemChanged);
+		Interaction->OnSelectedItemChanged.AddUniqueDynamic(this, &ThisClass::HandleSelectedItemChanged);
 		Interaction->OnHoldEvent.AddUniqueDynamic(this, &ThisClass::HandleHoldEvent);
 	}
 	if (UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer()))
@@ -242,6 +247,7 @@ void UInventoryScreenWidget::NativeOnActivated()
 		AimAtStart();
 	}
 	RefreshActions();
+	RefreshActionHint();
 }
 
 void UInventoryScreenWidget::NativeOnDeactivated()
@@ -249,9 +255,11 @@ void UInventoryScreenWidget::NativeOnDeactivated()
 	if (UInventoryUISubsystem* Interaction = GetInteraction())
 	{
 		Interaction->OnContextRequested.RemoveDynamic(this, &ThisClass::HandleItemMenuRequested);
+		Interaction->OnDefaultActionRequested.RemoveDynamic(this, &ThisClass::HandleDefaultActionRequested);
 		Interaction->OnHeldItemChanged.RemoveDynamic(this, &ThisClass::HandleInteractionChanged);
 		Interaction->OnTargetChanged.RemoveDynamic(this, &ThisClass::HandleInteractionChanged);
 		Interaction->OnHoveredItemChanged.RemoveDynamic(this, &ThisClass::HandleHoveredItemChanged);
+		Interaction->OnSelectedItemChanged.RemoveDynamic(this, &ThisClass::HandleSelectedItemChanged);
 		Interaction->OnHoldEvent.RemoveDynamic(this, &ThisClass::HandleHoldEvent);
 
 		LastHoveredItem = Interaction->GetHoveredItem();
@@ -264,9 +272,10 @@ void UInventoryScreenWidget::NativeOnDeactivated()
 		Input->OnInputMethodChangedNative.RemoveAll(this);
 	}
 
-	// Common UI reuses closed screens, so a chest's container and the last cell aimed at mustn't carry over to the next opening.
+	// Common UI reuses closed screens, so a chest's container, the last cell aimed at and a menu's hint mustn't carry over to the next opening.
 	TransferContainer = FInventoryContainerHandle();
 	LastAimedContainer = FInventoryContainerHandle();
+	MenuHint = FText::GetEmpty();
 
 	Super::NativeOnDeactivated();
 }
@@ -357,6 +366,11 @@ void UInventoryScreenWidget::RefreshActions()
 	SetActionBound(ConfirmHandle, ConfirmAction, bUsable && bMouse && Interaction->CanActivateAimed(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleConfirmAction));
 
 	SetActionBound(MoveHandle, MoveAction, bUsable && Interaction->CanPickUpOrPlace(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleMoveAction));
+
+	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
+	const bool bCanOpenItemMenu = bUsable && Inventory && !Interaction->IsHolding() && !Interaction->IsChoosingItem() && Inventory->IsValidItem(Interaction->GetHoveredItem());
+	SetActionBound(ItemMenuHandle, ItemMenuAction, bCanOpenItemMenu, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleItemMenuAction));
+
 	SetActionBound(RotateHandle, RotateAction, bUsable && Interaction->CanRotateHeld(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleRotateAction));
 	SetActionBound(SplitHandle, SplitAction, bUsable && Interaction->CanSplitHeld(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleSplitAction));
 
@@ -387,6 +401,110 @@ void UInventoryScreenWidget::HandleInteractionChanged()
 		LastAimedPlacement = Interaction->GetTargetPlacement();
 	}
 	RefreshActions();
+	RefreshActionHint();
+}
+
+void UInventoryScreenWidget::HandleSelectedItemChanged(FInventoryItemHandle Item)
+{
+	// Choosing an item for another selects the one it's for, so the hint follows the choosing too.
+	RefreshActionHint();
+}
+
+// Item actions
+FInventoryItemActionContext UInventoryScreenWidget::MakeActionContext(FInventoryItemHandle Item) const
+{
+	FInventoryItemActionContext Context;
+	Context.Item = Item;
+	Context.Player = GetOwningPlayer();
+	Context.Screen = const_cast<UInventoryScreenWidget*>(this);
+	return Context;
+}
+
+bool UInventoryScreenWidget::RunAction(UInventoryItemAction* Action, FInventoryItemHandle Item, int32 Count)
+{
+	FInventoryItemActionContext Context = MakeActionContext(Item);
+	Context.Count = Count;
+	if (!Action || !Item.IsSet() || !Action->CanRunFor(Context))
+	{
+		return false;
+	}
+	Action->RunFor(Context);
+	return true;
+}
+
+bool UInventoryScreenWidget::RunDefaultAction(FInventoryItemHandle Item)
+{
+	if (!DefaultActions || !Item.IsSet())
+	{
+		return false;
+	}
+
+	FInventoryItemActionContext Context = MakeActionContext(Item);
+	for (UInventoryItemAction* Action : DefaultActions->Actions)
+	{
+		if (!Action || !Action->CanRunFor(Context))
+		{
+			continue;
+		}
+
+		// No prompt here, so a count is the one it would start at.
+		int32 Min = 0;
+		int32 Max = 0;
+		int32 Count = 0;
+		if (Action->Prompt == EInventoryActionPrompt::Quantity)
+		{
+			Action->GetQuantityRangeFor(Context, Min, Max, Count);
+		}
+		Context.Count = Count;
+		Action->RunFor(Context);
+		return true;
+	}
+	return false;
+}
+
+void UInventoryScreenWidget::HandleDefaultActionRequested(FInventoryItemHandle Item)
+{
+	const UInventoryUISubsystem* Interaction = GetInteraction();
+	if (Interaction && !Interaction->IsChoosingItem() && IsInventoryShown())
+	{
+		RunDefaultAction(Item);
+	}
+}
+
+// Hint
+void UInventoryScreenWidget::ShowActionHint(const FText& Hint)
+{
+	MenuHint = Hint;
+	RefreshActionHint();
+}
+
+void UInventoryScreenWidget::RefreshActionHint()
+{
+	const UInventoryUISubsystem* Interaction = GetInteraction();
+	const bool bHolding = Interaction && Interaction->IsHolding();
+	const bool bAimedAtInvalid = bHolding && Interaction->GetTargetAction() == EInventoryDropAction::Invalid;
+	const FText* InvalidReason = bAimedAtInvalid ? InvalidHints.Find(Interaction->GetTargetError()) : nullptr;
+	const FText& Hint = !MenuHint.IsEmpty() ? MenuHint
+		: InvalidReason ? *InvalidReason
+		: bAimedAtInvalid && !InvalidHint.IsEmpty() ? InvalidHint
+		: bHolding ? MoveHint
+		: Interaction && Interaction->IsChoosingItem() ? ChooseHint
+		: IdleHint;
+
+	if (ActionHintText)
+	{
+		ActionHintText->SetText(Hint);
+	}
+	if (ActionHint)
+	{
+		// Hidden, not collapsed, so what's around it doesn't move.
+		ActionHint->SetVisibility(Hint.IsEmpty() ? ESlateVisibility::Hidden : ESlateVisibility::HitTestInvisible);
+	}
+	if (!Hint.EqualTo(ShownHint))
+	{
+		ShownHint = Hint;
+		OnActionHintChanged(ShownHint);
+	}
 }
 
 void UInventoryScreenWidget::HandleHoveredItemChanged(FInventoryItemHandle Item)
@@ -459,6 +577,14 @@ void UInventoryScreenWidget::HandleMoveAction()
 	if (UInventoryUISubsystem* Interaction = GetInteraction())
 	{
 		Interaction->PickUpOrPlace();
+	}
+}
+
+void UInventoryScreenWidget::HandleItemMenuAction()
+{
+	if (UInventoryUISubsystem* Interaction = GetInteraction())
+	{
+		Interaction->RequestContext(Interaction->GetHoveredItem());
 	}
 }
 

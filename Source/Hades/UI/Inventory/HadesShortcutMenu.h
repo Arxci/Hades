@@ -9,8 +9,9 @@
 
 #include "HadesShortcutMenu.generated.h"
 
-class UCommonActionWidget;
+class UHadesInputKeyWidget;
 class UHadesQuickSlotComponent;
+class UInputAction;
 class UInventoryItemWidget;
 class UPanelWidget;
 class UTextBlock;
@@ -23,21 +24,15 @@ class HADES_API UHadesShortcutEntry : public UCommonButtonBase
 	GENERATED_BODY()
 
 public:
-	/** Shows a quick slot. Key is the slot's row from the quick slot component's Slot Keys. */
-	void SetShortcut(int32 InSlotIndex, const FDataTableRowHandle& Key, FInventoryItemHandle SlotItem);
+	/** Shows a quick slot. Slot Input is the input action that activates it, from the quick slot component's Get Slot Input Action. */
+	void SetShortcut(int32 InSlotIndex, const UInputAction* SlotInput, FInventoryItemHandle SlotItem);
 
 	int32 GetSlotIndex() const { return SlotIndex; }
 
 protected:
 	//~ Begin UUserWidget Interface
 	virtual void NativePreConstruct() override;
-	virtual void NativeConstruct() override;
 	//~ End UUserWidget Interface
-
-	//~ Begin UCommonButtonBase Interface
-	virtual void NativeOnHovered() override;
-	virtual void NativeOnUnhovered() override;
-	//~ End UCommonButtonBase Interface
 
 	/**
 	 * The quick slot this entry shows, 0 being the first, for entries placed in the shortcut menu's designer, such as a cross laid
@@ -46,14 +41,18 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Shortcut", meta = (ClampMin = "0"))
 	int32 SlotIndex = 0;
 
+	/** The key the player has bound to the slot, which follows rebinding. */
 	UPROPERTY(BlueprintReadOnly, Category = "Shortcut", meta = (BindWidgetOptional))
-	TObjectPtr<UCommonActionWidget> KeyIcon;
+	TObjectPtr<UHadesInputKeyWidget> KeyWidget;
 
 	/** Slot Index + 1, such as a number in the slot's corner. */
 	UPROPERTY(BlueprintReadOnly, Category = "Shortcut", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> NumberText;
 
-	/** Hidden while the slot is empty. */
+	/**
+	 * The item on the slot, upright, laid out on cells of Item Cell Size as in the inventory grid. Hidden, not collapsed, while the slot
+	 * is empty, so a Size Box around it keeps its size.
+	 */
 	UPROPERTY(BlueprintReadOnly, Category = "Shortcut", meta = (BindWidgetOptional))
 	TObjectPtr<UInventoryItemWidget> ItemWidget;
 
@@ -61,15 +60,19 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Shortcut", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> NameText;
 
-	/** Shown while the entry is hovered, or focused on a gamepad: a frame drawn over the slot's item, which would hide the button's own hover look. */
-	UPROPERTY(BlueprintReadOnly, Category = "Shortcut", meta = (BindWidgetOptional))
-	TObjectPtr<UWidget> Highlight;
-
 	UPROPERTY(EditAnywhere, Category = "Shortcut")
 	FText EmptyText;
 
-private:
-	void SetHighlighted(bool bInHighlighted);
+	/**
+	 * Lays Item Widget out as the grid does, on cells this size: a 2x1 item is two cells wide, its icon unstretched. Match the inventory
+	 * grid's Cell Size. 0 leaves Item Widget at its icon's own size.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Shortcut", meta = (ClampMin = "0"))
+	float ItemCellSize = 0.0f;
+
+	/** Space between those cells, for items bigger than one cell. Match the inventory grid's Cell Gap. */
+	UPROPERTY(EditAnywhere, Category = "Shortcut", meta = (ClampMin = "0", EditCondition = "ItemCellSize > 0"))
+	float ItemCellGap = 0.0f;
 };
 
 
@@ -83,6 +86,9 @@ UCLASS(Abstract, Blueprintable)
 class HADES_API UHadesShortcutMenu : public UInventoryItemMenuWidget
 {
 	GENERATED_BODY()
+
+public:
+	UHadesShortcutMenu(const FObjectInitializer& ObjectInitializer);
 
 protected:
 	//~ Begin UUserWidget Interface

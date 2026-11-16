@@ -1,12 +1,12 @@
 ﻿#include "HadesShortcutMenu.h"
 
 #include "Blueprint/WidgetTree.h"
-#include "CommonActionWidget.h"
 #include "Components/PanelWidget.h"
 #include "Components/TextBlock.h"
 #include "GameFramework/Pawn.h"
 
 #include "Hades/Inventory/HadesQuickSlotComponent.h"
+#include "Hades/UI/Foundation/HadesInputKeyWidget.h"
 
 #include "Data/InventoryItemDefinition.h"
 #include "InventorySubsystem.h"
@@ -22,53 +22,26 @@ void UHadesShortcutEntry::NativePreConstruct()
 	{
 		NumberText->SetText(FText::AsNumber(SlotIndex + 1));
 	}
-	SetHighlighted(false);
 }
 
-void UHadesShortcutEntry::NativeConstruct()
-{
-	Super::NativeConstruct();
-
-	// Menus are reused, and an entry can be left highlighted when its menu closed under the mouse.
-	SetHighlighted(IsHovered());
-}
-
-void UHadesShortcutEntry::NativeOnHovered()
-{
-	Super::NativeOnHovered();
-
-	SetHighlighted(true);
-}
-
-void UHadesShortcutEntry::NativeOnUnhovered()
-{
-	Super::NativeOnUnhovered();
-
-	SetHighlighted(false);
-}
-
-void UHadesShortcutEntry::SetHighlighted(bool bInHighlighted)
-{
-	if (Highlight)
-	{
-		Highlight->SetVisibility(bInHighlighted ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
-	}
-}
-
-void UHadesShortcutEntry::SetShortcut(int32 InSlotIndex, const FDataTableRowHandle& Key, FInventoryItemHandle SlotItem)
+void UHadesShortcutEntry::SetShortcut(int32 InSlotIndex, const UInputAction* SlotInput, FInventoryItemHandle SlotItem)
 {
 	SlotIndex = InSlotIndex;
 	if (NumberText)
 	{
 		NumberText->SetText(FText::AsNumber(SlotIndex + 1));
 	}
-	if (KeyIcon)
+	if (KeyWidget)
 	{
-		KeyIcon->SetInputAction(Key);
+		KeyWidget->SetInputAction(SlotInput);
 	}
 	if (ItemWidget)
 	{
 		ItemWidget->SetItem(SlotItem);
+		if (ItemCellSize > 0.0f)
+		{
+			ItemWidget->SetCellLayout(ItemCellSize, ItemCellGap, /*bInRotated*/ false);
+		}
 		ItemWidget->SetVisibility(SlotItem.IsSet() ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
 	}
 	if (NameText)
@@ -80,6 +53,13 @@ void UHadesShortcutEntry::SetShortcut(int32 InSlotIndex, const FDataTableRowHand
 }
 
 // Menu
+UHadesShortcutMenu::UHadesShortcutMenu(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
+{
+	// As the item menu it opens from: a click outside only closes it, and a right-click on another item opens that item's menu instead.
+	LeftPressOutside = EInventoryMenuOutsidePress::Close;
+	RightPressOutside = EInventoryMenuOutsidePress::PassThrough;
+}
+
 void UHadesShortcutMenu::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
@@ -115,7 +95,7 @@ void UHadesShortcutMenu::NativeOnItemChanged()
 		Entry->SetVisibility(bHasSlot ? ESlateVisibility::Visible : ESlateVisibility::Hidden);
 		if (bHasSlot)
 		{
-			Entry->SetShortcut(EntrySlot, QuickSlots->GetSlotKey(EntrySlot), QuickSlots->GetSlotItem(EntrySlot));
+			Entry->SetShortcut(EntrySlot, QuickSlots->GetSlotInputAction(EntrySlot), QuickSlots->GetSlotItem(EntrySlot));
 		}
 	}
 
@@ -127,7 +107,7 @@ void UHadesShortcutMenu::NativeOnItemChanged()
 		{
 			UHadesShortcutEntry* Entry = CreateWidget<UHadesShortcutEntry>(this, EntryClass);
 			EntryPanel->AddChild(Entry);
-			Entry->SetShortcut(NewSlot, QuickSlots->GetSlotKey(NewSlot), QuickSlots->GetSlotItem(NewSlot));
+			Entry->SetShortcut(NewSlot, QuickSlots->GetSlotInputAction(NewSlot), QuickSlots->GetSlotItem(NewSlot));
 			Entry->OnClicked().AddUObject(this, &ThisClass::HandleEntryClicked, NewSlot);
 			Entries.Add(Entry);
 		}

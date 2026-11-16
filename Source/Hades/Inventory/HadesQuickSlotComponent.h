@@ -11,6 +11,7 @@
 #include "HadesQuickSlotComponent.generated.h"
 
 class UHadesInventoryComponent;
+class UInputAction;
 class UInventoryComponent;
 class UInventoryEquipmentComponent;
 
@@ -22,6 +23,8 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FHadesQuickSlotActivatedSignature, i
 /**
  * Number-key shortcuts to items the player carries. A slot follows its item wherever it moves, and empties when the item leaves the inventory.
  * Activating a slot draws its item into a hand, puts it away if it's already in one, or uses it.
+ * There's a slot per tag in Slot Inputs. The hero binds each slot to the input action its input config has for that tag, and widgets show
+ * the key the player has bound to that action, so rebinding a slot's key changes both.
  */
 UCLASS(ClassGroup = (Inventory), meta = (BlueprintSpawnableComponent))
 class HADES_API UHadesQuickSlotComponent : public UActorComponent
@@ -52,12 +55,19 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Quick Slots")
 	int32 FindSlot(FInventoryItemHandle Item) const;
 
-	/** The UI input action row whose key icon stands for the slot. */
+	/** The input tag that activates the slot, such as Input.QuickSlot.1. */
 	UFUNCTION(BlueprintPure, Category = "Quick Slots")
-	FDataTableRowHandle GetSlotKey(int32 SlotIndex) const;
+	FGameplayTag GetSlotInputTag(int32 SlotIndex) const;
+
+	/**
+	 * The input action that activates the slot: the one the hero's input config has for its tag. Give it to a Hades Input Key Widget to
+	 * show the key the player has bound to it. Null without a hero or an action for the tag.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Quick Slots")
+	const UInputAction* GetSlotInputAction(int32 SlotIndex) const;
 
 	UFUNCTION(BlueprintPure, Category = "Quick Slots")
-	int32 GetNumSlots() const { return NumSlots; }
+	int32 GetNumSlots() const { return SlotInputs.Num(); }
 
 	/** Something to hold or to use. */
 	UFUNCTION(BlueprintPure, Category = "Quick Slots")
@@ -77,13 +87,12 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	//~ End UActorComponent Interface
 
-	/** The hero binds Input.QuickSlot.1 to 4, so more than four need more input. */
-	UPROPERTY(EditAnywhere, Category = "Quick Slots", meta = (ClampMin = "1"))
-	int32 NumSlots = 4;
-
-	/** Rows of the UI input action table, slot 1 first, whose key icons show each slot in the UI. Only for show: the hero binds the keys. */
-	UPROPERTY(EditAnywhere, Category = "Quick Slots", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
-	TArray<FDataTableRowHandle> SlotKeys;
+	/**
+	 * The input tag that activates each slot, slot 1 first: one slot per tag. Each needs an input action for it in the hero's input
+	 * config, mapped to a key in a mapping context. Input.QuickSlot.1 to 4 by default.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Quick Slots", meta = (Categories = "Input"))
+	TArray<FGameplayTag> SlotInputs;
 
 private:
 	UFUNCTION()

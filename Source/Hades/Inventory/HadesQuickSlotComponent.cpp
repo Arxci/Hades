@@ -1,6 +1,9 @@
 ﻿#include "HadesQuickSlotComponent.h"
 
+#include "Hades/Character/Hero/HadesHeroCharacter.h"
 #include "Hades/Hades.h"
+#include "Hades/HadesGameplayTags.h"
+#include "Hades/Input/HadesInputConfig.h"
 #include "Hades/Inventory/HadesInventoryComponent.h"
 
 #include "Equipment/InventoryEquipmentComponent.h"
@@ -8,13 +11,15 @@
 UHadesQuickSlotComponent::UHadesQuickSlotComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
+
+	SlotInputs = { HadesGameplayTags::Input_QuickSlot_1, HadesGameplayTags::Input_QuickSlot_2, HadesGameplayTags::Input_QuickSlot_3, HadesGameplayTags::Input_QuickSlot_4 };
 }
 
 void UHadesQuickSlotComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	Slots.SetNum(NumSlots);
+	Slots.SetNum(GetNumSlots());
 	Inventory = Cast<UHadesInventoryComponent>(UInventoryComponent::FindInventoryComponent(GetOwner()));
 	if (!Inventory)
 	{
@@ -120,9 +125,18 @@ int32 UHadesQuickSlotComponent::FindSlot(FInventoryItemHandle Item) const
 	return Item.IsSet() ? Slots.IndexOfByKey(Item) : INDEX_NONE;
 }
 
-FDataTableRowHandle UHadesQuickSlotComponent::GetSlotKey(int32 SlotIndex) const
+FGameplayTag UHadesQuickSlotComponent::GetSlotInputTag(int32 SlotIndex) const
 {
-	return SlotKeys.IsValidIndex(SlotIndex) ? SlotKeys[SlotIndex] : FDataTableRowHandle();
+	return SlotInputs.IsValidIndex(SlotIndex) ? SlotInputs[SlotIndex] : FGameplayTag();
+}
+
+const UInputAction* UHadesQuickSlotComponent::GetSlotInputAction(int32 SlotIndex) const
+{
+	// The hero's input config is where tags meet input actions, so it's asked rather than keeping a copy here.
+	const AHadesHeroCharacter* Hero = Cast<AHadesHeroCharacter>(GetOwner());
+	const UHadesInputConfig* InputConfig = Hero ? Hero->GetInputConfig() : nullptr;
+	const FGameplayTag InputTag = GetSlotInputTag(SlotIndex);
+	return InputConfig && InputTag.IsValid() ? InputConfig->FindInputActionForTag(InputTag, false) : nullptr;
 }
 
 bool UHadesQuickSlotComponent::CanAssign(FInventoryItemHandle Item) const

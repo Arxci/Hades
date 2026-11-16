@@ -4,17 +4,34 @@
 
 #include "Hades/UI/Inventory/HadesInventoryScreen.h"
 
+#include "Actions/InventoryItemAction.h"
 #include "Widgets/InventoryItemMenuWidget.h"
 
 #include "HadesItemMenu.generated.h"
 
 class UCommonButtonBase;
-class UTextBlock;
+
+
+/** One of the inventory screen's item actions, such as Use or Store, for item menus and the screen's default actions. */
+UCLASS(meta = (DisplayName = "Hades Item Action"))
+class HADES_API UHadesItemAction : public UInventoryItemAction
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action")
+	EHadesItemAction Action = EHadesItemAction::Use;
+
+protected:
+	virtual bool CanRun_Implementation(const FInventoryItemActionContext& Context) const override;
+	virtual void Run_Implementation(const FInventoryItemActionContext& Context) override;
+};
 
 
 /**
- * What can be done with one item, opened beside it by the inventory screen. Each button only shows when its action can run,
- * and the screen's action hint says what the highlighted one does.
+ * What can be done with one item, opened beside it by the inventory screen. It lists the item actions of its Action Set and Actions.
+ * With neither, it lists every Hades item action on the button named for it, such as UseButton, so a menu laid out by hand works as is,
+ * and Discard asks first where the menu has a prompt. The screen's action hint says what the highlighted one does.
  */
 UCLASS(Abstract, Blueprintable)
 class HADES_API UHadesItemMenu : public UInventoryItemMenuWidget
@@ -24,24 +41,18 @@ class HADES_API UHadesItemMenu : public UInventoryItemMenuWidget
 public:
 	UHadesItemMenu(const FObjectInitializer& ObjectInitializer);
 
-	/** The screen whose item actions the buttons run. Set it before Set Item. */
-	void SetScreen(UHadesInventoryScreen* InScreen) { Screen = InScreen; }
-
 protected:
 	//~ Begin UUserWidget Interface
 	virtual void NativeOnInitialized() override;
 	//~ End UUserWidget Interface
 
 	//~ Begin UInventoryItemMenuWidget Interface
-	virtual void NativeOnItemChanged() override;
+	virtual void GatherActions(TArray<UInventoryItemAction*>& OutActions) const override;
 	//~ End UInventoryItemMenuWidget Interface
 
-	/** What each action does, shown for the highlighted button. */
+	/** What each built-in action does, shown for the highlighted button. */
 	UPROPERTY(EditDefaultsOnly, Category = "Item Menu")
 	TMap<EHadesItemAction, FText> Descriptions;
-
-	UPROPERTY(BlueprintReadOnly, Category = "Item Menu", meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> ItemNameText;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Item Menu", meta = (BindWidgetOptional))
 	TObjectPtr<UCommonButtonBase> ShortcutButton;
@@ -69,8 +80,8 @@ protected:
 
 private:
 	UCommonButtonBase* GetButton(EHadesItemAction Action) const;
-	void HandleButtonClicked(EHadesItemAction Action);
-	void ShowDescription(EHadesItemAction Action);
 
-	TWeakObjectPtr<UHadesInventoryScreen> Screen;
+	/** One per Hades item action, listed when the menu has no actions of its own. */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UHadesItemAction>> BuiltInActions;
 };

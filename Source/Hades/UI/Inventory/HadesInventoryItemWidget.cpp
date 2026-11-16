@@ -1,12 +1,12 @@
 ﻿#include "HadesInventoryItemWidget.h"
 
-#include "CommonActionWidget.h"
 #include "Components/TextBlock.h"
 #include "GameFramework/Pawn.h"
 
 #include "Hades/HadesGameplayTags.h"
 #include "Hades/Inventory/HadesInventoryComponent.h"
 #include "Hades/Inventory/HadesQuickSlotComponent.h"
+#include "Hades/UI/Foundation/HadesInputKeyWidget.h"
 
 #include "Data/InventoryItemDefinition.h"
 
@@ -79,17 +79,10 @@ void UHadesInventoryItemWidget::RefreshMarks()
 		Rounds = Capacity > 0 ? Inventory->GetLoadedRounds(GetItem()) : 0;
 	}
 
-	if (ShortcutKey)
+	if (ShortcutKeyWidget)
 	{
-		// The key's icon comes from the quick slot component, which a preview has none of.
-		if (SlotIndex != INDEX_NONE && Component)
-		{
-			ShortcutKey->SetInputAction(Component->GetSlotKey(SlotIndex));
-		}
-		else
-		{
-			ShortcutKey->SetInputActions(TArray<FDataTableRowHandle>());
-		}
+		// The slot's input action comes from the quick slot component, which a preview has none of.
+		ShortcutKeyWidget->SetInputAction(SlotIndex != INDEX_NONE && Component ? Component->GetSlotInputAction(SlotIndex) : nullptr);
 	}
 	if (ShortcutNumberText)
 	{

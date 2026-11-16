@@ -11,7 +11,7 @@
 #include "HadesQuickSlotWidget.generated.h"
 
 class APawn;
-class UCommonActionWidget;
+class UHadesInputKeyWidget;
 class UHadesQuickSlotComponent;
 class UInventoryItemWidget;
 class UTextBlock;
@@ -39,7 +39,7 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Quick Slot")
 	void OnInHandChanged(bool bIsInHand);
 
-	/** 0 is the first slot, bound to Input.QuickSlot.1. */
+	/** 0 is the first slot: the first of the quick slot component's Slot Inputs, Input.QuickSlot.1 by default. */
 	UPROPERTY(EditAnywhere, Category = "Quick Slot", meta = (ClampMin = "0"))
 	int32 SlotIndex = 0;
 
@@ -51,9 +51,9 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Quick Slot", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> NumberText;
 
-	/** The icon of the slot's key, from the quick slot component's Slot Keys. */
+	/** The key the player has bound to the slot, which follows rebinding. */
 	UPROPERTY(BlueprintReadOnly, Category = "Quick Slot", meta = (BindWidgetOptional))
-	TObjectPtr<UCommonActionWidget> KeyIcon;
+	TObjectPtr<UHadesInputKeyWidget> KeyWidget;
 
 	/** The rounds in a gun on the slot, colored by how full it is. Collapsed for anything else. */
 	UPROPERTY(BlueprintReadOnly, Category = "Quick Slot", meta = (BindWidgetOptional))

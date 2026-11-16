@@ -3,19 +3,28 @@
 #include "CoreMinimal.h"
 
 #include "CommonButtonBase.h"
-#include "Styling/SlateBrush.h"
 
 #include "HadesMenuButton.generated.h"
 
-class UCommonTextStyle;
 class UImage;
 class UTextBlock;
 class UTexture2D;
 
 
+/** Where a menu button's icon and label sit in the button, together. */
+UENUM(BlueprintType)
+enum class EHadesMenuButtonJustify : uint8
+{
+	Left,
+	Center,
+	Right
+};
+
+
 /**
- * A menu row with an icon on a round badge and a label, such as in the item menu. While hovered, or focused on a gamepad,
- * the badge, the icon's color and the label's style change; the row's own highlight comes from the button Style.
+ * A menu row with an icon and a label, such as in the item menu. The label takes the text style the button Style has for the button's
+ * state: normal, hovered, selected or disabled. While hovered, or focused on a gamepad, the icon's tint changes too.
+ * Put Icon, then Label, in a Horizontal Box, and that Horizontal Box in an Overlay at the root; Justification moves the Horizontal Box.
  */
 UCLASS(Abstract)
 class HADES_API UHadesMenuButton : public UCommonButtonBase
@@ -26,7 +35,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Menu Button")
 	void SetLabelText(const FText& InText);
 
-	/** None hides the icon and its badge. */
+	/** None hides the icon. */
 	UFUNCTION(BlueprintCallable, Category = "Menu Button")
 	void SetIconTexture(UTexture2D* InTexture);
 
@@ -39,16 +48,17 @@ protected:
 	//~ Begin UCommonButtonBase Interface
 	virtual void NativeOnHovered() override;
 	virtual void NativeOnUnhovered() override;
+	virtual void NativeOnCurrentTextStyleChanged() override;
 	//~ End UCommonButtonBase Interface
 
-	/** The round shape behind the icon. Gets Badge Brush, or Lit Badge Brush while the row is highlighted. */
-	UPROPERTY(BlueprintReadOnly, Category = "Menu Button", meta = (BindWidgetOptional))
-	TObjectPtr<UImage> Badge;
-
-	/** Shows Icon Texture at the designer's size, tinted Icon Color, or Lit Icon Color while the row is highlighted. */
+	/**
+	 * Shows Icon Texture at the Image Size set on it in the designer, or the size of a Size Box around it, tinted Icon Color, or Lit Icon
+	 * Color while the row is highlighted. Without a texture it collapses, with whatever holds it beside the label.
+	 */
 	UPROPERTY(BlueprintReadOnly, Category = "Menu Button", meta = (BindWidgetOptional))
 	TObjectPtr<UImage> Icon;
 
+	/** Shows Label Text in the button Style's text style for the button's state. Make it a Common Text, which text styles need. */
 	UPROPERTY(BlueprintReadOnly, Category = "Menu Button", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> Label;
 
@@ -58,27 +68,21 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Menu Button")
 	FText LabelText;
 
-	/** Left without an image, the badge keeps the brush set in the designer. */
-	UPROPERTY(EditAnywhere, Category = "Menu Button")
-	FSlateBrush BadgeBrush;
-
-	UPROPERTY(EditAnywhere, Category = "Menu Button")
-	FSlateBrush LitBadgeBrush;
-
 	UPROPERTY(EditAnywhere, Category = "Menu Button")
 	FLinearColor IconColor = FLinearColor::White;
 
 	UPROPERTY(EditAnywhere, Category = "Menu Button")
 	FLinearColor LitIconColor = FLinearColor::Black;
 
-	/** The label's style normally, such as light text on a dark menu. None keeps the label's own style. Needs a Common Text label. */
+	/** Where the icon and label sit in the button, together. A label that wraps lines up its lines the same way. */
 	UPROPERTY(EditAnywhere, Category = "Menu Button")
-	TSubclassOf<UCommonTextStyle> LabelStyle;
-
-	/** The label's style while the row is highlighted, such as dark text on a light row. Set Label Style too, or the label stays lit. */
-	UPROPERTY(EditAnywhere, Category = "Menu Button")
-	TSubclassOf<UCommonTextStyle> LitLabelStyle;
+	EHadesMenuButtonJustify Justification = EHadesMenuButtonJustify::Left;
 
 private:
 	void SetLit(bool bInLit);
+	void ApplyTextStyle();
+	void ApplyJustification();
+
+	/** The widget beside the label that holds the icon, such as a Size Box around it, or the icon itself. */
+	UWidget* FindIconInRow() const;
 };

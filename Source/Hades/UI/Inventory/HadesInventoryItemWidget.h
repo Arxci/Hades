@@ -6,7 +6,7 @@
 
 #include "HadesInventoryItemWidget.generated.h"
 
-class UCommonActionWidget;
+class UHadesInputKeyWidget;
 class UHadesQuickSlotComponent;
 class UTextBlock;
 
@@ -49,9 +49,9 @@ protected:
 	virtual void NativeOnItemChanged() override;
 	//~ End UInventoryItemWidget Interface
 
-	/** The icon of the shortcut's key, from the quick slot component's Slot Keys. It hides itself while the item has no shortcut. */
+	/** The key the player has bound to the item's shortcut, which follows rebinding. It collapses itself while the item has no shortcut. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
-	TObjectPtr<UCommonActionWidget> ShortcutKey;
+	TObjectPtr<UHadesInputKeyWidget> ShortcutKeyWidget;
 
 	/** The number of the shortcut the item is on, 1 for the first, such as on a badge in the corner. Collapsed while it has none. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))

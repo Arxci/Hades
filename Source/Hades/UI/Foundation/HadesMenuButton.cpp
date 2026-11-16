@@ -1,7 +1,11 @@
 ﻿#include "HadesMenuButton.h"
 
 #include "CommonTextBlock.h"
+#include "Components/BorderSlot.h"
+#include "Components/ButtonSlot.h"
 #include "Components/Image.h"
+#include "Components/OverlaySlot.h"
+#include "Components/PanelWidget.h"
 #include "Components/TextBlock.h"
 #include "Engine/Texture2D.h"
 
@@ -23,15 +27,28 @@ void UHadesMenuButton::SetIconTexture(UTexture2D* InTexture)
 		Icon->SetBrushFromTexture(IconTexture, /*bMatchSize*/ false);
 	}
 
-	const ESlateVisibility NewVisiblity = IconTexture ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed;
+	// What holds the icon beside the label, such as a Size Box, hides with it, so its space and padding go too and the label isn't pushed over.
+	const ESlateVisibility Shown = IconTexture ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed;
 	if (Icon)
 	{
-		Icon->SetVisibility(NewVisiblity);
+		Icon->SetVisibility(Shown);
 	}
-	if (Badge)
+	UWidget* IconInRow = FindIconInRow();
+	if (IconInRow && IconInRow != Icon)
 	{
-		Badge->SetVisibility(NewVisiblity);
+		IconInRow->SetVisibility(Shown);
 	}
+}
+
+UWidget* UHadesMenuButton::FindIconInRow() const
+{
+	const UPanelWidget* Row = Label ? Label->GetParent() : nullptr;
+	UWidget* InRow = Icon;
+	while (InRow && Row && InRow->GetParent() != Row)
+	{
+		InRow = InRow->GetParent();
+	}
+	return InRow ? InRow : Icon.Get();
 }
 
 void UHadesMenuButton::NativePreConstruct()
@@ -41,6 +58,8 @@ void UHadesMenuButton::NativePreConstruct()
 	SetLabelText(LabelText);
 	SetIconTexture(IconTexture);
 	SetLit(false);
+	ApplyTextStyle();
+	ApplyJustification();
 }
 
 void UHadesMenuButton::NativeConstruct()
@@ -49,6 +68,8 @@ void UHadesMenuButton::NativeConstruct()
 
 	// Menus are reused, and a row can be left lit when its menu closed under the mouse.
 	SetLit(false);
+	ApplyTextStyle();
+	ApplyJustification();
 }
 
 void UHadesMenuButton::NativeOnHovered()
@@ -65,22 +86,57 @@ void UHadesMenuButton::NativeOnUnhovered()
 	SetLit(false);
 }
 
+void UHadesMenuButton::NativeOnCurrentTextStyleChanged()
+{
+	Super::NativeOnCurrentTextStyleChanged();
+
+	ApplyTextStyle();
+}
+
 void UHadesMenuButton::SetLit(bool bInLit)
 {
-	const FSlateBrush& BadgeLook = bInLit ? LitBadgeBrush : BadgeBrush;
-	if (Badge && BadgeLook.GetResourceObject())
-	{
-		Badge->SetBrush(BadgeLook);
-	}
 	if (Icon)
 	{
 		Icon->SetColorAndOpacity(bInLit ? LitIconColor : IconColor);
 	}
+}
 
-	const TSubclassOf<UCommonTextStyle> LabelLook = bInLit ? LitLabelStyle : LabelStyle;
+void UHadesMenuButton::ApplyTextStyle()
+{
+	// As Common Bound Action Button does for its label. A button Style without text styles leaves the label as it is in the designer.
 	UCommonTextBlock* CommonLabel = Cast<UCommonTextBlock>(Label);
-	if (CommonLabel && LabelLook)
+	const TSubclassOf<UCommonTextStyle> TextStyle = GetCurrentTextStyleClass();
+	if (CommonLabel && TextStyle)
 	{
-		CommonLabel->SetStyle(LabelLook);
+		CommonLabel->SetStyle(TextStyle);
+	}
+}
+
+void UHadesMenuButton::ApplyJustification()
+{
+	const EHorizontalAlignment RowAlignment = Justification == EHadesMenuButtonJustify::Center ? HAlign_Center
+		: Justification == EHadesMenuButtonJustify::Right ? HAlign_Right
+		: HAlign_Left;
+	if (Label)
+	{
+		Label->SetJustification(Justification == EHadesMenuButtonJustify::Center ? ETextJustify::Center
+			: Justification == EHadesMenuButtonJustify::Right ? ETextJustify::Right
+			: ETextJustify::Left);
+	}
+
+	// The Horizontal Box holding the icon and label moves as one: in an Overlay or a Border, or in the button itself when it's the root.
+	const UWidget* Row = Label ? Label->GetParent() : Icon ? Icon->GetParent() : nullptr;
+	UPanelSlot* RowSlot = Row ? Row->Slot.Get() : nullptr;
+	if (UOverlaySlot* InOverlay = Cast<UOverlaySlot>(RowSlot))
+	{
+		InOverlay->SetHorizontalAlignment(RowAlignment);
+	}
+	else if (UBorderSlot* InBorder = Cast<UBorderSlot>(RowSlot))
+	{
+		InBorder->SetHorizontalAlignment(RowAlignment);
+	}
+	else if (UButtonSlot* InButton = Cast<UButtonSlot>(RowSlot))
+	{
+		InButton->SetHorizontalAlignment(RowAlignment);
 	}
 }

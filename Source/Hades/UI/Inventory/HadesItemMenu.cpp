@@ -1,15 +1,50 @@
 ﻿#include "HadesItemMenu.h"
 
 #include "CommonButtonBase.h"
-#include "Components/TextBlock.h"
-
-#include "Data/InventoryItemDefinition.h"
-#include "InventorySubsystem.h"
 
 #define LOCTEXT_NAMESPACE "HadesItemMenu"
 
+namespace
+{
+	FText GetActionName(EHadesItemAction Action)
+	{
+		switch (Action)
+		{
+		case EHadesItemAction::Shortcut: return LOCTEXT("ShortcutName", "Shortcut");
+		case EHadesItemAction::Use:      return LOCTEXT("UseName", "Use");
+		case EHadesItemAction::Equip:    return LOCTEXT("EquipName", "Equip");
+		case EHadesItemAction::Unequip:  return LOCTEXT("UnequipName", "Unequip");
+		case EHadesItemAction::Combine:  return LOCTEXT("CombineName", "Combine");
+		case EHadesItemAction::Discard:  return LOCTEXT("DiscardName", "Discard");
+		case EHadesItemAction::Store:    return LOCTEXT("StoreName", "Store");
+		case EHadesItemAction::Take:     return LOCTEXT("TakeName", "Take");
+		}
+		return FText::GetEmpty();
+	}
+}
+
+// Action
+bool UHadesItemAction::CanRun_Implementation(const FInventoryItemActionContext& Context) const
+{
+	const UHadesInventoryScreen* InventoryScreen = Cast<UHadesInventoryScreen>(Context.Screen);
+	return InventoryScreen && InventoryScreen->CanRunItemAction(Action, Context.Item);
+}
+
+void UHadesItemAction::Run_Implementation(const FInventoryItemActionContext& Context)
+{
+	if (UHadesInventoryScreen* InventoryScreen = Cast<UHadesInventoryScreen>(Context.Screen))
+	{
+		InventoryScreen->RunItemAction(Action, Context.Item);
+	}
+}
+
+// Menu
 UHadesItemMenu::UHadesItemMenu(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
+	// A click outside the menu only closes it. A right-click on another item opens that item's menu instead.
+	LeftPressOutside = EInventoryMenuOutsidePress::Close;
+	RightPressOutside = EInventoryMenuOutsidePress::PassThrough;
+
 	Descriptions.Add(EHadesItemAction::Shortcut, LOCTEXT("ShortcutDescription", "Put the item on a shortcut key."));
 	Descriptions.Add(EHadesItemAction::Use, LOCTEXT("UseDescription", "Use the item."));
 	Descriptions.Add(EHadesItemAction::Equip, LOCTEXT("EquipDescription", "Hold the item in your hands."));
@@ -24,45 +59,34 @@ void UHadesItemMenu::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 
-	// Gamepad focus moves Common UI's hidden cursor onto the button, so hovering covers both.
-	for (const EHadesItemAction Action : TEnumRange<EHadesItemAction>())
+	// Every Hades action, each on the button placed for it. Without one, a button is made in Action Panel, if the menu has one.
+	for (const EHadesItemAction Each : TEnumRange<EHadesItemAction>())
 	{
-		if (UCommonButtonBase* Button = GetButton(Action))
+		UHadesItemAction* BuiltIn = NewObject<UHadesItemAction>(this);
+		BuiltIn->Action = Each;
+		BuiltIn->DisplayName = GetActionName(Each);
+		BuiltIn->Description = Descriptions.FindRef(Each);
+		const UCommonButtonBase* Button = GetButton(Each);
+		BuiltIn->ButtonName = Button ? Button->GetFName() : NAME_None;
+		if (Each == EHadesItemAction::Discard)
 		{
-			Button->OnClicked().AddUObject(this, &ThisClass::HandleButtonClicked, Action);
-			Button->OnHovered().AddUObject(this, &ThisClass::ShowDescription, Action);
+			BuiltIn->Prompt = EInventoryActionPrompt::Confirm;
+			BuiltIn->PromptText = LOCTEXT("DiscardPrompt", "Discard {Item}?");
 		}
+		BuiltInActions.Add(BuiltIn);
 	}
 }
 
-void UHadesItemMenu::NativeOnItemChanged()
+void UHadesItemMenu::GatherActions(TArray<UInventoryItemAction*>& OutActions) const
 {
-	Super::NativeOnItemChanged();
+	Super::GatherActions(OutActions);
 
-	const UHadesInventoryScreen* InventoryScreen = Screen.Get();
-	TOptional<EHadesItemAction> FirstAction;
-	for (const EHadesItemAction Action : TEnumRange<EHadesItemAction>())
+	if (OutActions.IsEmpty())
 	{
-		if (UCommonButtonBase* Button = GetButton(Action))
+		for (UHadesItemAction* BuiltIn : BuiltInActions)
 		{
-			const bool bCanRun = InventoryScreen && InventoryScreen->CanRunItemAction(Action, GetItem());
-			Button->SetVisibility(bCanRun ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
-			if (bCanRun && !FirstAction.IsSet())
-			{
-				FirstAction = Action;
-			}
+			OutActions.Add(BuiltIn);
 		}
-	}
-	if (FirstAction.IsSet())
-	{
-		ShowDescription(FirstAction.GetValue());
-	}
-
-	const UInventorySubsystem* Subsystem = UInventorySubsystem::Get(this);
-	const UInventoryItemDefinition* Definition = Subsystem ? Subsystem->GetItemDefinition(GetItem()) : nullptr;
-	if (ItemNameText)
-	{
-		ItemNameText->SetText(Definition ? Definition->DisplayName : FText::GetEmpty());
 	}
 }
 
@@ -80,25 +104,6 @@ UCommonButtonBase* UHadesItemMenu::GetButton(EHadesItemAction Action) const
 	case EHadesItemAction::Take:     return TakeButton;
 	}
 	return nullptr;
-}
-
-void UHadesItemMenu::HandleButtonClicked(EHadesItemAction Action)
-{
-	// Closed first, so the screen has focus again for whatever the action starts, like choosing an item to combine with.
-	DeactivateWidget();
-
-	if (UHadesInventoryScreen* InventoryScreen = Screen.Get())
-	{
-		InventoryScreen->RunItemAction(Action, GetItem());
-	}
-}
-
-void UHadesItemMenu::ShowDescription(EHadesItemAction Action)
-{
-	if (UHadesInventoryScreen* InventoryScreen = Screen.Get())
-	{
-		InventoryScreen->ShowActionHint(Descriptions.FindRef(Action));
-	}
 }
 
 #undef LOCTEXT_NAMESPACE

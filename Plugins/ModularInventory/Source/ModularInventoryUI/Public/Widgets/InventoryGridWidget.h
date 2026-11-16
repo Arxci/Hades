@@ -53,6 +53,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory|Grid")
 	UInventoryItemWidget* GetItemWidget(FInventoryItemHandle Item) const;
 
+	/**
+	 * Where the cells are, in absolute (desktop) space as last drawn: from the first cell's top-left corner to the last cell's bottom-right,
+	 * whatever size the grid is stretched to. Not valid before the grid is built and drawn.
+	 */
+	FBox2D GetCellsAbsoluteBox() const;
+
 protected:
 	//~ Begin UUserWidget Interface
 	virtual void NativePreConstruct() override;

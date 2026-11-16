@@ -12,9 +12,13 @@
 #include "InventoryScreenWidget.generated.h"
 
 class UInventoryGridWidget;
+class UInventoryItemAction;
+class UInventoryItemActionSet;
 class UInventoryItemWidget;
 class UInventoryUISubsystem;
 class USoundBase;
+class UTextBlock;
+struct FInventoryItemActionContext;
 struct FUIInputConfig;
 enum class ECommonInputType : uint8;
 
@@ -64,6 +68,25 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Screen")
 	void AimAtStart();
 
+	/**
+	 * Says what the highlighted option of an open menu does, in Action Hint Text. Empty gives the screen its own hint back: what to do with
+	 * the held item, why it can't go where it's aimed, what to choose, or Idle Hint. Item menus call it for their actions.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Screen")
+	void ShowActionHint(const FText& Hint);
+
+	/** The hint Action Hint Text shows now. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Screen")
+	FText GetActionHint() const { return ShownHint; }
+
+	/** Runs an item action for an item on this screen if it can run, such as from a button of your own. It doesn't prompt. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Screen")
+	bool RunAction(UInventoryItemAction* Action, FInventoryItemHandle Item, int32 Count = 0);
+
+	/** Runs the first of Default Actions that can run for the item, as a press set to Default Action does. False when none can. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Screen")
+	bool RunDefaultAction(FInventoryItemHandle Item);
+
 protected:
 	//~ Begin UUserWidget Interface
 	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
@@ -90,13 +113,52 @@ protected:
 	virtual void NativeOnItemMenuRequested(FInventoryItemHandle Item) {}
 
 	/**
-	 * An item asked for its menu: clicked with Click Opens Item Menu on, right-clicked, or passed to Request Context. Open your item menu
-	 * here, such as an Inventory Item Menu Widget pushed onto a modal layer, then given the item and its Find Item Widget.
+	 * An item asked for its menu: pressed as the style's Left Click, Right Click or Accept says, with the Item Menu action, or passed to
+	 * Request Context. Open your item menu here, such as an Inventory Item Menu Widget pushed onto a modal layer, then given the item and
+	 * its Find Item Widget.
 	 */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Screen")
 	void OnItemMenuRequested(FInventoryItemHandle Item);
 
+	/** The action hint changed, such as to animate it. After Action Hint Text shows it. */
+	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Screen")
+	void OnActionHintChanged(const FText& Hint);
+
 	UInventoryUISubsystem* GetInteraction() const;
+
+	/**
+	 * What a press set to Default Action runs, such as a double-click: the first of these that can run for the item, such as Use, then
+	 * Equip. It doesn't prompt; a count is the one a prompt would start at.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Screen")
+	TObjectPtr<UInventoryItemActionSet> DefaultActions;
+
+	/** Shows what to do now, or what a menu option does, and is hidden while there's nothing to say. Put Action Hint Text inside it. */
+	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Screen|Hints", meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> ActionHint;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Screen|Hints", meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> ActionHintText;
+
+	/** The hint while an item is held. */
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Screen|Hints")
+	FText MoveHint;
+
+	/** The hint while the held item is aimed where it can't go, by why it can't. Reasons not listed use Invalid Hint. */
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Screen|Hints")
+	TMap<EInventoryError, FText> InvalidHints;
+
+	/** The hint while the held item is aimed where it can't go, for reasons not in Invalid Hints. Empty keeps Move Hint. */
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Screen|Hints")
+	FText InvalidHint;
+
+	/** The hint while an item is being chosen for another, such as to combine them. */
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Screen|Hints")
+	FText ChooseHint;
+
+	/** The hint the rest of the time. Empty hides the hint. */
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Screen|Hints")
+	FText IdleHint;
 
 	/** How items are handled while this screen is active. The style from before comes back when it closes. */
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Screen")
@@ -132,9 +194,16 @@ protected:
 	bool bGameKeepsInput = false;
 
 	// Rows of a UI input action table, so a Common Bound Action Bar shows them with their keys. Each is optional.
-	/** Picks up the item under the cursor or focus, or puts the held item down where it's aimed. How keys pick items up when clicks open item menus. */
+	/** Picks up the item under the cursor or focus, or puts the held item down where it's aimed. How keys pick items up when Accept opens item menus. */
 	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
 	FDataTableRowHandle MoveAction;
+
+	/**
+	 * Opens the menu of the item under the cursor or focus, while nothing is held, such as a gamepad face button or the keyboard's Menu key.
+	 * How gamepads and keys reach item menus when Accept picks items up.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
+	FDataTableRowHandle ItemMenuAction;
 
 	/** Turns the held item, while it can turn and still fit. */
 	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
@@ -173,6 +242,17 @@ private:
 	UFUNCTION()
 	void HandleHoldEvent(EInventoryHoldEvent Event);
 
+	UFUNCTION()
+	void HandleSelectedItemChanged(FInventoryItemHandle Item);
+
+	UFUNCTION()
+	void HandleDefaultActionRequested(FInventoryItemHandle Item);
+
+	FInventoryItemActionContext MakeActionContext(FInventoryItemHandle Item) const;
+
+	/** Shows the menu's hint while there is one, or else what to do now, in Action Hint Text. */
+	void RefreshActionHint();
+
 	void PlayInventorySound(USoundBase* Sound) const;
 
 	void HandleInputMethodChanged(ECommonInputType InputType);
@@ -182,6 +262,7 @@ private:
 
 	void HandleConfirmAction();
 	void HandleMoveAction();
+	void HandleItemMenuAction();
 	void HandleRotateAction();
 	void HandleSplitAction();
 	void HandleTransferAction();
@@ -200,9 +281,16 @@ private:
 	/** Aim At Start is hovering the item the screen starts on, which plays no hover sound. */
 	bool bAimingAtStart = false;
 
+	/** What an open menu's highlighted option does, from Show Action Hint. */
+	FText MenuHint;
+
+	/** What Action Hint Text shows now. */
+	FText ShownHint;
+
 	FUIActionBindingHandle ConfirmHandle;
 	FUIActionBindingHandle ConfirmShownHandle;
 	FUIActionBindingHandle MoveHandle;
+	FUIActionBindingHandle ItemMenuHandle;
 	FUIActionBindingHandle RotateHandle;
 	FUIActionBindingHandle SplitHandle;
 	FUIActionBindingHandle TransferHandle;

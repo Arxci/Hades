@@ -60,6 +60,7 @@ void UInventoryItemWidget::NativeDestruct()
 	InventoryWidgets::CancelLoad(IconHandle);
 	InventoryWidgets::CancelLoad(IconShadowHandle);
 	ShownDefinition.Reset();
+	StopLongPress();
 
 	Super::NativeDestruct();
 }
@@ -415,21 +416,18 @@ FReply UInventoryItemWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
 
 	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
 	{
+		// A touch is a left press too, and held long enough, it's a long press.
 		bPressed = true;
+		bLongPressed = false;
+		if (InMouseEvent.IsTouchEvent())
+		{
+			StartLongPress(InMouseEvent);
+		}
 		return FReply::Handled().DetectDrag(TakeWidget(), EKeys::LeftMouseButton);
 	}
 	if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton)
 	{
-		// While an item is held, the style can make a right-click put it back or turn it instead. The screen does that, anywhere on it.
-		// The style can also leave item menus to clicks, so a right-click does nothing here.
-		UInventoryUISubsystem* Interaction = GetInteraction();
-		const bool bHeldRightClick = Interaction && Interaction->IsHolding() && Interaction->GetStyle().HeldRightClick != EInventoryHeldRightClick::AsUsual;
-		if (bHeldRightClick || (Interaction && !Interaction->GetStyle().bRightClickOpensItemMenu))
-		{
-			return FReply::Unhandled();
-		}
-		RequestItemMenu();
-		return FReply::Handled();
+		return RightClick(InMouseEvent) ? FReply::Handled() : FReply::Unhandled();
 	}
 	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
 }
@@ -441,6 +439,7 @@ FReply UInventoryItemWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, 
 	// was put back with a right-click.
 	if (!bDragVisual && InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
 	{
+		StopLongPress();
 		if (bPressed)
 		{
 			bPressed = false;
@@ -449,6 +448,37 @@ FReply UInventoryItemWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, 
 		return FReply::Handled();
 	}
 	return Super::NativeOnMouseButtonUp(InGeometry, InMouseEvent);
+}
+
+FReply UInventoryItemWidget::NativeOnMouseButtonDoubleClick(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	if (!bDragVisual && InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && DoubleClick(InMouseEvent))
+	{
+		return FReply::Handled();
+	}
+
+	// Otherwise the second click is a press like the first.
+	return NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+}
+
+bool UInventoryItemWidget::DoubleClick(const FPointerEvent& MouseEvent)
+{
+	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
+	UInventoryUISubsystem* Interaction = GetInteraction();
+	const EInventoryItemPress Press = Interaction ? Interaction->GetStyle().DoubleClick : EInventoryItemPress::None;
+	if (bDragVisual || !Inventory || !Interaction || !Item.IsSet() || Press == EInventoryItemPress::None)
+	{
+		return false;
+	}
+
+	// The first click may have picked the item up, as Left Click says. The double-click is what was meant, so that's undone first.
+	bPressed = false;
+	if (Interaction->GetHeldItem() == Item)
+	{
+		Interaction->CancelHold();
+	}
+	Interaction->PressPlacement(Inventory->GetItemContainer(Item), GetPlacementAt(MouseEvent.GetScreenSpacePosition()), Press);
+	return true;
 }
 
 void UInventoryItemWidget::Click(const FPointerEvent& MouseEvent)
@@ -467,8 +497,32 @@ void UInventoryItemWidget::Click(const FPointerEvent& MouseEvent)
 	}
 	else
 	{
-		Interaction->ActivatePlacement(Inventory->GetItemContainer(Item), GetPlacementAt(MouseEvent.GetScreenSpacePosition()));
+		Interaction->PressPlacement(Inventory->GetItemContainer(Item), GetPlacementAt(MouseEvent.GetScreenSpacePosition()), Interaction->GetStyle().LeftClick);
 	}
+}
+
+bool UInventoryItemWidget::RightClick(const FPointerEvent& MouseEvent)
+{
+	// While an item is held, the style can make a right-click put it back or turn it instead. The screen does that, anywhere on it.
+	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
+	UInventoryUISubsystem* Interaction = GetInteraction();
+	if (bDragVisual || !Inventory || !Interaction || (Interaction->IsHolding() && Interaction->GetStyle().HeldRightClick != EInventoryHeldRightClick::AsUsual))
+	{
+		return false;
+	}
+
+	switch (Interaction->GetStyle().RightClick)
+	{
+	case EInventoryItemPress::OpenItemMenu:
+		RequestItemMenu();
+		return true;
+	case EInventoryItemPress::PickUp:
+		Interaction->PressPlacement(Inventory->GetItemContainer(Item), GetPlacementAt(MouseEvent.GetScreenSpacePosition()), EInventoryItemPress::PickUp);
+		return true;
+	case EInventoryItemPress::None:
+		break;
+	}
+	return false;
 }
 
 void UInventoryItemWidget::RequestItemMenu()
@@ -508,6 +562,7 @@ void UInventoryItemWidget::NativeOnMouseLeave(const FPointerEvent& InMouseEvent)
 {
 	Super::NativeOnMouseLeave(InMouseEvent);
 	bPressed = false;
+	StopLongPress();
 
 	// Only the mouse moving off ends the hover, and with Keep Last Hovered Item, only reaching another item does. A menu opening over
 	// the item doesn't, and on a gamepad the focused cell decides, not the hidden cursor Common UI moves along with focus.
@@ -525,7 +580,55 @@ void UInventoryItemWidget::NativeOnMouseLeave(const FPointerEvent& InMouseEvent)
 void UInventoryItemWidget::NativeOnDragDetected(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent, UDragDropOperation*& OutOperation)
 {
 	bPressed = false;
+	StopLongPress();
+
+	// The finger already did a long press, such as opening the item's menu, so moving it now picks nothing up.
+	if (bLongPressed)
+	{
+		bLongPressed = false;
+		return;
+	}
 	OutOperation = BeginMouseDrag(InMouseEvent);
+}
+
+void UInventoryItemWidget::StartLongPress(const FPointerEvent& TouchEvent)
+{
+	StopLongPress();
+	const UInventoryUISubsystem* Interaction = GetInteraction();
+	if (bDragVisual || !Interaction || Interaction->GetStyle().LongPress == EInventoryItemPress::None)
+	{
+		return;
+	}
+
+	const FVector2D Position = TouchEvent.GetScreenSpacePosition();
+	const float Delay = FMath::Max(0.1f, Interaction->GetStyle().LongPressTime);
+	LongPressHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateWeakLambda(this, [this, Position](float)
+	{
+		LongPressHandle = FTSTicker::FDelegateHandle();
+		HandleLongPress(Position);
+		return false;
+	}), Delay);
+}
+
+void UInventoryItemWidget::StopLongPress()
+{
+	FTSTicker::GetCoreTicker().RemoveTicker(LongPressHandle);
+	LongPressHandle = FTSTicker::FDelegateHandle();
+}
+
+void UInventoryItemWidget::HandleLongPress(const FVector2D& ScreenPosition)
+{
+	// Only while the finger is still on the item and hasn't started a drag.
+	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
+	UInventoryUISubsystem* Interaction = GetInteraction();
+	if (!bPressed || !Inventory || !Interaction || !Item.IsSet())
+	{
+		return;
+	}
+
+	bPressed = false;
+	bLongPressed = true;
+	Interaction->PressPlacement(Inventory->GetItemContainer(Item), GetPlacementAt(ScreenPosition), Interaction->GetStyle().LongPress);
 }
 
 UInventoryDragDropOperation* UInventoryItemWidget::BeginMouseDrag(const FPointerEvent& MouseEvent)

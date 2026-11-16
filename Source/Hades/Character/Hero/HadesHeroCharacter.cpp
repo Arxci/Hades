@@ -136,10 +136,10 @@ void AHadesHeroCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInput
 	HadesInput->BindActionByTag(InputConfig, HadesGameplayTags::Input_Interact, ETriggerEvent::Started, InteractorComponent.Get(), &UHadesInteractorComponent::StartInteraction);
 	HadesInput->BindActionByTag(InputConfig, HadesGameplayTags::Input_Interact, ETriggerEvent::Completed, InteractorComponent.Get(), &UHadesInteractorComponent::StopInteraction);
 
-	const TArray<FGameplayTag> QuickSlotInputs = { HadesGameplayTags::Input_QuickSlot_1, HadesGameplayTags::Input_QuickSlot_2, HadesGameplayTags::Input_QuickSlot_3, HadesGameplayTags::Input_QuickSlot_4 };
-	for (int32 SlotIndex = 0; SlotIndex < QuickSlotInputs.Num(); ++SlotIndex)
+	// Each slot's input, as the quick slot component lists them, so the slots and their bindings can't disagree.
+	for (int32 SlotIndex = 0; QuickSlotComponent && SlotIndex < QuickSlotComponent->GetNumSlots(); ++SlotIndex)
 	{
-		if (const UInputAction* QuickSlotAction = InputConfig->FindInputActionForTag(QuickSlotInputs[SlotIndex], false))
+		if (const UInputAction* QuickSlotAction = InputConfig->FindInputActionForTag(QuickSlotComponent->GetSlotInputTag(SlotIndex)))
 		{
 			HadesInput->BindAction(QuickSlotAction, ETriggerEvent::Started, QuickSlotComponent.Get(), &UHadesQuickSlotComponent::ActivateSlot, SlotIndex);
 		}

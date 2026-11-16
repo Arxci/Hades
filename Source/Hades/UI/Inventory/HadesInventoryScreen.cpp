@@ -27,9 +27,11 @@
 
 UHadesInventoryScreen::UHadesInventoryScreen(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
-	// Plays like the RE games.
-	InteractionStyle.bClickOpensItemMenu = true;
-	InteractionStyle.bRightClickOpensItemMenu = false;
+	// Plays like the RE games: Accept opens an item's menu, and a drag or Move picks it up. With the mouse, a right-click opens the menu,
+	// as on a desktop, and a left click does nothing, so items are only moved on purpose.
+	InteractionStyle.LeftClick = EInventoryItemPress::None;
+	InteractionStyle.RightClick = EInventoryItemPress::OpenItemMenu;
+	InteractionStyle.Accept = EInventoryItemPress::OpenItemMenu;
 	InteractionStyle.bSnapHeldItem = true;
 	InteractionStyle.bSwapPicksUpOther = true;
 	InteractionStyle.bKeepLastHoveredItem = true;
@@ -39,7 +41,7 @@ UHadesInventoryScreen::UHadesInventoryScreen(const FObjectInitializer& ObjectIni
 	bStartOnLastItem = true;
 
 	MoveHint = LOCTEXT("MoveHint", "Select an area to place this item.");
-	CombineHint = LOCTEXT("CombineHint", "Select an item to combine with.");
+	ChooseHint = LOCTEXT("CombineHint", "Select an item to combine with.");
 	InvalidHint = LOCTEXT("InvalidHint", "That can't go there.");
 	InvalidHints.Add(EInventoryError::Occupied, LOCTEXT("OccupiedHint", "Something's in the way."));
 	InvalidHints.Add(EInventoryError::OutOfBounds, LOCTEXT("OutOfBoundsHint", "That space can't be used yet."));
@@ -79,15 +81,12 @@ void UHadesInventoryScreen::NativeOnActivated()
 	if (UInventoryUISubsystem* Interaction = GetInteraction())
 	{
 		Interaction->OnItemChosen.AddUniqueDynamic(this, &ThisClass::HandleItemChosen);
-		Interaction->OnHeldItemChanged.AddUniqueDynamic(this, &ThisClass::HandleHeldItemChanged);
-		Interaction->OnTargetChanged.AddUniqueDynamic(this, &ThisClass::HandleTargetChanged);
 	}
 	if (ItemBoxList)
 	{
 		ItemBoxList->SetContainer(GetItemBox());
 	}
 	SetPage(ItemsPage);
-	RefreshActionHint();
 }
 
 void UHadesInventoryScreen::NativeOnDeactivated()
@@ -95,8 +94,6 @@ void UHadesInventoryScreen::NativeOnDeactivated()
 	if (UInventoryUISubsystem* Interaction = GetInteraction())
 	{
 		Interaction->OnItemChosen.RemoveDynamic(this, &ThisClass::HandleItemChosen);
-		Interaction->OnHeldItemChanged.RemoveDynamic(this, &ThisClass::HandleHeldItemChanged);
-		Interaction->OnTargetChanged.RemoveDynamic(this, &ThisClass::HandleTargetChanged);
 	}
 	if (AHadesPlayerController* Controller = Cast<AHadesPlayerController>(GetOwningPlayer()))
 	{
@@ -104,14 +101,6 @@ void UHadesInventoryScreen::NativeOnDeactivated()
 	}
 
 	Super::NativeOnDeactivated();
-}
-
-bool UHadesInventoryScreen::NativeOnHandleBackAction()
-{
-	// Back may stop the choosing, and the hint only follows the held item by itself.
-	const bool bHandled = Super::NativeOnHandleBackAction();
-	RefreshActionHint();
-	return bHandled;
 }
 
 // Item actions
@@ -171,7 +160,6 @@ void UHadesInventoryScreen::RunItemAction(EHadesItemAction Action, FInventoryIte
 		break;
 	case EHadesItemAction::Combine:
 		Interaction->BeginChoosingItem(Item);
-		RefreshActionHint();
 		break;
 	case EHadesItemAction::Discard:
 		Inventory->DiscardItem(Item);
@@ -212,15 +200,12 @@ void UHadesInventoryScreen::OpenItemMenu(FInventoryItemHandle Item)
 		return;
 	}
 
-	UHadesItemMenu* Menu = Layout->PushWidgetToLayerStack<UHadesItemMenu>(HadesGameplayTags::UI_Layer_Modal, ItemMenuClass.Get(), [this, Item](UHadesItemMenu& NewMenu)
+	// The menu shows its actions' descriptions in this screen's action hint, and gives the hint back as it closes.
+	Layout->PushWidgetToLayerStack<UHadesItemMenu>(HadesGameplayTags::UI_Layer_Modal, ItemMenuClass.Get(), [this, Item](UHadesItemMenu& NewMenu)
 	{
 		NewMenu.SetScreen(this);
 		NewMenu.SetItem(Item, FindItemWidget(Item));
 	});
-	if (Menu && !Menu->OnDeactivated().IsBoundToObject(this))
-	{
-		Menu->OnDeactivated().AddUObject(this, &ThisClass::HandleMenuClosed);
-	}
 }
 
 void UHadesInventoryScreen::OpenShortcutMenu(FInventoryItemHandle Item)
@@ -231,55 +216,15 @@ void UHadesInventoryScreen::OpenShortcutMenu(FInventoryItemHandle Item)
 		return;
 	}
 
-	UHadesShortcutMenu* Menu = Layout->PushWidgetToLayerStack<UHadesShortcutMenu>(HadesGameplayTags::UI_Layer_Modal, ShortcutMenuClass.Get(), [this, Item](UHadesShortcutMenu& NewMenu)
+	Layout->PushWidgetToLayerStack<UHadesShortcutMenu>(HadesGameplayTags::UI_Layer_Modal, ShortcutMenuClass.Get(), [this, Item](UHadesShortcutMenu& NewMenu)
 	{
+		NewMenu.SetScreen(this);
 		NewMenu.SetItem(Item, FindItemWidget(Item));
 	});
-	if (Menu && !Menu->OnDeactivated().IsBoundToObject(this))
-	{
-		Menu->OnDeactivated().AddUObject(this, &ThisClass::HandleMenuClosed);
-	}
-}
-
-void UHadesInventoryScreen::HandleMenuClosed()
-{
-	ShowActionHint(FText::GetEmpty());
-}
-
-void UHadesInventoryScreen::ShowActionHint(const FText& Hint)
-{
-	MenuHint = Hint;
-	RefreshActionHint();
-}
-
-void UHadesInventoryScreen::RefreshActionHint()
-{
-	const UInventoryUISubsystem* Interaction = GetInteraction();
-	const bool bHolding = Interaction && Interaction->IsHolding();
-	const bool bAimedAtInvalid = bHolding && Interaction->GetTargetAction() == EInventoryDropAction::Invalid;
-	const FText* InvalidReason = bAimedAtInvalid ? InvalidHints.Find(Interaction->GetTargetError()) : nullptr;
-	const FText& Hint = !MenuHint.IsEmpty() ? MenuHint
-		: InvalidReason ? *InvalidReason
-		: bAimedAtInvalid && !InvalidHint.IsEmpty() ? InvalidHint
-		: bHolding ? MoveHint
-		: Interaction && Interaction->IsChoosingItem() ? CombineHint
-		: IdleHint;
-
-	if (ActionHintText)
-	{
-		ActionHintText->SetText(Hint);
-	}
-	if (ActionHint)
-	{
-		// Hidden, not collapsed, so the page above doesn't move.
-		ActionHint->SetVisibility(Hint.IsEmpty() ? ESlateVisibility::Hidden : ESlateVisibility::HitTestInvisible);
-	}
 }
 
 void UHadesInventoryScreen::HandleItemChosen(FInventoryItemHandle Item, FInventoryItemHandle Chosen)
 {
-	RefreshActionHint();
-
 	UHadesInventoryComponent* Inventory = GetPlayerInventory();
 	if (Inventory && Item.IsSet())
 	{
@@ -366,17 +311,6 @@ void UHadesInventoryScreen::RefreshActions()
 	Super::RefreshActions();
 
 	SetActionBound(OrganizeHandle, OrganizeAction, IsInventoryShown(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleOrganizeAction));
-}
-
-void UHadesInventoryScreen::HandleHeldItemChanged()
-{
-	RefreshActionHint();
-}
-
-void UHadesInventoryScreen::HandleTargetChanged()
-{
-	// Over a spot the moved item can't go, the hint says why.
-	RefreshActionHint();
 }
 
 void UHadesInventoryScreen::HandleOrganizeAction()

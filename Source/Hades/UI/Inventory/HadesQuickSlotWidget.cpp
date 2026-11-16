@@ -1,6 +1,5 @@
 ﻿#include "HadesQuickSlotWidget.h"
 
-#include "CommonActionWidget.h"
 #include "Components/TextBlock.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
@@ -9,6 +8,7 @@
 #include "Hades/Inventory/HadesInventoryComponent.h"
 #include "Hades/Inventory/HadesQuickSlotComponent.h"
 #include "Hades/Player/HadesPlayerController.h"
+#include "Hades/UI/Foundation/HadesInputKeyWidget.h"
 
 #include "InventoryUISubsystem.h"
 #include "Widgets/InventoryDragDropOperation.h"
@@ -74,9 +74,9 @@ void UHadesQuickSlotWidget::Refresh()
 {
 	const UHadesQuickSlotComponent* Component = QuickSlots.Get();
 	const FInventoryItemHandle Item = Component ? Component->GetSlotItem(SlotIndex) : FInventoryItemHandle();
-	if (KeyIcon && Component)
+	if (KeyWidget)
 	{
-		KeyIcon->SetInputAction(Component->GetSlotKey(SlotIndex));
+		KeyWidget->SetInputAction(Component ? Component->GetSlotInputAction(SlotIndex) : nullptr);
 	}
 	if (ItemWidget)
 	{
