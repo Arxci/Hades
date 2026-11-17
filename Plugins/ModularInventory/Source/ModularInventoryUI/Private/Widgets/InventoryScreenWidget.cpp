@@ -11,15 +11,24 @@
 #include "Kismet/GameplayStatics.h"
 #include "Layout/WidgetPath.h"
 #include "Sound/SoundBase.h"
+#include "Widgets/CommonActivatableWidgetContainer.h"
+
+#if WITH_EDITOR
+#include "Editor/WidgetCompilerLog.h"
+#endif
 
 #include "Actions/InventoryItemAction.h"
 #include "InventorySubsystem.h"
 #include "InventoryUISubsystem.h"
+#include "ModularInventory.h"
 #include "Widgets/InventoryCellWidget.h"
 #include "Widgets/InventoryGridWidget.h"
+#include "Widgets/InventoryItemMenuWidget.h"
 #include "Widgets/InventoryItemWidget.h"
 #include "Widgets/InventoryListWidget.h"
 #include "Widgets/InventorySlotWidget.h"
+
+#define LOCTEXT_NAMESPACE "InventoryScreenWidget"
 
 namespace
 {
@@ -158,6 +167,93 @@ TOptional<FUIInputConfig> UInventoryScreenWidget::GetDesiredInputConfig() const
 	return FUIInputConfig(bGameKeepsInput ? ECommonInputMode::All : ECommonInputMode::Menu, EMouseCaptureMode::NoCapture);
 }
 
+#if WITH_EDITOR
+void UInventoryScreenWidget::ValidateCompiledWidgetTree(const UWidgetTree& BlueprintWidgetTree, IWidgetCompilerLog& CompileLog) const
+{
+	Super::ValidateCompiledWidgetTree(BlueprintWidgetTree, CompileLog);
+
+	const bool bHasMainGrid = BlueprintWidgetTree.FindWidget(GET_MEMBER_NAME_CHECKED(UInventoryScreenWidget, MainGrid)) != nullptr;
+	if (!bHasMainGrid && !GetClass()->IsFunctionImplementedInScript(GET_FUNCTION_NAME_CHECKED(UInventoryScreenWidget, BP_GetDesiredFocusTarget)))
+	{
+		const FText Message = LOCTEXT("NoFocusTarget", "Gamepad focus has nowhere to start: name the main grid MainGrid, or implement Get Desired Focus Target.");
+		if (GetParentNativeClass(GetClass()) == UInventoryScreenWidget::StaticClass())
+		{
+			CompileLog.Warning(Message);
+		}
+		else
+		{
+			CompileLog.Note(Message);
+		}
+	}
+}
+#endif
+
+UInventoryItemMenuWidget* UInventoryScreenWidget::OpenItemMenu(FInventoryItemHandle Item, TSubclassOf<UInventoryItemMenuWidget> MenuClass)
+{
+	const UInventoryItemMenuWidget* MenuDefaults = MenuClass ? GetDefault<UInventoryItemMenuWidget>(MenuClass) : nullptr;
+	if (!MenuDefaults || !Item.IsSet() || !IsInventoryShown() || !MenuDefaults->CanOpenFor(MakeActionContext(Item)))
+	{
+		return nullptr;
+	}
+
+	return PushItemMenu(MenuClass, [this, Item](UInventoryItemMenuWidget& Menu)
+	{
+		Menu.SetScreen(this);
+		Menu.SetItem(Item, FindItemWidget(Item));
+	});
+}
+
+UInventoryItemMenuWidget* UInventoryScreenWidget::PushItemMenu(TSubclassOf<UInventoryItemMenuWidget> MenuClass, TFunctionRef<void(UInventoryItemMenuWidget&)> InitMenu)
+{
+	if (!ItemMenuStack)
+	{
+		UE_LOG(LogInventory, Warning, TEXT("[Inventory UI] %s: nowhere to open %s. Add a Common Activatable Widget Stack named ItemMenuStack."),
+			*GetPathNameSafe(this), *GetNameSafe(MenuClass));
+		return nullptr;
+	}
+	return ItemMenuStack->AddWidget<UInventoryItemMenuWidget>(MenuClass.Get(), InitMenu);
+}
+
+void UInventoryScreenWidget::SetInventoryShown(bool bShown)
+{
+	if (bShown == bInventoryShown)
+	{
+		return;
+	}
+
+	bInventoryShown = bShown;
+	if (!IsActivated())
+	{
+		return;
+	}
+
+	UInventoryUISubsystem* Interaction = GetInteraction();
+	if (Interaction && !bShown)
+	{
+		Interaction->ClearInteraction();
+	}
+	RefreshActions();
+	RefreshActionHint();
+	if (bShown)
+	{
+		ReturnToItems();
+	}
+}
+
+void UInventoryScreenWidget::ReturnToItems()
+{
+	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
+	UWidget* FocusTarget = GetDesiredFocusTarget();
+	if (FocusTarget && Input && Input->GetCurrentInputType() == ECommonInputType::Gamepad)
+	{
+		FocusTarget->SetFocus();
+	}
+	else if (bAimOnOpen)
+	{
+		AimAtStart();
+	}
+}
+
 void UInventoryScreenWidget::SetTransferContainer(FInventoryContainerHandle Container)
 {
 	TransferContainer = Container;
@@ -230,7 +326,7 @@ void UInventoryScreenWidget::NativeOnActivated()
 		Interaction->SetStyle(InteractionStyle);
 		Interaction->SetTransferContainer(TransferContainer);
 
-		Interaction->OnContextRequested.AddUniqueDynamic(this, &ThisClass::HandleItemMenuRequested);
+		Interaction->OnItemMenuRequested.AddUniqueDynamic(this, &ThisClass::HandleItemMenuRequested);
 		Interaction->OnDefaultActionRequested.AddUniqueDynamic(this, &ThisClass::HandleDefaultActionRequested);
 		Interaction->OnHeldItemChanged.AddUniqueDynamic(this, &ThisClass::HandleInteractionChanged);
 		Interaction->OnTargetChanged.AddUniqueDynamic(this, &ThisClass::HandleInteractionChanged);
@@ -254,7 +350,7 @@ void UInventoryScreenWidget::NativeOnDeactivated()
 {
 	if (UInventoryUISubsystem* Interaction = GetInteraction())
 	{
-		Interaction->OnContextRequested.RemoveDynamic(this, &ThisClass::HandleItemMenuRequested);
+		Interaction->OnItemMenuRequested.RemoveDynamic(this, &ThisClass::HandleItemMenuRequested);
 		Interaction->OnDefaultActionRequested.RemoveDynamic(this, &ThisClass::HandleDefaultActionRequested);
 		Interaction->OnHeldItemChanged.RemoveDynamic(this, &ThisClass::HandleInteractionChanged);
 		Interaction->OnTargetChanged.RemoveDynamic(this, &ThisClass::HandleInteractionChanged);
@@ -302,6 +398,10 @@ UWidget* UInventoryScreenWidget::NativeGetDesiredFocusTarget() const
 	{
 		return Target;
 	}
+	if (!IsInventoryShown())
+	{
+		return nullptr;
+	}
 
 	// Back where the player was, such as on the item whose menu just closed, rather than on the first cell.
 	UInventoryCellWidget* LastAimed = LastAimedContainer.IsSet() ? FindCellWidgetIn(*this, LastAimedContainer, LastAimedPlacement) : nullptr;
@@ -347,6 +447,10 @@ void UInventoryScreenWidget::HandleItemMenuRequested(FInventoryItemHandle Item)
 	const UInventoryUISubsystem* Interaction = GetInteraction();
 	if (Interaction && !Interaction->IsChoosingItem() && IsInventoryShown())
 	{
+		if (ItemMenuClass)
+		{
+			OpenItemMenu(Item, ItemMenuClass);
+		}
 		NativeOnItemMenuRequested(Item);
 		OnItemMenuRequested(Item);
 	}
@@ -379,11 +483,11 @@ void UInventoryScreenWidget::RefreshActions()
 	SetActionBound(TakeAllHandle, TakeAllAction, bUsable && Interaction->CanTakeAll(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleTakeAllAction));
 }
 
-void UInventoryScreenWidget::SetActionBound(FUIActionBindingHandle& Handle, const FDataTableRowHandle& Row, bool bBound, const FSimpleDelegate& Handler)
+void UInventoryScreenWidget::SetActionBound(FUIActionBindingHandle& Handle, const FDataTableRowHandle& Row, bool bBound, const FSimpleDelegate& Handler, bool bShowInActionBar)
 {
 	if (bBound && !Handle.IsValid() && !Row.IsNull())
 	{
-		Handle = RegisterUIActionBinding(FBindUIActionArgs(Row, true, Handler));
+		Handle = RegisterUIActionBinding(FBindUIActionArgs(Row, bShowInActionBar, Handler));
 	}
 	else if (!bBound && Handle.IsValid())
 	{
@@ -584,7 +688,7 @@ void UInventoryScreenWidget::HandleItemMenuAction()
 {
 	if (UInventoryUISubsystem* Interaction = GetInteraction())
 	{
-		Interaction->RequestContext(Interaction->GetHoveredItem());
+		Interaction->RequestItemMenu(Interaction->GetHoveredItem());
 	}
 }
 
@@ -621,3 +725,5 @@ void UInventoryScreenWidget::HandleTakeAllAction()
 		RefreshActions();
 	}
 }
+
+#undef LOCTEXT_NAMESPACE

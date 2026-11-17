@@ -1,11 +1,6 @@
 #include "HadesInventoryScreen.h"
 
-#include "CommonButtonBase.h"
-#include "CommonInputSubsystem.h"
-#include "CommonInputTypeEnum.h"
-#include "Components/PanelWidget.h"
-#include "Components/TextBlock.h"
-#include "Components/WidgetSwitcher.h"
+#include "CommonAnimatedSwitcher.h"
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/Pawn.h"
 #include "Input/CommonUIInputTypes.h"
@@ -13,14 +8,11 @@
 
 #include "Hades/HadesGameplayTags.h"
 #include "Hades/Inventory/HadesInventoryComponent.h"
-#include "Hades/Inventory/HadesQuickSlotComponent.h"
 #include "Hades/Player/HadesPlayerController.h"
-#include "Hades/UI/Foundation/HadesTabButton.h"
-#include "Hades/UI/Inventory/HadesItemMenu.h"
-#include "Hades/UI/Inventory/HadesShortcutMenu.h"
+#include "Hades/UI/Foundation/HadesTabListWidget.h"
 
-#include "InventorySubsystem.h"
 #include "InventoryUISubsystem.h"
+#include "Widgets/InventoryItemMenuWidget.h"
 #include "Widgets/InventoryListWidget.h"
 
 #define LOCTEXT_NAMESPACE "HadesInventoryScreen"
@@ -36,7 +28,7 @@ UHadesInventoryScreen::UHadesInventoryScreen(const FObjectInitializer& ObjectIni
 	InteractionStyle.bSwapPicksUpOther = true;
 	InteractionStyle.bKeepLastHoveredItem = true;
 
-	// Opens on the item last lit, or the first pocket, lit and in the details, with the mouse too.
+	// Opens on the item last highlighted, or the first pocket, highlighted and in the details, with the mouse too.
 	bAimOnOpen = true;
 	bStartOnLastItem = true;
 
@@ -56,17 +48,20 @@ void UHadesInventoryScreen::NativeOnInitialized()
 	RegisterUIActionBinding(FBindUIActionArgs(FUIActionTag::ConvertChecked(HadesGameplayTags::UI_Action_Inventory), false,
 		FSimpleDelegate::CreateUObject(this, &ThisClass::HandleCloseAction)));
 
-	if (Pages)
+	if (TabList)
 	{
-		RegisterUIActionBinding(FBindUIActionArgs(PreviousTabAction, false, FSimpleDelegate::CreateUObject(this, &ThisClass::HandlePreviousTab)));
-		RegisterUIActionBinding(FBindUIActionArgs(NextTabAction, false, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleNextTab)));
+		TabList->OnTabSelected.AddUniqueDynamic(this, &ThisClass::HandleTabSelected);
 	}
-	for (int32 Index = 0; TabBar && Index < TabBar->GetChildrenCount(); ++Index)
+}
+
+void UHadesInventoryScreen::NativeConstruct()
+{
+	Super::NativeConstruct();
+
+	// The tab list is built by now, so it makes its tabs as it's linked.
+	if (TabList && Pages && TabList->GetLinkedSwitcher() != Pages)
 	{
-		if (UCommonButtonBase* Tab = Cast<UCommonButtonBase>(TabBar->GetChildAt(Index)))
-		{
-			Tab->OnClicked().AddUObject(this, &ThisClass::SetPage, Index);
-		}
+		TabList->SetLinkedSwitcher(Pages);
 	}
 }
 
@@ -74,7 +69,8 @@ void UHadesInventoryScreen::NativeOnActivated()
 {
 	Super::NativeOnActivated();
 
-	if (AHadesPlayerController* Controller = Cast<AHadesPlayerController>(GetOwningPlayer()))
+	AHadesPlayerController* Controller = Cast<AHadesPlayerController>(GetOwningPlayer());
+	if (bPauseGame && Controller)
 	{
 		Controller->AddPauseRequest(this);
 	}
@@ -86,7 +82,13 @@ void UHadesInventoryScreen::NativeOnActivated()
 	{
 		ItemBoxList->SetContainer(GetItemBox());
 	}
-	SetPage(ItemsPage);
+
+	const bool bItemsTabOpened = TabList && TabList->OpenTabAtIndex(ItemsPage, /*bSuppressClickFeedback*/ true);
+	if (!bItemsTabOpened && Pages)
+	{
+		Pages->SetActiveWidgetIndex(ItemsPage);
+	}
+	SetInventoryShown(IsItemsPageOpen());
 }
 
 void UHadesInventoryScreen::NativeOnDeactivated()
@@ -95,7 +97,8 @@ void UHadesInventoryScreen::NativeOnDeactivated()
 	{
 		Interaction->OnItemChosen.RemoveDynamic(this, &ThisClass::HandleItemChosen);
 	}
-	if (AHadesPlayerController* Controller = Cast<AHadesPlayerController>(GetOwningPlayer()))
+	AHadesPlayerController* Controller = Cast<AHadesPlayerController>(GetOwningPlayer());
+	if (bPauseGame && Controller)
 	{
 		Controller->RemovePauseRequest(this);
 	}
@@ -103,128 +106,15 @@ void UHadesInventoryScreen::NativeOnDeactivated()
 	Super::NativeOnDeactivated();
 }
 
-// Item actions
-bool UHadesInventoryScreen::CanRunItemAction(EHadesItemAction Action, FInventoryItemHandle Item) const
-{
-	const UHadesInventoryComponent* Inventory = GetPlayerInventory();
-	const UInventorySubsystem* Subsystem = UInventorySubsystem::Get(this);
-	if (!Inventory || !Subsystem || !Subsystem->IsValidItem(Item))
-	{
-		return false;
-	}
-
-	const FInventoryContainerHandle ItemBox = GetItemBox();
-	switch (Action)
-	{
-	case EHadesItemAction::Shortcut:
-	{
-		const APawn* Pawn = GetOwningPlayerPawn();
-		const UHadesQuickSlotComponent* QuickSlots = Pawn ? Pawn->FindComponentByClass<UHadesQuickSlotComponent>() : nullptr;
-		return ShortcutMenuClass && QuickSlots && QuickSlots->CanAssign(Item);
-	}
-	case EHadesItemAction::Use:     return Inventory->CanUseItem(Item);
-	case EHadesItemAction::Equip:   return Inventory->CanDraw(Item) && !Inventory->IsInHand(Item);
-	case EHadesItemAction::Unequip: return Inventory->IsInHand(Item);
-	case EHadesItemAction::Combine: return Inventory->CanCombine(Item);
-	case EHadesItemAction::Discard: return Inventory->CanDiscardItem(Item);
-	case EHadesItemAction::Store:   return ItemBox.IsSet() && Inventory->OwnsItem(Item) && !Inventory->IsKeyItem(Item);
-	case EHadesItemAction::Take:    return ItemBox.IsSet() && Subsystem->GetRootContainer(Subsystem->GetItemContainer(Item)) == ItemBox;
-	}
-	return false;
-}
-
-void UHadesInventoryScreen::RunItemAction(EHadesItemAction Action, FInventoryItemHandle Item)
-{
-	UHadesInventoryComponent* Inventory = GetPlayerInventory();
-	UInventorySubsystem* Subsystem = UInventorySubsystem::Get(this);
-	UInventoryUISubsystem* Interaction = GetInteraction();
-	if (!Interaction || !CanRunItemAction(Action, Item))
-	{
-		return;
-	}
-
-	EInventoryError Error = EInventoryError::None;
-	switch (Action)
-	{
-	case EHadesItemAction::Shortcut:
-		OpenShortcutMenu(Item);
-		break;
-	case EHadesItemAction::Use:
-		Inventory->UseItem(Item);
-		break;
-	case EHadesItemAction::Equip:
-		Inventory->DrawItem(Item);
-		break;
-	case EHadesItemAction::Unequip:
-		Inventory->StowItem(Item);
-		break;
-	case EHadesItemAction::Combine:
-		Interaction->BeginChoosingItem(Item);
-		break;
-	case EHadesItemAction::Discard:
-		Inventory->DiscardItem(Item);
-		break;
-	case EHadesItemAction::Store:
-		if (!Subsystem->MoveItemToContainers(Item, { GetItemBox() }, 0, false, Error))
-		{
-			AHadesPlayerController::ShowMessageTo(GetOwningPlayerPawn(), LOCTEXT("CantStore", "That can't go in the item box."));
-		}
-		break;
-	case EHadesItemAction::Take:
-		if (!Inventory->TakeItem(Item, 0, true, Error))
-		{
-			AHadesPlayerController::ShowMessageTo(GetOwningPlayerPawn(), LOCTEXT("NoRoomToTake", "Not enough space."));
-		}
-		break;
-	}
-}
-
-void UHadesInventoryScreen::NativeOnItemMenuRequested(FInventoryItemHandle Item)
-{
-	Super::NativeOnItemMenuRequested(Item);
-
-	OpenItemMenu(Item);
-}
-
-void UHadesInventoryScreen::OpenItemMenu(FInventoryItemHandle Item)
-{
-	bool bHasActions = false;
-	for (const EHadesItemAction Action : TEnumRange<EHadesItemAction>())
-	{
-		bHasActions |= CanRunItemAction(Action, Item);
-	}
-
-	UPrimaryGameLayout* Layout = UPrimaryGameLayout::GetPrimaryGameLayout(GetOwningLocalPlayer());
-	if (!bHasActions || !ItemMenuClass || !Layout)
-	{
-		return;
-	}
-
-	// The menu shows its actions' descriptions in this screen's action hint, and gives the hint back as it closes.
-	Layout->PushWidgetToLayerStack<UHadesItemMenu>(HadesGameplayTags::UI_Layer_Modal, ItemMenuClass.Get(), [this, Item](UHadesItemMenu& NewMenu)
-	{
-		NewMenu.SetScreen(this);
-		NewMenu.SetItem(Item, FindItemWidget(Item));
-	});
-}
-
-void UHadesInventoryScreen::OpenShortcutMenu(FInventoryItemHandle Item)
+UInventoryItemMenuWidget* UHadesInventoryScreen::PushItemMenu(TSubclassOf<UInventoryItemMenuWidget> MenuClass, TFunctionRef<void(UInventoryItemMenuWidget&)> InitMenu)
 {
 	UPrimaryGameLayout* Layout = UPrimaryGameLayout::GetPrimaryGameLayout(GetOwningLocalPlayer());
-	if (!ShortcutMenuClass || !Layout)
-	{
-		return;
-	}
-
-	Layout->PushWidgetToLayerStack<UHadesShortcutMenu>(HadesGameplayTags::UI_Layer_Modal, ShortcutMenuClass.Get(), [this, Item](UHadesShortcutMenu& NewMenu)
-	{
-		NewMenu.SetScreen(this);
-		NewMenu.SetItem(Item, FindItemWidget(Item));
-	});
+	return Layout ? Layout->PushWidgetToLayerStack<UInventoryItemMenuWidget>(HadesGameplayTags::UI_Layer_Modal, MenuClass.Get(), InitMenu) : nullptr;
 }
 
 void UHadesInventoryScreen::HandleItemChosen(FInventoryItemHandle Item, FInventoryItemHandle Chosen)
 {
+	// Only the Combine action has the player choose an item.
 	UHadesInventoryComponent* Inventory = GetPlayerInventory();
 	if (Inventory && Item.IsSet())
 	{
@@ -233,76 +123,19 @@ void UHadesInventoryScreen::HandleItemChosen(FInventoryItemHandle Item, FInvento
 }
 
 // Pages
-bool UHadesInventoryScreen::IsInventoryShown() const
+bool UHadesInventoryScreen::IsItemsPageOpen() const
 {
+	const int32 OpenTab = TabList ? TabList->GetOpenTabIndex() : INDEX_NONE;
+	if (OpenTab != INDEX_NONE)
+	{
+		return OpenTab == ItemsPage;
+	}
 	return !Pages || Pages->GetActiveWidgetIndex() == ItemsPage;
 }
 
-void UHadesInventoryScreen::SetPage(int32 Index)
+void UHadesInventoryScreen::HandleTabSelected(FName TabId)
 {
-	if (Pages && Pages->GetWidgetAtIndex(Index))
-	{
-		Pages->SetActiveWidgetIndex(Index);
-	}
-	for (int32 TabIndex = 0; TabBar && TabIndex < TabBar->GetChildrenCount(); ++TabIndex)
-	{
-		if (UHadesTabButton* Tab = Cast<UHadesTabButton>(TabBar->GetChildAt(TabIndex)))
-		{
-			Tab->SetActive(TabIndex == Index);
-		}
-	}
-
-	UInventoryUISubsystem* Interaction = GetInteraction();
-	if (Interaction && !IsInventoryShown())
-	{
-		Interaction->ClearInteraction();
-	}
-	RefreshActions();
-
-	// Back on the items, gamepad focus returns to them. With the mouse, the item focus would start on is lit, until the mouse moves on.
-	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
-	UWidget* FocusTarget = IsInventoryShown() ? GetDesiredFocusTarget() : nullptr;
-	if (FocusTarget && Input && Input->GetCurrentInputType() == ECommonInputType::Gamepad)
-	{
-		FocusTarget->SetFocus();
-	}
-	else if (bAimOnOpen)
-	{
-		AimAtStart();
-	}
-}
-
-void UHadesInventoryScreen::HandlePreviousTab()
-{
-	// As in Requiem, the tab buttons turn an item being moved.
-	UInventoryUISubsystem* Interaction = GetInteraction();
-	if (Interaction && Interaction->IsHolding())
-	{
-		Interaction->RotateHeld();
-		return;
-	}
-
-	const int32 NumPages = Pages ? Pages->GetNumWidgets() : 0;
-	if (NumPages > 0)
-	{
-		SetPage((Pages->GetActiveWidgetIndex() + NumPages - 1) % NumPages);
-	}
-}
-
-void UHadesInventoryScreen::HandleNextTab()
-{
-	UInventoryUISubsystem* Interaction = GetInteraction();
-	if (Interaction && Interaction->IsHolding())
-	{
-		Interaction->RotateHeld();
-		return;
-	}
-
-	const int32 NumPages = Pages ? Pages->GetNumWidgets() : 0;
-	if (NumPages > 0)
-	{
-		SetPage((Pages->GetActiveWidgetIndex() + 1) % NumPages);
-	}
+	SetInventoryShown(TabList->GetTabIndexOf(TabId) == ItemsPage);
 }
 
 // Actions
@@ -311,6 +144,25 @@ void UHadesInventoryScreen::RefreshActions()
 	Super::RefreshActions();
 
 	SetActionBound(OrganizeHandle, OrganizeAction, IsInventoryShown(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleOrganizeAction));
+
+	// As in Requiem, the tab keys turn the held item instead of changing tabs.
+	if (TabList)
+	{
+		const UInventoryUISubsystem* Interaction = GetInteraction();
+		const bool bHolding = Interaction && Interaction->IsHolding();
+		const FSimpleDelegate Rotate = FSimpleDelegate::CreateUObject(this, &ThisClass::HandleRotateAction);
+		TabList->SetListeningForInput(!bHolding);
+		SetActionBound(PreviousTabRotateHandle, TabList->GetPreviousTabAction(), bHolding, Rotate, /*bShowInActionBar*/ false);
+		SetActionBound(NextTabRotateHandle, TabList->GetNextTabAction(), bHolding, Rotate, /*bShowInActionBar*/ false);
+	}
+}
+
+void UHadesInventoryScreen::HandleRotateAction()
+{
+	if (UInventoryUISubsystem* Interaction = GetInteraction())
+	{
+		Interaction->RotateHeld();
+	}
 }
 
 void UHadesInventoryScreen::HandleOrganizeAction()

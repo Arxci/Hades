@@ -1,11 +1,30 @@
 #include "Widgets/InventoryCellWidget.h"
 
+#include "Blueprint/WidgetTree.h"
 #include "CommonInputSubsystem.h"
 #include "CommonInputTypeEnum.h"
 #include "Framework/Application/SlateApplication.h"
 
+#if WITH_EDITOR
+#include "Editor/WidgetCompilerLog.h"
+#endif
+
 #include "InventorySubsystem.h"
 #include "InventoryUISubsystem.h"
+
+#define LOCTEXT_NAMESPACE "InventoryCellWidget"
+
+#if WITH_EDITOR
+void UInventoryCellWidget::ValidateCompiledWidgetTree(const UWidgetTree& BlueprintWidgetTree, IWidgetCompilerLog& CompileLog) const
+{
+	Super::ValidateCompiledWidgetTree(BlueprintWidgetTree, CompileLog);
+
+	if (!BlueprintWidgetTree.RootWidget)
+	{
+		CompileLog.Warning(LOCTEXT("EmptyCell", "Give the cell a root widget, such as an empty Overlay: Common UI only builds a button around designer content, so an empty cell draws nothing and can't be clicked."));
+	}
+}
+#endif
 
 void UInventoryCellWidget::SetPlacement(FInventoryContainerHandle InContainer, const FInventoryPlacement& InPlacement)
 {
@@ -189,3 +208,5 @@ void UInventoryCellWidget::HandleClicked()
 		Interaction->ActivatePlacement(Container, Placement);
 	}
 }
+
+#undef LOCTEXT_NAMESPACE

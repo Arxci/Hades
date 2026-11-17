@@ -317,7 +317,7 @@ bool UInventoryUISubsystem::PressPlacement(FInventoryContainerHandle Container, 
 	switch (Press)
 	{
 	case EInventoryItemPress::OpenItemMenu:
-		RequestContext(Item);
+		RequestItemMenu(Item);
 		return true;
 	case EInventoryItemPress::PickUp:
 		// Held by the cell pressed.
@@ -590,11 +590,11 @@ void UInventoryUISubsystem::SetSelectedItem(FInventoryItemHandle Item)
 }
 
 // Item menus and choosing
-void UInventoryUISubsystem::RequestContext(FInventoryItemHandle Item)
+void UInventoryUISubsystem::RequestItemMenu(FInventoryItemHandle Item)
 {
 	if (Item.IsSet())
 	{
-		OnContextRequested.Broadcast(Item);
+		OnItemMenuRequested.Broadcast(Item);
 	}
 }
 

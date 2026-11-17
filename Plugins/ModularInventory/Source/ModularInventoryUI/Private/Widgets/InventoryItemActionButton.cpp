@@ -1,6 +1,7 @@
 ﻿#include "Widgets/InventoryItemActionButton.h"
 
 #include "CommonButtonBase.h"
+#include "CommonTextBlock.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
 #include "Engine/Texture2D.h"
@@ -12,6 +13,31 @@ void UInventoryItemActionButton::NativeOnInitialized()
 	Super::NativeOnInitialized();
 
 	AvailableStyle = GetStyle() ? GetStyle()->GetClass() : nullptr;
+}
+
+void UInventoryItemActionButton::NativePreConstruct()
+{
+	Super::NativePreConstruct();
+
+	ApplyTextStyle();
+}
+
+void UInventoryItemActionButton::NativeOnCurrentTextStyleChanged()
+{
+	Super::NativeOnCurrentTextStyleChanged();
+
+	ApplyTextStyle();
+}
+
+void UInventoryItemActionButton::ApplyTextStyle()
+{
+	// A button Style without text styles leaves the name as it is in the designer.
+	UCommonTextBlock* CommonName = Cast<UCommonTextBlock>(NameText);
+	const TSubclassOf<UCommonTextStyle> TextStyle = GetCurrentTextStyleClass();
+	if (CommonName && TextStyle)
+	{
+		CommonName->SetStyle(TextStyle);
+	}
 }
 
 void UInventoryItemActionButton::SetAction(UInventoryItemAction* InAction, const FText& Label, bool bInAvailable, const FText& UnavailableReason)

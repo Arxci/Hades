@@ -25,7 +25,7 @@ namespace HadesGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(UI_Action_Escape, "UI.Action.Escape");
 	UE_DEFINE_GAMEPLAY_TAG(UI_Action_Inventory, "UI.Action.Inventory");
 
-	UE_DEFINE_GAMEPLAY_TAG_COMMENT(UI_Preview_Shortcut, "UI.Preview.Shortcut", "Tag value on a designer preview item: the shortcut it's drawn on, 1 for the first.");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(UI_Preview_QuickSlot, "UI.Preview.QuickSlot", "Tag value on a designer preview item: the quick slot it's drawn on, 1 for the first.");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(UI_Preview_InHand, "UI.Preview.InHand", "Tag value on a designer preview item: above 0 draws it in hand.");
 
 	UE_DEFINE_GAMEPLAY_TAG(Input_Move,   "Input.Move");

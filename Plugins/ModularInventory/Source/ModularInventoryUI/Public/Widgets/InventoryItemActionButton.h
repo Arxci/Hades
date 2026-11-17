@@ -33,12 +33,18 @@ public:
 protected:
 	//~ Begin UUserWidget Interface
 	virtual void NativeOnInitialized() override;
+	virtual void NativePreConstruct() override;
 	//~ End UUserWidget Interface
+
+	//~ Begin UCommonButtonBase Interface
+	virtual void NativeOnCurrentTextStyleChanged() override;
+	//~ End UCommonButtonBase Interface
 
 	/** The action shown changed, or whether it can run did. Style the button here, such as greying out one that can't run. */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Action Button")
 	void OnActionChanged(bool bIsAvailable);
 
+	/** The action's name, in the button Style's text style for the button's state. Make it a Common Text, which text styles need. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Action Button", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> NameText;
 
@@ -55,6 +61,8 @@ protected:
 	TSubclassOf<UCommonButtonStyle> UnavailableStyle;
 
 private:
+	void ApplyTextStyle();
+
 	UPROPERTY(Transient)
 	TObjectPtr<UInventoryItemAction> Action;
 

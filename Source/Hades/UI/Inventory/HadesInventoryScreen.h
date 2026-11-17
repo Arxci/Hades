@@ -4,45 +4,23 @@
 
 #include "Engine/DataTable.h"
 #include "Input/UIActionBindingHandle.h"
-#include "Misc/EnumRange.h"
 
 #include "InventoryTypes.h"
 #include "Widgets/InventoryScreenWidget.h"
 
 #include "HadesInventoryScreen.generated.h"
 
+class UCommonAnimatedSwitcher;
 class UHadesInventoryComponent;
-class UHadesItemMenu;
-class UHadesShortcutMenu;
+class UHadesTabListWidget;
 class UInventoryListWidget;
-class UPanelWidget;
-class UTextBlock;
-class UWidgetSwitcher;
-
-
-UENUM(BlueprintType)
-enum class EHadesItemAction : uint8
-{
-	/** Onto a quick slot. */
-	Shortcut,
-	Use,
-	Equip,
-	Unequip,
-	Combine,
-	Discard,
-	/** Into the item box. */
-	Store,
-	/** Out of the item box. */
-	Take
-};
-ENUM_RANGE_BY_FIRST_AND_LAST(EHadesItemAction, EHadesItemAction::Shortcut, EHadesItemAction::Take);
 
 
 /**
  * The player's inventory, pushed onto the GameMenu layer by the HUD, or by an item box when the screen has an Item Box List.
- * The world stops while it's open. It plays like the RE games: a right-click or Accept on an item opens its item menu beside it, dragging or
- * Move picks it up, and the held item sits on the cells it would land on. Putting it on another item picks that one up.
- * With a Tab Bar and Pages, Previous Tab and Next Tab change the page, or turn the item being moved; the item actions only work on Items Page.
+ * It plays like the RE games: a right-click or Accept on an item opens Item Menu Class beside it, on the Modal layer, and dragging or Move
+ * picks it up, with the held item drawn on the cells it would land on. Putting it on another item picks that one up.
+ * With a Tab List linked to Pages, the items only work on Items Page, and while an item is held the tab keys turn it instead, as in Requiem.
  */
 UCLASS(Abstract, Blueprintable)
 class HADES_API UHadesInventoryScreen : public UInventoryScreenWidget
@@ -52,15 +30,14 @@ class HADES_API UHadesInventoryScreen : public UInventoryScreenWidget
 public:
 	UHadesInventoryScreen(const FObjectInitializer& ObjectInitializer);
 
+	/** The item box's storage while this screen shows it in Item Box List, for Store and Take. */
 	UFUNCTION(BlueprintPure, Category = "Inventory")
-	bool CanRunItemAction(EHadesItemAction Action, FInventoryItemHandle Item) const;
-
-	UFUNCTION(BlueprintCallable, Category = "Inventory")
-	void RunItemAction(EHadesItemAction Action, FInventoryItemHandle Item);
+	FInventoryContainerHandle GetItemBox() const;
 
 protected:
 	//~ Begin UUserWidget Interface
 	virtual void NativeOnInitialized() override;
+	virtual void NativeConstruct() override;
 	//~ End UUserWidget Interface
 
 	//~ Begin UCommonActivatableWidget Interface
@@ -69,29 +46,24 @@ protected:
 	//~ End UCommonActivatableWidget Interface
 
 	//~ Begin UInventoryScreenWidget Interface
-	virtual bool IsInventoryShown() const override;
 	virtual void RefreshActions() override;
-	virtual void NativeOnItemMenuRequested(FInventoryItemHandle Item) override;
+	virtual UInventoryItemMenuWidget* PushItemMenu(TSubclassOf<UInventoryItemMenuWidget> MenuClass, TFunctionRef<void(UInventoryItemMenuWidget&)> InitMenu) override;
 	//~ End UInventoryScreenWidget Interface
 
-	/** Pushed onto the Modal layer beside the item the player clicks. */
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory")
-	TSubclassOf<UHadesItemMenu> ItemMenuClass;
-
-	/** Pushed onto the Modal layer by the item menu's Shortcut button. */
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory")
-	TSubclassOf<UHadesShortcutMenu> ShortcutMenuClass;
+	/** The world stops while this is open. */
+	UPROPERTY(EditDefaultsOnly, Category = "Pause")
+	bool bPauseGame = true;
 
 	/** Shows the item box, which turns on Store and Take. Leave it out of the plain inventory screen. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory", meta = (BindWidgetOptional))
 	TObjectPtr<UInventoryListWidget> ItemBoxList;
 
-	/** Holds a button per page, in the same order as Pages. Hades Tab Buttons show which one is open. */
+	/** A tab for each page of Pages, in the same order. */
 	UPROPERTY(BlueprintReadOnly, Category = "Tabs", meta = (BindWidgetOptional))
-	TObjectPtr<UPanelWidget> TabBar;
+	TObjectPtr<UHadesTabListWidget> TabList;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Tabs", meta = (BindWidgetOptional))
-	TObjectPtr<UWidgetSwitcher> Pages;
+	TObjectPtr<UCommonAnimatedSwitcher> Pages;
 
 	/** The page with the items. The screen opens on it. */
 	UPROPERTY(EditDefaultsOnly, Category = "Tabs", meta = (ClampMin = "0"))
@@ -101,27 +73,21 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
 	FDataTableRowHandle OrganizeAction;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
-	FDataTableRowHandle PreviousTabAction;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
-	FDataTableRowHandle NextTabAction;
-
 private:
 	UFUNCTION()
 	void HandleItemChosen(FInventoryItemHandle Item, FInventoryItemHandle Chosen);
 
-	UHadesInventoryComponent* GetPlayerInventory() const;
-	FInventoryContainerHandle GetItemBox() const;
-	void OpenItemMenu(FInventoryItemHandle Item);
-	void OpenShortcutMenu(FInventoryItemHandle Item);
+	UFUNCTION()
+	void HandleTabSelected(FName TabId);
 
-	void SetPage(int32 Index);
+	UHadesInventoryComponent* GetPlayerInventory() const;
+	bool IsItemsPageOpen() const;
 
 	void HandleOrganizeAction();
 	void HandleCloseAction();
-	void HandlePreviousTab();
-	void HandleNextTab();
+	void HandleRotateAction();
 
 	FUIActionBindingHandle OrganizeHandle;
+	FUIActionBindingHandle PreviousTabRotateHandle;
+	FUIActionBindingHandle NextTabRotateHandle;
 };

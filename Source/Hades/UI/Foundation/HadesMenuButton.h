@@ -22,8 +22,8 @@ enum class EHadesMenuButtonJustify : uint8
 
 
 /**
- * A menu row with an icon and a label, such as in the item menu. The label takes the text style the button Style has for the button's
- * state: normal, hovered, selected or disabled. While hovered, or focused on a gamepad, the icon's tint changes too.
+ * A button with an icon and a label, such as a row of the item menu. The label takes the text style the button Style has for the button's
+ * state: normal, hovered, selected or disabled. While hovered, focused on a gamepad, or selected, the icon takes Lit Icon Color.
  * Put Icon, then Label, in a Horizontal Box, and that Horizontal Box in an Overlay at the root; Justification moves the Horizontal Box.
  */
 UCLASS(Abstract)
@@ -48,12 +48,14 @@ protected:
 	//~ Begin UCommonButtonBase Interface
 	virtual void NativeOnHovered() override;
 	virtual void NativeOnUnhovered() override;
+	virtual void NativeOnSelected(bool bBroadcast) override;
+	virtual void NativeOnDeselected(bool bBroadcast) override;
 	virtual void NativeOnCurrentTextStyleChanged() override;
 	//~ End UCommonButtonBase Interface
 
 	/**
 	 * Shows Icon Texture at the Image Size set on it in the designer, or the size of a Size Box around it, tinted Icon Color, or Lit Icon
-	 * Color while the row is highlighted. Without a texture it collapses, with whatever holds it beside the label.
+	 * Color while the button is hovered or selected. Without a texture it collapses, with whatever holds it beside the label.
 	 */
 	UPROPERTY(BlueprintReadOnly, Category = "Menu Button", meta = (BindWidgetOptional))
 	TObjectPtr<UImage> Icon;
@@ -71,6 +73,7 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Menu Button")
 	FLinearColor IconColor = FLinearColor::White;
 
+	/** The icon's tint while the button is hovered, focused on a gamepad, or selected, such as the open tab. */
 	UPROPERTY(EditAnywhere, Category = "Menu Button")
 	FLinearColor LitIconColor = FLinearColor::Black;
 
@@ -79,10 +82,13 @@ protected:
 	EHadesMenuButtonJustify Justification = EHadesMenuButtonJustify::Left;
 
 private:
-	void SetLit(bool bInLit);
+	void SetHoverLit(bool bInHoverLit);
+	void RefreshIconColor();
 	void ApplyTextStyle();
 	void ApplyJustification();
 
 	/** The widget beside the label that holds the icon, such as a Size Box around it, or the icon itself. */
 	UWidget* FindIconInRow() const;
+
+	bool bHoverLit = false;
 };

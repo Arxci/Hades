@@ -4,9 +4,9 @@
 #include "GameFramework/Pawn.h"
 
 #include "Hades/Inventory/HadesInventoryComponent.h"
-#include "Hades/Inventory/HadesQuickSlotComponent.h"
 
 #include "Data/InventoryItemDefinition.h"
+#include "Equipment/InventoryEquipmentComponent.h"
 #include "InventorySubsystem.h"
 #include "Widgets/InventoryItemWidget.h"
 
@@ -14,25 +14,32 @@ void UHadesEquippedItemWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 
-	// The quick slot component also says when what's in hand changes.
-	APawn* Pawn = GetOwningPlayerPawn();
-	QuickSlots = Pawn ? Pawn->FindComponentByClass<UHadesQuickSlotComponent>() : nullptr;
-	if (UHadesQuickSlotComponent* Component = QuickSlots.Get())
+	Equipment = UInventoryEquipmentComponent::FindEquipmentComponent(GetOwningPlayerPawn());
+	if (UInventoryEquipmentComponent* Component = Equipment.Get())
 	{
-		Component->OnChanged.AddUniqueDynamic(this, &ThisClass::Refresh);
+		Component->OnItemEquipped.AddUniqueDynamic(this, &ThisClass::HandleEquipmentChanged);
+		Component->OnItemUnequipped.AddUniqueDynamic(this, &ThisClass::HandleEquipmentChanged);
 	}
+	RegistryListener.Bind(this, FOnInventoryRegistryChanged::FDelegate::CreateWeakLambda(this, [this](const FInventoryChangeSet&) { Refresh(); }));
 	Refresh();
 }
 
 void UHadesEquippedItemWidget::NativeDestruct()
 {
-	if (UHadesQuickSlotComponent* Component = QuickSlots.Get())
+	if (UInventoryEquipmentComponent* Component = Equipment.Get())
 	{
-		Component->OnChanged.RemoveDynamic(this, &ThisClass::Refresh);
+		Component->OnItemEquipped.RemoveDynamic(this, &ThisClass::HandleEquipmentChanged);
+		Component->OnItemUnequipped.RemoveDynamic(this, &ThisClass::HandleEquipmentChanged);
 	}
-	QuickSlots.Reset();
+	Equipment.Reset();
+	RegistryListener.Unbind();
 
 	Super::NativeDestruct();
+}
+
+void UHadesEquippedItemWidget::HandleEquipmentChanged(FInventoryItemHandle Item, FGameplayTag EquipSlot)
+{
+	Refresh();
 }
 
 void UHadesEquippedItemWidget::Refresh()

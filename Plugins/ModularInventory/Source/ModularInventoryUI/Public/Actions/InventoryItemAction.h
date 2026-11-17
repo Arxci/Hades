@@ -128,7 +128,7 @@ public:
 
 	/**
 	 * The name of a button already in the menu's designer to use for this action, such as UseButton, instead of making one in its Action
-	 * Panel. For menus laid out by hand. The button keeps its own label.
+	 * Panel. For menus laid out by hand. The button keeps its own label. A menu without a button by that name makes one as usual.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action")
 	FName ButtonName;

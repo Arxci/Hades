@@ -19,11 +19,11 @@
 
 namespace
 {
-	// Bottom to top. The hovered or selected item goes above the others, so a glow around it isn't covered.
+	// Bottom to top. The highlighted item goes above the others, so a glow around it isn't covered.
 	constexpr int32 LinesZOrder = 0;
 	constexpr int32 CellZOrder = 1;
 	constexpr int32 ItemZOrder = 2;
-	constexpr int32 LitItemZOrder = 3;
+	constexpr int32 HighlightedItemZOrder = 3;
 	constexpr int32 PreviewZOrder = 4;
 	constexpr int32 HeldZOrder = 5;
 }
@@ -100,7 +100,7 @@ void UInventoryGridWidget::RefreshDesignerPreview()
 		UCanvasPanelSlot* ItemSlot = GridCanvas->AddChildToCanvas(ItemWidget);
 		ItemSlot->SetPosition(GetCellPosition(Entry.Cell));
 		ItemSlot->SetSize(GetCellsExtent(Definition->GetSize(Entry.bRotated)));
-		ItemSlot->SetZOrder(Entry.bLit ? LitItemZOrder : ItemZOrder);
+		ItemSlot->SetZOrder(Entry.bHighlighted ? HighlightedItemZOrder : ItemZOrder);
 		ItemWidget->ShowPreview(Entry, CellSize, CellGap);
 		PreviewItemWidgets.Add(ItemWidget);
 	}
@@ -116,8 +116,8 @@ void UInventoryGridWidget::NativeConstruct()
 	{
 		Interaction->OnTargetChanged.AddUniqueDynamic(this, &ThisClass::HandleTargetChanged);
 		Interaction->OnHeldItemChanged.AddUniqueDynamic(this, &ThisClass::HandleHeldItemChanged);
-		Interaction->OnHoveredItemChanged.AddUniqueDynamic(this, &ThisClass::HandleLitItemChanged);
-		Interaction->OnSelectedItemChanged.AddUniqueDynamic(this, &ThisClass::HandleLitItemChanged);
+		Interaction->OnHoveredItemChanged.AddUniqueDynamic(this, &ThisClass::HandleHighlightChanged);
+		Interaction->OnSelectedItemChanged.AddUniqueDynamic(this, &ThisClass::HandleHighlightChanged);
 	}
 
 	if (UCanvasPanelSlot* PreviewSlot = PlacementPreview ? Cast<UCanvasPanelSlot>(PlacementPreview->Slot) : nullptr)
@@ -147,8 +147,8 @@ void UInventoryGridWidget::NativeDestruct()
 	{
 		Interaction->OnTargetChanged.RemoveDynamic(this, &ThisClass::HandleTargetChanged);
 		Interaction->OnHeldItemChanged.RemoveDynamic(this, &ThisClass::HandleHeldItemChanged);
-		Interaction->OnHoveredItemChanged.RemoveDynamic(this, &ThisClass::HandleLitItemChanged);
-		Interaction->OnSelectedItemChanged.RemoveDynamic(this, &ThisClass::HandleLitItemChanged);
+		Interaction->OnHoveredItemChanged.RemoveDynamic(this, &ThisClass::HandleHighlightChanged);
+		Interaction->OnSelectedItemChanged.RemoveDynamic(this, &ThisClass::HandleHighlightChanged);
 	}
 
 	Super::NativeDestruct();
@@ -182,18 +182,6 @@ UInventoryCellWidget* UInventoryGridWidget::GetCellWidget(FIntPoint Cell) const
 UInventoryItemWidget* UInventoryGridWidget::GetItemWidget(FInventoryItemHandle Item) const
 {
 	return ItemWidgets.FindRef(Item).Get();
-}
-
-FBox2D UInventoryGridWidget::GetCellsAbsoluteBox() const
-{
-	if (!GridCanvas || BuiltGridSize.X <= 0 || BuiltGridSize.Y <= 0)
-	{
-		return FBox2D(ForceInit);
-	}
-
-	// The cells start at Grid Canvas's top-left corner.
-	const FGeometry& Geometry = GridCanvas->GetCachedGeometry();
-	return FBox2D(Geometry.LocalToAbsolute(FVector2D::ZeroVector), Geometry.LocalToAbsolute(GetCellsExtent(BuiltGridSize)));
 }
 
 UInventoryUISubsystem* UInventoryGridWidget::GetInteraction() const
@@ -373,8 +361,8 @@ void UInventoryGridWidget::RefreshItemOrder()
 			continue;
 		}
 
-		const bool bLit = Entry.Key.IsSet() && (Entry.Key == Hovered || Entry.Key == Selected);
-		const int32 ZOrder = bLit ? LitItemZOrder : ItemZOrder;
+		const bool bHighlighted = Entry.Key.IsSet() && (Entry.Key == Hovered || Entry.Key == Selected);
+		const int32 ZOrder = bHighlighted ? HighlightedItemZOrder : ItemZOrder;
 		if (ItemSlot->GetZOrder() != ZOrder)
 		{
 			ItemSlot->SetZOrder(ZOrder);
@@ -382,7 +370,7 @@ void UInventoryGridWidget::RefreshItemOrder()
 	}
 }
 
-void UInventoryGridWidget::HandleLitItemChanged(FInventoryItemHandle Item)
+void UInventoryGridWidget::HandleHighlightChanged(FInventoryItemHandle Item)
 {
 	RefreshItemOrder();
 }

@@ -2,71 +2,46 @@
 
 #include "CoreMinimal.h"
 
-#include "CommonButtonBase.h"
+#include "Hades/UI/Foundation/HadesMenuButton.h"
 
 #include "HadesTabButton.generated.h"
 
-class UCommonTextStyle;
-class UImage;
-class UTexture2D;
-class UTextBlock;
-
 
 /**
- * One tab of a screen's tab bar. The open tab's icon grows and takes Active Icon Color, its label shows and Active Frame appears
- * behind or around it. Without an icon the label always shows, so a text-only tab bar works too. The label can change style with the open tab.
+ * A tab of a Hades Tab List. The open tab is the selected button, so the button Style's Selected brushes and text styles show it, as for
+ * any Common UI button, and its icon takes Lit Icon Color and grows. A tab with an icon shows its label only while open, unless Always
+ * Show Label; a tab without one always shows it.
  */
 UCLASS(Abstract)
-class HADES_API UHadesTabButton : public UCommonButtonBase
+class HADES_API UHadesTabButton : public UHadesMenuButton
 {
 	GENERATED_BODY()
 
 public:
 	UHadesTabButton(const FObjectInitializer& ObjectInitializer);
 
-	void SetActive(bool bInActive);
-
 protected:
 	//~ Begin UUserWidget Interface
 	virtual void NativePreConstruct() override;
 	//~ End UUserWidget Interface
 
+	//~ Begin UCommonButtonBase Interface
+	virtual void NativeOnSelected(bool bBroadcast) override;
+	virtual void NativeOnDeselected(bool bBroadcast) override;
+	//~ End UCommonButtonBase Interface
+
+	/** Shown only on the open tab, such as a frame or an underline. */
 	UPROPERTY(BlueprintReadOnly, Category = "Tab", meta = (BindWidgetOptional))
-	TObjectPtr<UImage> Icon;
-
-	UPROPERTY(BlueprintReadOnly, Category = "Tab", meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> Label;
-
-	/** Shown only on the open tab. */
-	UPROPERTY(BlueprintReadOnly, Category = "Tab", meta = (BindWidgetOptional))
-	TObjectPtr<UWidget> ActiveFrame;
-
-	UPROPERTY(EditAnywhere, Category = "Tab")
-	TObjectPtr<UTexture2D> IconTexture;
-
-	UPROPERTY(EditAnywhere, Category = "Tab")
-	FText LabelText;
+	TObjectPtr<UWidget> SelectedFrame;
 
 	/** How much the open tab's icon grows. */
 	UPROPERTY(EditAnywhere, Category = "Tab", meta = (ClampMin = "1"))
-	float ActiveIconScale = 1.2f;
+	float SelectedIconScale = 1.2f;
 
-	/** The icon's tint on the tabs that aren't open, such as grey. */
+	/** Shows the label while the tab isn't open too. */
 	UPROPERTY(EditAnywhere, Category = "Tab")
-	FLinearColor IconColor = FLinearColor::White;
-
-	/** The icon's tint on the open tab, such as white. */
-	UPROPERTY(EditAnywhere, Category = "Tab")
-	FLinearColor ActiveIconColor = FLinearColor::White;
-
-	/** The label's style on the open tab, such as dark text on a light fill. None keeps the label's own style. Needs a Common Text label. */
-	UPROPERTY(EditAnywhere, Category = "Tab")
-	TSubclassOf<UCommonTextStyle> ActiveLabelStyle;
-
-	/** The label's style on the other tabs. None keeps the label's own style. */
-	UPROPERTY(EditAnywhere, Category = "Tab")
-	TSubclassOf<UCommonTextStyle> InactiveLabelStyle;
+	bool bAlwaysShowLabel = false;
 
 private:
-	bool bActive = false;
+	void RefreshTab();
 };

@@ -57,7 +57,7 @@ void UHadesMenuButton::NativePreConstruct()
 
 	SetLabelText(LabelText);
 	SetIconTexture(IconTexture);
-	SetLit(false);
+	SetHoverLit(false);
 	ApplyTextStyle();
 	ApplyJustification();
 }
@@ -67,7 +67,7 @@ void UHadesMenuButton::NativeConstruct()
 	Super::NativeConstruct();
 
 	// Menus are reused, and a row can be left lit when its menu closed under the mouse.
-	SetLit(false);
+	SetHoverLit(false);
 	ApplyTextStyle();
 	ApplyJustification();
 }
@@ -76,14 +76,28 @@ void UHadesMenuButton::NativeOnHovered()
 {
 	Super::NativeOnHovered();
 
-	SetLit(true);
+	SetHoverLit(true);
 }
 
 void UHadesMenuButton::NativeOnUnhovered()
 {
 	Super::NativeOnUnhovered();
 
-	SetLit(false);
+	SetHoverLit(false);
+}
+
+void UHadesMenuButton::NativeOnSelected(bool bBroadcast)
+{
+	Super::NativeOnSelected(bBroadcast);
+
+	RefreshIconColor();
+}
+
+void UHadesMenuButton::NativeOnDeselected(bool bBroadcast)
+{
+	Super::NativeOnDeselected(bBroadcast);
+
+	RefreshIconColor();
 }
 
 void UHadesMenuButton::NativeOnCurrentTextStyleChanged()
@@ -93,11 +107,17 @@ void UHadesMenuButton::NativeOnCurrentTextStyleChanged()
 	ApplyTextStyle();
 }
 
-void UHadesMenuButton::SetLit(bool bInLit)
+void UHadesMenuButton::SetHoverLit(bool bInHoverLit)
+{
+	bHoverLit = bInHoverLit;
+	RefreshIconColor();
+}
+
+void UHadesMenuButton::RefreshIconColor()
 {
 	if (Icon)
 	{
-		Icon->SetColorAndOpacity(bInLit ? LitIconColor : IconColor);
+		Icon->SetColorAndOpacity(bHoverLit || GetSelected() ? LitIconColor : IconColor);
 	}
 }
 

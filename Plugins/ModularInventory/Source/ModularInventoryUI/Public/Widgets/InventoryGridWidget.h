@@ -27,7 +27,7 @@ struct FInventoryChangeSet;
  * The held item goes with the cell it was picked up by on the cell under the cursor, or the focused cell. Each cell takes half the gap
  * around it, so the held item moves on as the cursor crosses the middle of a gap.
  * With the Inventory UI Subsystem's Snap Held Item on, it also draws the held item on those cells, using Item Class.
- * The hovered or selected item is drawn above the others, so a glow around it can spill over its neighbours.
+ * The highlighted item is drawn above the others, so a glow around it can spill over its neighbours.
  * Cells the layout locks, past its Usable Cells, are disabled: they draw with the cell style's Disabled brush and take no focus.
  */
 UCLASS(Abstract)
@@ -52,12 +52,6 @@ public:
 	/** The widget showing the item, such as to open a menu beside it. Null when the item isn't in this grid. */
 	UFUNCTION(BlueprintPure, Category = "Inventory|Grid")
 	UInventoryItemWidget* GetItemWidget(FInventoryItemHandle Item) const;
-
-	/**
-	 * Where the cells are, in absolute (desktop) space as last drawn: from the first cell's top-left corner to the last cell's bottom-right,
-	 * whatever size the grid is stretched to. Not valid before the grid is built and drawn.
-	 */
-	FBox2D GetCellsAbsoluteBox() const;
 
 protected:
 	//~ Begin UUserWidget Interface
@@ -132,7 +126,7 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Inventory|Grid|Preview", meta = (ClampMin = "0"))
 	int32 PreviewUsableCells = 0;
 
-	/** Items drawn on the designer's grid, with Item Class: each a definition, its cell, its count, and whether it's drawn lit. */
+	/** Items drawn on the designer's grid, with Item Class: each a definition, its cell, its count, and whether it's drawn highlighted. */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Grid|Preview", meta = (TitleProperty = "Definition"))
 	TArray<FInventoryItemPreview> PreviewItems;
 #endif
@@ -176,7 +170,7 @@ private:
 	void HandleHeldItemChanged();
 
 	UFUNCTION()
-	void HandleLitItemChanged(FInventoryItemHandle Item);
+	void HandleHighlightChanged(FInventoryItemHandle Item);
 
 	UFUNCTION()
 	void HandlePawnChanged(APawn* OldPawn, APawn* NewPawn);

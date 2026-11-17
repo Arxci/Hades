@@ -11,9 +11,11 @@
 
 #include "InventoryScreenWidget.generated.h"
 
+class UCommonActivatableWidgetStack;
 class UInventoryGridWidget;
 class UInventoryItemAction;
 class UInventoryItemActionSet;
+class UInventoryItemMenuWidget;
 class UInventoryItemWidget;
 class UInventoryUISubsystem;
 class USoundBase;
@@ -29,6 +31,7 @@ enum class ECommonInputType : uint8;
  * While it's active, Interaction Style decides how items are handled, and each action is bound only while it can work, so an action
  * bar shows what works now. Back stops choosing an item, or puts back the held item, before it closes the screen, and closing it
  * drops whatever was held or chosen. A right-click or the mouse wheel anywhere on it can put back or turn the held item, as the style says.
+ * An item asking for its menu opens Item Menu Class in Item Menu Stack.
  */
 UCLASS(Abstract, Blueprintable)
 class MODULARINVENTORYUI_API UInventoryScreenWidget : public UCommonActivatableWidget
@@ -41,6 +44,27 @@ public:
 	//~ Begin UCommonActivatableWidget Interface
 	virtual TOptional<FUIInputConfig> GetDesiredInputConfig() const override;
 	//~ End UCommonActivatableWidget Interface
+
+#if WITH_EDITOR
+	virtual void ValidateCompiledWidgetTree(const UWidgetTree& BlueprintWidgetTree, class IWidgetCompilerLog& CompileLog) const override;
+#endif
+
+	/**
+	 * Opens Menu Class beside the item, unless the menu has nothing for it, such as no action that can run. The screen opens Item Menu
+	 * Class this way; an item action can open another, such as a menu to pick a quick slot.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Screen")
+	UInventoryItemMenuWidget* OpenItemMenu(FInventoryItemHandle Item, TSubclassOf<UInventoryItemMenuWidget> MenuClass);
+
+	/**
+	 * Whether the items are on screen, such as on a tabbed screen while their tab is open. While they aren't, item menus and the screen's
+	 * actions don't work, and whatever was held or chosen is dropped. Showing them again aims at the start, as opening the screen does.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Screen")
+	void SetInventoryShown(bool bShown);
+
+	UFUNCTION(BlueprintPure, Category = "Inventory|Screen")
+	bool IsInventoryShown() const { return bInventoryShown; }
 
 	/**
 	 * The other side while this screen is open, such as a chest's container: Transfer, Take All and shift-clicks move items between
@@ -100,22 +124,21 @@ protected:
 	virtual UWidget* NativeGetDesiredFocusTarget() const override;
 	//~ End UCommonActivatableWidget Interface
 
-	/** Whether the items are on screen, such as while a tabbed screen shows their page. Item menus and the actions only work while they are. */
-	virtual bool IsInventoryShown() const { return true; }
-
 	/** Binds each action while it can work. Override to bind your own with Set Action Bound, after calling Super. */
 	virtual void RefreshActions();
 
 	/** Registers Row while bBound and unregisters it otherwise. */
-	void SetActionBound(FUIActionBindingHandle& Handle, const FDataTableRowHandle& Row, bool bBound, const FSimpleDelegate& Handler);
+	void SetActionBound(FUIActionBindingHandle& Handle, const FDataTableRowHandle& Row, bool bBound, const FSimpleDelegate& Handler, bool bShowInActionBar = true);
+
+	/** Adds a menu Open Item Menu made to Item Menu Stack. Override to open it elsewhere, such as on a layer of the game's root layout. */
+	virtual UInventoryItemMenuWidget* PushItemMenu(TSubclassOf<UInventoryItemMenuWidget> MenuClass, TFunctionRef<void(UInventoryItemMenuWidget&)> InitMenu);
 
 	/** Before On Item Menu Requested, for C++ subclasses. */
 	virtual void NativeOnItemMenuRequested(FInventoryItemHandle Item) {}
 
 	/**
-	 * An item asked for its menu: pressed as the style's Left Click, Right Click or Accept says, with the Item Menu action, or passed to
-	 * Request Context. Open your item menu here, such as an Inventory Item Menu Widget pushed onto a modal layer, then given the item and
-	 * its Find Item Widget.
+	 * An item asked for its menu: pressed as the style's Left Click, Right Click or Accept says, with the Item Menu action, or with Request
+	 * Item Menu. After Item Menu Class opens. Without one, open a menu of your own here, then call its Set Screen and Set Item.
 	 */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Screen")
 	void OnItemMenuRequested(FInventoryItemHandle Item);
@@ -125,6 +148,14 @@ protected:
 	void OnActionHintChanged(const FText& Hint);
 
 	UInventoryUISubsystem* GetInteraction() const;
+
+	/** The menu an item opens when it asks for one, such as with a right-click. None leaves item menus to On Item Menu Requested. */
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Screen")
+	TSubclassOf<UInventoryItemMenuWidget> ItemMenuClass;
+
+	/** Where item menus open: a Common Activatable Widget Stack drawn over the rest of the screen and filling it. */
+	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Screen", meta = (BindWidgetOptional))
+	TObjectPtr<UCommonActivatableWidgetStack> ItemMenuStack;
 
 	/**
 	 * What a press set to Default Action runs, such as a double-click: the first of these that can run for the item, such as Use, then
@@ -253,6 +284,9 @@ private:
 	/** Shows the menu's hint while there is one, or else what to do now, in Action Hint Text. */
 	void RefreshActionHint();
 
+	/** Gamepad focus goes back to the items. With the mouse, the spot focus would start on is aimed at, as Aim On Open does. */
+	void ReturnToItems();
+
 	void PlayInventorySound(USoundBase* Sound) const;
 
 	void HandleInputMethodChanged(ECommonInputType InputType);
@@ -270,6 +304,7 @@ private:
 
 	FInventoryInteractionStyle PreviousStyle;
 	FInventoryContainerHandle TransferContainer;
+	bool bInventoryShown = true;
 
 	/** The spot last aimed at while the screen is open, which focus goes back to. */
 	FInventoryContainerHandle LastAimedContainer;

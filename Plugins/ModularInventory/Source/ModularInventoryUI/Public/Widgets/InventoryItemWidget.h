@@ -26,7 +26,7 @@ class UTextBlock;
  * A left click and a right-click on it do what the Inventory UI Subsystem's style says, such as pick it up or open its item menu, or put the
  * held item down on it. A click is a press and a release on the item, so the release that ends a drag never counts as one.
  * In a grid, an item picked up with the mouse is held by the cell under the cursor, which then follows the cursor from cell to cell.
- * It lights up while hovered, focused or selected: Lit Background and Glow show.
+ * While hovered, focused or selected it's highlighted: Highlight shows and On Highlight Changed fires.
  */
 UCLASS(Abstract)
 class MODULARINVENTORYUI_API UInventoryItemWidget : public UUserWidget
@@ -106,6 +106,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory|Item")
 	bool IsSelected() const { return bSelected; }
 
+	/** Hovered, focused or selected. Never on the stand-in for a held item. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Item")
+	bool IsHighlighted() const { return bHighlighted; }
+
 	UFUNCTION(BlueprintPure, Category = "Inventory|Item")
 	bool IsDragVisual() const { return bDragVisual; }
 
@@ -125,7 +129,7 @@ protected:
 	/** Before On Item Changed, for C++ subclasses. */
 	virtual void NativeOnItemChanged() {}
 
-	/** After On Held Changed, On Hovered Changed or On Selected Changed, for C++ subclasses. */
+	/** After On Held Changed, On Hovered Changed, On Selected Changed or On Highlight Changed, for C++ subclasses. */
 	virtual void NativeOnInteractionChanged() {}
 
 	/** The item or its state changed. Update what the base doesn't, like a mark for an item that's in hand. */
@@ -162,24 +166,13 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Item")
 	void OnSelectedChanged(bool bIsSelected);
 
-	/**
-	 * A right-click asked for the item's menu, as the style's Right Click is Open Item Menu, after the Inventory UI Subsystem's On Context
-	 * Requested. Open an item menu from either, for game actions like Use or Drop.
-	 */
+	/** It became, or stopped being, hovered, focused or selected. For whatever Highlight alone can't show, such as an animation. */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Item")
-	void OnContextRequested();
+	void OnHighlightChanged(bool bIsHighlighted);
 
 	/** Put it straight in an Overlay, centered rather than filling it, so it can turn with the item. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
 	TObjectPtr<UImage> Icon;
-
-	/**
-	 * A copy of Icon behind it: it gets the same texture, size and turn. Tint it dark and offset it with its Render Transform for a
-	 * hard drop shadow, so light icons read on light tiles. Place it just before Icon, in the same panel and with the same alignment.
-	 * For a soft shadow, have the icon generator bake one into the icons instead (Project Settings, Modular Inventory, Icons, Shadow).
-	 */
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
-	TObjectPtr<UImage> IconShadow;
 
 	/**
 	 * Covers the item's cells, such as a tile, so a big item reads as one. Hidden on a drag visual and on the held item a grid draws, so
@@ -188,13 +181,12 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> Background;
 
-	/** Shown over Background while the item is hovered, focused or selected, such as while its menu is open; hidden otherwise. */
+	/**
+	 * Shown while the item is highlighted, and hidden otherwise. Put whatever your game shows for that inside it, such as a lit tile, an
+	 * outline, or a glow given a negative padding so it reaches past the item.
+	 */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
-	TObjectPtr<UWidget> LitBackground;
-
-	/** Shown while the item is lit, as Lit Background. Give it a negative padding so it reaches past the item. */
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
-	TObjectPtr<UWidget> Glow;
+	TObjectPtr<UWidget> Highlight;
 
 	/** The item's name, such as for an item widget laid out as a row of a list: icon, name, then count. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
@@ -284,14 +276,11 @@ private:
 
 	UInventoryUISubsystem* GetInteraction() const;
 
-	/** Asks for the item's menu, as a right-click on it does: the Inventory UI Subsystem's On Context Requested, then this widget's. */
-	void RequestItemMenu();
-
 	void Refresh();
 	void RefreshMeter();
 	void RefreshTagTint();
 	void RefreshInteraction();
-	void RefreshLit();
+	void RefreshHighlight();
 	void ApplyCellLayout();
 
 	/** In a grid, the item's cell at that point on the screen, each cell taking half the gap around it. Elsewhere, the item's own placement. */
@@ -315,6 +304,7 @@ private:
 	bool bHeld = false;
 	bool bHovered = false;
 	bool bSelected = false;
+	bool bHighlighted = false;
 	bool bDragVisual = false;
 	bool bPressed = false;
 	bool bPreview = false;
@@ -330,7 +320,6 @@ private:
 
 	TWeakObjectPtr<const UInventoryItemDefinition> ShownDefinition;
 	TSharedPtr<FStreamableHandle> IconHandle;
-	TSharedPtr<FStreamableHandle> IconShadowHandle;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UInventoryItemDetailsWidget> DetailsTooltip;

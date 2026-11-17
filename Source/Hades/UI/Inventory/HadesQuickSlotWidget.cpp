@@ -95,7 +95,7 @@ void UHadesQuickSlotWidget::Refresh()
 		{
 			const int32 Rounds = Inventory->GetLoadedRounds(Item);
 			AmmoText->SetText(FText::AsNumber(Rounds));
-			AmmoText->SetColorAndOpacity(AmmoColors.Pick(Rounds, Capacity));
+			AmmoText->SetColorAndOpacity(FSlateColor(AmmoColors.Pick(static_cast<float>(Rounds) / Capacity)));
 		}
 	}
 	if (SpareAmmoText)

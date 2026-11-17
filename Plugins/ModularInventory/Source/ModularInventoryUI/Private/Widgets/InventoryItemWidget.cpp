@@ -58,7 +58,6 @@ void UInventoryItemWidget::NativeDestruct()
 		Interaction->OnItemPutDown.RemoveDynamic(this, &ThisClass::HandleItemPutDown);
 	}
 	InventoryWidgets::CancelLoad(IconHandle);
-	InventoryWidgets::CancelLoad(IconShadowHandle);
 	ShownDefinition.Reset();
 	StopLongPress();
 
@@ -122,11 +121,11 @@ void UInventoryItemWidget::ShowPreview(const FInventoryItemPreview& InPreview, f
 	bRotated = InPreview.bRotated;
 	Refresh();
 
-	if (bHovered != Preview.bLit)
+	if (bHovered != Preview.bHighlighted)
 	{
-		bHovered = Preview.bLit;
+		bHovered = Preview.bHighlighted;
 		OnHoveredChanged(bHovered);
-		RefreshLit();
+		RefreshHighlight();
 		NativeOnInteractionChanged();
 	}
 }
@@ -166,7 +165,6 @@ void UInventoryItemWidget::Refresh()
 	{
 		ShownDefinition = Definition;
 		InventoryWidgets::ShowIcon(Icon, Definition, IconHandle);
-		InventoryWidgets::ShowIcon(IconShadow, Definition, IconShadowHandle);
 	}
 	ApplyCellLayout();
 
@@ -187,7 +185,7 @@ void UInventoryItemWidget::Refresh()
 	}
 	RefreshMeter();
 	RefreshTagTint();
-	RefreshLit();
+	RefreshHighlight();
 
 	NativeOnItemChanged();
 	OnItemChanged();
@@ -274,7 +272,7 @@ void UInventoryItemWidget::RefreshTagTint()
 void UInventoryItemWidget::ApplyCellLayout()
 {
 	const UInventoryItemDefinition* Definition = GetDefinition();
-	if (!Definition || CellSize <= 0.0f)
+	if (!Icon || !Definition || CellSize <= 0.0f)
 	{
 		return;
 	}
@@ -287,23 +285,14 @@ void UInventoryItemWidget::ApplyCellLayout()
 
 	// Laid out unturned in the middle of the widget, then turned around its center, so it covers the item's turned cells.
 	const FVector2f Overhang = FVector2f(TurnedArea - Unturned) * 0.5f;
+	Icon->SetDesiredSizeOverride(Unturned);
+	Icon->SetRenderTransformAngle(bRotated ? 90.0f : 0.0f);
 
-	// The shadow keeps its own Render Transform translation; only the angle is set here.
-	for (UImage* Image : { Icon.Get(), IconShadow.Get() })
+	// The Overlay has the turned size and would squeeze the unturned icon into it, so the icon may hang over its edges; with gaps, the
+	// padding also centers it on the widget.
+	if (UOverlaySlot* IconSlot = Cast<UOverlaySlot>(Icon->Slot))
 	{
-		if (!Image)
-		{
-			continue;
-		}
-		Image->SetDesiredSizeOverride(Unturned);
-		Image->SetRenderTransformAngle(bRotated ? 90.0f : 0.0f);
-
-		// The Overlay has the turned size and would squeeze the unturned icon into it, so the icon may hang over its edges; with gaps,
-		// the padding also centers it on the widget.
-		if (UOverlaySlot* ImageSlot = Cast<UOverlaySlot>(Image->Slot))
-		{
-			ImageSlot->SetPadding(FMargin(Overhang.X, Overhang.Y));
-		}
+		IconSlot->SetPadding(FMargin(Overhang.X, Overhang.Y));
 	}
 }
 
@@ -383,26 +372,28 @@ void UInventoryItemWidget::RefreshInteraction()
 
 	if (bChanged)
 	{
-		RefreshLit();
+		RefreshHighlight();
 		NativeOnInteractionChanged();
 	}
 }
 
-void UInventoryItemWidget::RefreshLit()
+void UInventoryItemWidget::RefreshHighlight()
 {
+	// Hidden, not collapsed, so nothing moves. A drag visual stands in for the held item, so it's never highlighted itself.
 	if (Background)
 	{
 		Background->SetVisibility(bDragVisual ? ESlateVisibility::Hidden : ESlateVisibility::HitTestInvisible);
 	}
 
-	// Hidden, not collapsed, so nothing moves. A drag visual stands in for the held item, so it's never lit itself.
-	const bool bLit = !bDragVisual && (bHovered || bSelected);
-	for (UWidget* LitPart : { LitBackground.Get(), Glow.Get() })
+	const bool bNowHighlighted = !bDragVisual && (bHovered || bSelected);
+	if (Highlight)
 	{
-		if (LitPart)
-		{
-			LitPart->SetVisibility(bLit ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
-		}
+		Highlight->SetVisibility(bNowHighlighted ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+	}
+	if (bNowHighlighted != bHighlighted)
+	{
+		bHighlighted = bNowHighlighted;
+		OnHighlightChanged(bHighlighted);
 	}
 }
 
@@ -514,24 +505,18 @@ bool UInventoryItemWidget::RightClick(const FPointerEvent& MouseEvent)
 	switch (Interaction->GetStyle().RightClick)
 	{
 	case EInventoryItemPress::OpenItemMenu:
-		RequestItemMenu();
+		Interaction->RequestItemMenu(Item);
 		return true;
 	case EInventoryItemPress::PickUp:
 		Interaction->PressPlacement(Inventory->GetItemContainer(Item), GetPlacementAt(MouseEvent.GetScreenSpacePosition()), EInventoryItemPress::PickUp);
+		return true;
+	case EInventoryItemPress::DefaultAction:
+		Interaction->RequestDefaultAction(Item);
 		return true;
 	case EInventoryItemPress::None:
 		break;
 	}
 	return false;
-}
-
-void UInventoryItemWidget::RequestItemMenu()
-{
-	if (UInventoryUISubsystem* Interaction = GetInteraction())
-	{
-		Interaction->RequestContext(Item);
-	}
-	OnContextRequested();
 }
 
 void UInventoryItemWidget::NativeOnMouseEnter(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)

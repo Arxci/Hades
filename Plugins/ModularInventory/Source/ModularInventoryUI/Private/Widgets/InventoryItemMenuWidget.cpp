@@ -25,7 +25,6 @@
 #include "InventoryUISubsystem.h"
 #include "ModularInventory.h"
 #include "Widgets/InventoryDragDropOperation.h"
-#include "Widgets/InventoryGridWidget.h"
 #include "Widgets/InventoryItemActionButton.h"
 #include "Widgets/InventoryItemWidget.h"
 #include "Widgets/InventoryScreenWidget.h"
@@ -112,6 +111,9 @@ namespace
 UInventoryItemMenuWidget::UInventoryItemMenuWidget(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
 	bIsBackHandler = true;
+
+	// The screen's actions stay out of the way while the menu is open, even in a stack inside the screen.
+	bIsModal = true;
 }
 
 TOptional<FUIInputConfig> UInventoryItemMenuWidget::GetDesiredInputConfig() const
@@ -437,27 +439,32 @@ void UInventoryItemMenuWidget::RefreshActions()
 		const bool bAvailable = Action->CanRunFor(Context);
 		const bool bShown = bAvailable || Action->WhenUnavailable == EInventoryActionUnavailable::ShowDisabled;
 
-		// A button placed in the designer and named by the action, or one made for it.
 		UCommonButtonBase* Button = nullptr;
 		if (!Action->ButtonName.IsNone())
 		{
 			Button = WidgetTree ? Cast<UCommonButtonBase>(WidgetTree->FindWidget(Action->ButtonName)) : nullptr;
-			if (!Button)
+			if (Button)
+			{
+				Button->SetVisibility(bShown ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+			}
+			else if (bShown)
 			{
 				UE_LOG(LogInventory, Warning, TEXT("[Inventory UI] %s: no button named %s for the action %s."),
 					*GetPathNameSafe(this), *Action->ButtonName.ToString(), *GetNameSafe(Action));
-				continue;
 			}
-			Button->SetVisibility(bShown ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 		}
-		else if (bShown && ActionButtonClass && ActionPanel)
+		if (!Button && bShown)
 		{
-			UInventoryItemActionButton* Made = CreateWidget<UInventoryItemActionButton>(this, ActionButtonClass);
-			if (Made)
+			if (UInventoryItemActionButton* Made = ActionButtonClass && ActionPanel ? CreateWidget<UInventoryItemActionButton>(this, ActionButtonClass) : nullptr)
 			{
 				ActionPanel->AddChild(Made);
 				MadeButtons.Add(Made);
 				Button = Made;
+			}
+			else
+			{
+				UE_LOG(LogInventory, Warning, TEXT("[Inventory UI] %s: nowhere to list the action %s. Give the menu an Action Panel and an Action Button Class."),
+					*GetPathNameSafe(this), *GetNameSafe(Action));
 			}
 		}
 		if (!Button || !bShown)
@@ -492,6 +499,16 @@ void UInventoryItemMenuWidget::RefreshActions()
 	{
 		HandleActionHovered(0);
 	}
+}
+
+bool UInventoryItemMenuWidget::CanOpenFor(const FInventoryItemActionContext& Context) const
+{
+	TArray<UInventoryItemAction*> Gathered;
+	GatherActions(Gathered);
+	return Gathered.IsEmpty() || Gathered.ContainsByPredicate([&Context](const UInventoryItemAction* Action)
+	{
+		return Action->WhenUnavailable == EInventoryActionUnavailable::ShowDisabled || Action->CanRunFor(Context);
+	});
 }
 
 void UInventoryItemMenuWidget::ClearActionButtons()
@@ -762,7 +779,7 @@ void UInventoryItemMenuWidget::PlaceBeside(const FBox2D& Box)
 	const FVector2D Max = ItemBox.Max;
 	const FVector2D ScreenSize = UWidgetLayoutLibrary::GetViewportSize(this) / UWidgetLayoutLibrary::GetViewportScale(this);
 	const FBox2D ScreenBox(FVector2D::ZeroVector, ScreenSize);
-	const FBox2D Inside = FindBounds(ScreenBox);
+	const FBox2D Inside(FVector2D(ScreenPadding.Left, ScreenPadding.Top), ScreenSize - FVector2D(ScreenPadding.Right, ScreenPadding.Bottom));
 
 	PanelSlot->SetAutoSize(true);
 	const FVector2D MenuSize = MeasureMenuPanel();
@@ -799,33 +816,13 @@ void UInventoryItemMenuWidget::PlaceBeside(const FBox2D& Box)
 		Point = FVector2D(bOpenLeft ? Min.X - MenuGap - MenuSize.X : Max.X + MenuGap, Min.Y);
 	}
 
-	// Moved in as far as it takes to stay inside, and then on screen, whatever Keep Inside is.
+	// A negative padding can't push the menu off screen.
 	FVector2D TopLeft = Point - Alignment * MenuSize;
 	TopLeft = KeepIn(TopLeft, MenuSize, Inside);
 	TopLeft = KeepIn(TopLeft, MenuSize, ScreenBox);
 
 	PanelSlot->SetAlignment(Alignment);
 	PanelSlot->SetPosition(TopLeft + Alignment * MenuSize);
-}
-
-FBox2D UInventoryItemMenuWidget::FindBounds(const FBox2D& ScreenBox)
-{
-	FBox2D Bounds = ScreenBox;
-	if (KeepInside == EInventoryMenuBounds::Grid)
-	{
-		const UInventoryGridWidget* Grid = FindEnclosing<UInventoryGridWidget>(AnchorWidget.Get());
-		const FBox2D Cells = Grid ? Grid->GetCellsAbsoluteBox() : FBox2D(ForceInit);
-		if (Cells.bIsValid)
-		{
-			// Only the part of the grid that's on screen.
-			const FBox2D CellsInViewport = AbsoluteBoxToViewport(Cells);
-			Bounds = FBox2D(CellsInViewport.Min.ComponentMax(ScreenBox.Min), CellsInViewport.Max.ComponentMin(ScreenBox.Max));
-		}
-	}
-
-	Bounds.Min += FVector2D(KeepInsidePadding.Left, KeepInsidePadding.Top);
-	Bounds.Max -= FVector2D(KeepInsidePadding.Right, KeepInsidePadding.Bottom);
-	return Bounds;
 }
 
 FBox2D UInventoryItemMenuWidget::AbsoluteBoxToViewport(const FBox2D& AbsoluteBox)

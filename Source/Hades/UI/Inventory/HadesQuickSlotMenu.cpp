@@ -1,4 +1,4 @@
-﻿#include "HadesShortcutMenu.h"
+﻿#include "HadesQuickSlotMenu.h"
 
 #include "Blueprint/WidgetTree.h"
 #include "Components/PanelWidget.h"
@@ -13,7 +13,7 @@
 #include "Widgets/InventoryItemWidget.h"
 
 // Entry
-void UHadesShortcutEntry::NativePreConstruct()
+void UHadesQuickSlotMenuEntry::NativePreConstruct()
 {
 	Super::NativePreConstruct();
 
@@ -24,7 +24,7 @@ void UHadesShortcutEntry::NativePreConstruct()
 	}
 }
 
-void UHadesShortcutEntry::SetShortcut(int32 InSlotIndex, const UInputAction* SlotInput, FInventoryItemHandle SlotItem)
+void UHadesQuickSlotMenuEntry::SetQuickSlot(int32 InSlotIndex, const UInputAction* SlotInput, FInventoryItemHandle SlotItem)
 {
 	SlotIndex = InSlotIndex;
 	if (NumberText)
@@ -53,14 +53,7 @@ void UHadesShortcutEntry::SetShortcut(int32 InSlotIndex, const UInputAction* Slo
 }
 
 // Menu
-UHadesShortcutMenu::UHadesShortcutMenu(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
-{
-	// As the item menu it opens from: a click outside only closes it, and a right-click on another item opens that item's menu instead.
-	LeftPressOutside = EInventoryMenuOutsidePress::Close;
-	RightPressOutside = EInventoryMenuOutsidePress::PassThrough;
-}
-
-void UHadesShortcutMenu::NativeOnInitialized()
+void UHadesQuickSlotMenu::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 
@@ -69,7 +62,7 @@ void UHadesShortcutMenu::NativeOnInitialized()
 	{
 		WidgetTree->ForEachWidget([this](UWidget* Widget)
 		{
-			UHadesShortcutEntry* Entry = Cast<UHadesShortcutEntry>(Widget);
+			UHadesQuickSlotMenuEntry* Entry = Cast<UHadesQuickSlotMenuEntry>(Widget);
 			if (Entry && !(EntryPanel && Entry->IsChildOf(EntryPanel.Get())))
 			{
 				Entry->OnClicked().AddUObject(this, &ThisClass::HandleEntryClicked, Entry->GetSlotIndex());
@@ -79,7 +72,7 @@ void UHadesShortcutMenu::NativeOnInitialized()
 	}
 }
 
-void UHadesShortcutMenu::NativeOnItemChanged()
+void UHadesQuickSlotMenu::NativeOnItemChanged()
 {
 	Super::NativeOnItemChanged();
 
@@ -88,14 +81,14 @@ void UHadesShortcutMenu::NativeOnItemChanged()
 	Entries = PlacedEntries;
 
 	// Placed entries for slots the player doesn't have are hidden, so a layout such as a cross keeps its shape.
-	for (UHadesShortcutEntry* Entry : PlacedEntries)
+	for (UHadesQuickSlotMenuEntry* Entry : PlacedEntries)
 	{
 		const int32 EntrySlot = Entry->GetSlotIndex();
 		const bool bHasSlot = EntrySlot < NumSlots;
 		Entry->SetVisibility(bHasSlot ? ESlateVisibility::Visible : ESlateVisibility::Hidden);
 		if (bHasSlot)
 		{
-			Entry->SetShortcut(EntrySlot, QuickSlots->GetSlotInputAction(EntrySlot), QuickSlots->GetSlotItem(EntrySlot));
+			Entry->SetQuickSlot(EntrySlot, QuickSlots->GetSlotInputAction(EntrySlot), QuickSlots->GetSlotItem(EntrySlot));
 		}
 	}
 
@@ -105,34 +98,34 @@ void UHadesShortcutMenu::NativeOnItemChanged()
 		EntryPanel->ClearChildren();
 		for (int32 NewSlot = 0; EntryClass && NewSlot < NumSlots; ++NewSlot)
 		{
-			UHadesShortcutEntry* Entry = CreateWidget<UHadesShortcutEntry>(this, EntryClass);
+			UHadesQuickSlotMenuEntry* Entry = CreateWidget<UHadesQuickSlotMenuEntry>(this, EntryClass);
 			EntryPanel->AddChild(Entry);
-			Entry->SetShortcut(NewSlot, QuickSlots->GetSlotInputAction(NewSlot), QuickSlots->GetSlotItem(NewSlot));
+			Entry->SetQuickSlot(NewSlot, QuickSlots->GetSlotInputAction(NewSlot), QuickSlots->GetSlotItem(NewSlot));
 			Entry->OnClicked().AddUObject(this, &ThisClass::HandleEntryClicked, NewSlot);
 			Entries.Add(Entry);
 		}
 	}
 }
 
-UWidget* UHadesShortcutMenu::NativeGetDesiredFocusTarget() const
+UWidget* UHadesQuickSlotMenu::NativeGetDesiredFocusTarget() const
 {
-	// The shortcut the item is on, or else the first one.
+	// The slot the item is on, or else the first one.
 	const UHadesQuickSlotComponent* QuickSlots = GetQuickSlots();
 	const int32 CurrentSlot = QuickSlots ? QuickSlots->FindSlot(GetItem()) : INDEX_NONE;
-	if (UHadesShortcutEntry* Current = FindEntry(CurrentSlot))
+	if (UHadesQuickSlotMenuEntry* Current = FindEntry(CurrentSlot))
 	{
 		return Current;
 	}
-	if (UHadesShortcutEntry* First = FindEntry(0))
+	if (UHadesQuickSlotMenuEntry* First = FindEntry(0))
 	{
 		return First;
 	}
 	return Super::NativeGetDesiredFocusTarget();
 }
 
-UHadesShortcutEntry* UHadesShortcutMenu::FindEntry(int32 SlotIndex) const
+UHadesQuickSlotMenuEntry* UHadesQuickSlotMenu::FindEntry(int32 SlotIndex) const
 {
-	for (UHadesShortcutEntry* Entry : Entries)
+	for (UHadesQuickSlotMenuEntry* Entry : Entries)
 	{
 		if (Entry && Entry->GetSlotIndex() == SlotIndex && Entry->IsVisible())
 		{
@@ -142,8 +135,13 @@ UHadesShortcutEntry* UHadesShortcutMenu::FindEntry(int32 SlotIndex) const
 	return nullptr;
 }
 
-void UHadesShortcutMenu::HandleEntryClicked(int32 SlotIndex)
+void UHadesQuickSlotMenu::HandleEntryClicked(int32 SlotIndex)
 {
+	if (IsClosing())
+	{
+		return;
+	}
+
 	if (UHadesQuickSlotComponent* QuickSlots = GetQuickSlots())
 	{
 		if (QuickSlots->GetSlotItem(SlotIndex) == GetItem())
@@ -155,10 +153,10 @@ void UHadesShortcutMenu::HandleEntryClicked(int32 SlotIndex)
 			QuickSlots->AssignItem(SlotIndex, GetItem());
 		}
 	}
-	DeactivateWidget();
+	CloseMenu();
 }
 
-UHadesQuickSlotComponent* UHadesShortcutMenu::GetQuickSlots() const
+UHadesQuickSlotComponent* UHadesQuickSlotMenu::GetQuickSlots() const
 {
 	const APawn* Pawn = GetOwningPlayerPawn();
 	return Pawn ? Pawn->FindComponentByClass<UHadesQuickSlotComponent>() : nullptr;

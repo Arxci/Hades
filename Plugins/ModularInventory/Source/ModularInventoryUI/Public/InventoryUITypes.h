@@ -95,7 +95,7 @@ enum class EInventoryItemPress : uint8
 {
 	/** Picks the item up, to put down with another click or Accept. */
 	PickUp,
-	/** Asks for the item's menu: the Inventory UI Subsystem's On Context Requested, which an inventory screen passes to On Item Menu Requested. */
+	/** Asks for the item's menu with the Inventory UI Subsystem's Request Item Menu, which an inventory screen answers. */
 	OpenItemMenu,
 	/** Nothing. The item can still be dragged, and a screen's Move and Item Menu actions still work on it. */
 	None,
@@ -291,7 +291,7 @@ struct MODULARINVENTORYUI_API FInventoryItemPreview
 
 	/** Drawn as if hovered, to see the highlight. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
-	bool bLit = false;
+	bool bHighlighted = false;
 
 	/** Tag values it has instead of its definition's, such as durability for a meter. A game's item widget can read others for its own marks. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (TitleProperty = "Tag"))

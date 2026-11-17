@@ -1,59 +1,51 @@
 ﻿#include "HadesTabButton.h"
 
-#include "CommonTextBlock.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
-#include "Engine/Texture2D.h"
 
 UHadesTabButton::UHadesTabButton(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
 	// Tabs change with their keys, so gamepad focus stays on the page.
 	SetIsFocusable(false);
+	Justification = EHadesMenuButtonJustify::Center;
 }
 
 void UHadesTabButton::NativePreConstruct()
 {
 	Super::NativePreConstruct();
 
-	if (Icon && IconTexture)
-	{
-		// Keeps the designer's Image Size, whatever the texture's size.
-		Icon->SetBrushFromTexture(IconTexture, /*bMatchSize*/ false);
-	}
-	if (Icon)
-	{
-		Icon->SetVisibility(IconTexture ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
-	}
-	if (Label)
-	{
-		Label->SetText(LabelText);
-	}
-	SetActive(bActive);
+	RefreshTab();
 }
 
-void UHadesTabButton::SetActive(bool bInActive)
+void UHadesTabButton::NativeOnSelected(bool bBroadcast)
 {
-	bActive = bInActive;
+	Super::NativeOnSelected(bBroadcast);
+
+	RefreshTab();
+}
+
+void UHadesTabButton::NativeOnDeselected(bool bBroadcast)
+{
+	Super::NativeOnDeselected(bBroadcast);
+
+	RefreshTab();
+}
+
+void UHadesTabButton::RefreshTab()
+{
+	const bool bOpen = GetSelected();
 	if (Icon)
 	{
-		Icon->SetRenderScale(FVector2D(bActive ? ActiveIconScale : 1.0f));
-		Icon->SetColorAndOpacity(bActive ? ActiveIconColor : IconColor);
+		Icon->SetRenderScale(FVector2D(bOpen ? SelectedIconScale : 1.0f));
 	}
 	if (Label)
 	{
 		// Hidden, not collapsed, so the tab bar doesn't shift as tabs change.
-		Label->SetVisibility(bActive || !IconTexture ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+		const bool bShowLabel = bOpen || bAlwaysShowLabel || !IconTexture;
+		Label->SetVisibility(bShowLabel ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
 	}
-	if (UCommonTextBlock* CommonLabel = Cast<UCommonTextBlock>(Label))
+	if (SelectedFrame)
 	{
-		const TSubclassOf<UCommonTextStyle> LabelStyle = bActive ? ActiveLabelStyle : InactiveLabelStyle;
-		if (LabelStyle)
-		{
-			CommonLabel->SetStyle(LabelStyle);
-		}
-	}
-	if (ActiveFrame)
-	{
-		ActiveFrame->SetVisibility(bActive ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+		SelectedFrame->SetVisibility(bOpen ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
 	}
 }

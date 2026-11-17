@@ -4,8 +4,6 @@
 
 #include "CommonButtonBase.h"
 
-#include "Hades/UI/Inventory/HadesInventoryItemWidget.h"
-
 #include "InventoryUITypes.h"
 
 #include "HadesQuickSlotWidget.generated.h"
@@ -64,7 +62,7 @@ protected:
 	TObjectPtr<UTextBlock> SpareAmmoText;
 
 	UPROPERTY(EditAnywhere, Category = "Quick Slot")
-	FHadesAmmoColors AmmoColors;
+	FInventoryMeterColors AmmoColors;
 
 private:
 	/** The HUD is made before the pawn exists, so the slots are found once it's possessed. */

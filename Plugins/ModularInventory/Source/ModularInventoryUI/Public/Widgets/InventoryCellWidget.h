@@ -48,6 +48,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory|Cell")
 	bool IsLocked() const { return bLocked; }
 
+#if WITH_EDITOR
+	virtual void ValidateCompiledWidgetTree(const UWidgetTree& BlueprintWidgetTree, class IWidgetCompilerLog& CompileLog) const override;
+#endif
+
 protected:
 	//~ Begin UUserWidget Interface
 	virtual void NativeOnInitialized() override;

@@ -28,40 +28,26 @@ struct FUIInputConfig;
 enum class ECommonInputType : uint8;
 
 
-/** Where an item menu opens. Each but As Designed then moves in as far as it takes to stay inside what Keep Inside says. */
+/** Where an item menu opens. Each but As Designed then moves in as far as it takes to stay on screen. */
 UENUM(BlueprintType)
 enum class EInventoryMenuPlacement : uint8
 {
 	/**
-	 * Beside the item, on the side toward the middle of what Keep Inside says, the screen or the item's grid: level with the item's top in
-	 * the upper half, and with its bottom in the lower half.
+	 * Beside the item, on the side toward the middle of the screen: level with the item's top in the upper half, and with its bottom in
+	 * the lower half.
 	 */
 	TowardCenter,
 	/** On the item's right, level with its top. It goes to the left where only that side has room. */
 	Right,
 	/** On the item's left, level with its top. It goes to the right where only that side has room. */
 	Left,
-	/** Wherever Menu Panel is in the designer, such as a fixed spot for a menu that isn't laid out around the item. Keep Inside doesn't apply. */
+	/** Wherever Menu Panel is in the designer, such as a fixed spot for a menu that isn't laid out around the item. */
 	AsDesigned,
 	/**
 	 * At the cursor, down and to the right of it as desktop context menus open, or up or to the left where only that side has room. Without
 	 * the mouse, such as on a gamepad, it opens as Toward Center does.
 	 */
 	AtCursor
-};
-
-
-/** What an item menu stays inside. Whatever it is, the menu stays on screen too. */
-UENUM(BlueprintType)
-enum class EInventoryMenuBounds : uint8
-{
-	/** The screen. */
-	Screen,
-	/**
-	 * The cells of the grid the item is in, so the menu opens over the grid rather than what's around it. Where the menu is wider or taller
-	 * than the cells, it lines up with their left or top edge. A menu whose item isn't in a grid stays inside the screen.
-	 */
-	Grid
 };
 
 
@@ -81,11 +67,11 @@ enum class EInventoryMenuOutsidePress : uint8
 
 
 /**
- * A small menu for one item, such as Use, Equip and Drop, opened beside it: push it onto a modal layer from an inventory screen's
- * On Item Menu Requested, then call Set Item. While it's open the item is selected, and nothing is held.
- * It lists the item actions of its Action Set and Actions: a button made for each in Action Panel, or one placed in the designer and named
- * by the action. An action can ask the player to confirm, or how many, in Prompt Panel first. The screen's action hint says what the
- * highlighted one does.
+ * A small menu for one item, such as Use, Equip and Drop, opened beside it: set it as an inventory screen's Item Menu Class, or open it
+ * with the screen's Open Item Menu. While it's open the item is selected, and nothing is held.
+ * It lists the item actions of its Action Set and Actions: each on the button placed in the designer under its Button Name, or else on a
+ * button made for it in Action Panel. An action can ask the player to confirm, or how many, in Prompt Panel first. The screen's action
+ * hint says what the highlighted one does.
  * Back, or a right press on the menu, closes it. A press outside Menu Panel closes it too, and goes on to the item under it as Left Press
  * Outside and Right Press Outside say. It also closes by itself when its item leaves the inventory, such as when it's used up, and when
  * its screen closes. Name animations OpenAnimation and CloseAnimation to play them as it opens and closes.
@@ -128,6 +114,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Item Menu")
 	void CloseMenu();
 
+	/** Close Animation is playing, and the menu closes once it ends. Ignore presses on the menu meanwhile. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Item Menu")
+	bool IsClosing() const { return bClosing; }
+
 	/** Who and what the menu's actions run for: its item, player and screen. */
 	UFUNCTION(BlueprintPure, Category = "Inventory|Item Menu")
 	FInventoryItemActionContext GetActionContext() const;
@@ -135,6 +125,12 @@ public:
 	/** Lists the actions again, such as after something changed what can run. Set Item does it. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Item Menu")
 	void RefreshActions();
+
+	/**
+	 * Whether the menu has anything for the item: an action it would list. A menu without actions, such as one laid out by hand for
+	 * something else, always has. Screens ask the menu's class defaults before opening it.
+	 */
+	virtual bool CanOpenFor(const FInventoryItemActionContext& Context) const;
 
 protected:
 	//~ Begin UUserWidget Interface
@@ -186,16 +182,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu", meta = (ClampMin = "0", EditCondition = "Placement != EInventoryMenuPlacement::AsDesigned"))
 	float MenuGap = 0.0f;
 
-	/**
-	 * What the menu stays inside: the screen, or the cells of the grid its item is in. The menu opens on the side of the item that has room
-	 * inside it, and otherwise moves in from its edges, over the item if it has to.
-	 */
+	/** Space kept between the menu and each edge of the screen, in pixels. */
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu", meta = (EditCondition = "Placement != EInventoryMenuPlacement::AsDesigned"))
-	EInventoryMenuBounds KeepInside = EInventoryMenuBounds::Screen;
-
-	/** Space kept between the menu and each edge of what it stays inside, in pixels. Negative lets it go past that edge. */
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu", meta = (EditCondition = "Placement != EInventoryMenuPlacement::AsDesigned"))
-	FMargin KeepInsidePadding;
+	FMargin ScreenPadding;
 
 	/**
 	 * What a left press outside Menu Panel does. Close suits a menu that has the player's attention, so a stray click only closes it.
@@ -243,7 +232,7 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Instanced, Category = "Inventory|Item Menu|Actions")
 	TArray<TObjectPtr<UInventoryItemAction>> Actions;
 
-	/** Made for each action without a Button Name, in Action Panel. */
+	/** Made in Action Panel for each action without a button placed for it. */
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu|Actions")
 	TSubclassOf<UInventoryItemActionButton> ActionButtonClass;
 
@@ -305,9 +294,6 @@ private:
 
 	FBox2D FindAnchor(const UInventoryItemWidget* ItemWidget) const;
 	void PlaceBeside(const FBox2D& Box);
-
-	/** What the menu stays inside, in viewport space, Keep Inside Padding taken off: the cells of its item's grid, or the screen. */
-	FBox2D FindBounds(const FBox2D& ScreenBox);
 
 	/** An absolute (desktop) box in viewport space, where Menu Panel's canvas positions are. */
 	FBox2D AbsoluteBoxToViewport(const FBox2D& AbsoluteBox);

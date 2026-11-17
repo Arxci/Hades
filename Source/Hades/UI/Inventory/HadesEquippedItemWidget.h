@@ -3,10 +3,14 @@
 #include "CoreMinimal.h"
 
 #include "Blueprint/UserWidget.h"
+#include "GameplayTagContainer.h"
+
+#include "InventoryTypes.h"
+#include "InventoryUITypes.h"
 
 #include "HadesEquippedItemWidget.generated.h"
 
-class UHadesQuickSlotComponent;
+class UInventoryEquipmentComponent;
 class UInventoryItemWidget;
 class UTextBlock;
 
@@ -40,7 +44,12 @@ protected:
 
 private:
 	UFUNCTION()
+	void HandleEquipmentChanged(FInventoryItemHandle Item, FGameplayTag EquipSlot);
+
 	void Refresh();
 
-	TWeakObjectPtr<UHadesQuickSlotComponent> QuickSlots;
+	TWeakObjectPtr<UInventoryEquipmentComponent> Equipment;
+
+	/** The item in hand changes without being equipped again, such as a gun's rounds. */
+	FInventoryRegistryListener RegistryListener;
 };

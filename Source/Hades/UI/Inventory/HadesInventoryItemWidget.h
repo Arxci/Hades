@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 
+#include "InventoryUITypes.h"
 #include "Widgets/InventoryItemWidget.h"
 
 #include "HadesInventoryItemWidget.generated.h"
@@ -11,28 +12,9 @@ class UHadesQuickSlotComponent;
 class UTextBlock;
 
 
-/** Colors a gun's rounds by how full it is, as in Requiem. */
-USTRUCT(BlueprintType)
-struct FHadesAmmoColors
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, Category = "Ammo")
-	FSlateColor Full = FSlateColor(FLinearColor(FColor(140, 193, 82)));
-
-	UPROPERTY(EditAnywhere, Category = "Ammo")
-	FSlateColor Partly = FSlateColor(FLinearColor(FColor(232, 226, 212)));
-
-	UPROPERTY(EditAnywhere, Category = "Ammo")
-	FSlateColor Empty = FSlateColor(FLinearColor(FColor(217, 83, 79)));
-
-	const FSlateColor& Pick(int32 Rounds, int32 Capacity) const { return Rounds <= 0 ? Empty : Rounds >= Capacity ? Full : Partly; }
-};
-
-
 /**
- * An item in the inventory with the game's marks on it: the key of the shortcut it's on, whether it's in hand, and a gun's rounds.
- * The plugin's item widget lights it up and hides its Background on the stand-in for a moved item.
+ * An item in the inventory with the game's marks on it: the key of the quick slot it's on, whether it's in hand, and a gun's rounds.
+ * The plugin's item widget highlights it and hides its Background on the stand-in for a moved item.
  */
 UCLASS(Abstract)
 class HADES_API UHadesInventoryItemWidget : public UInventoryItemWidget
@@ -49,17 +31,17 @@ protected:
 	virtual void NativeOnItemChanged() override;
 	//~ End UInventoryItemWidget Interface
 
-	/** The key the player has bound to the item's shortcut, which follows rebinding. It collapses itself while the item has no shortcut. */
+	/** The key the player has bound to the item's quick slot, which follows rebinding. It collapses itself while the item has no quick slot. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
-	TObjectPtr<UHadesInputKeyWidget> ShortcutKeyWidget;
+	TObjectPtr<UHadesInputKeyWidget> QuickSlotKeyWidget;
 
-	/** The number of the shortcut the item is on, 1 for the first, such as on a badge in the corner. Collapsed while it has none. */
+	/** The number of the quick slot the item is on, 1 for the first, such as on a badge in the corner. Collapsed while it has none. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> ShortcutNumberText;
+	TObjectPtr<UTextBlock> QuickSlotNumberText;
 
-	/** Shown only while the item is on a shortcut, such as the corner Shortcut Key sits on. */
+	/** Shown only while the item is on a quick slot, such as the corner Quick Slot Key Widget sits on. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
-	TObjectPtr<UWidget> ShortcutMarker;
+	TObjectPtr<UWidget> QuickSlotMarker;
 
 	/** Shown only while Count Text or Ammo Text shows, such as the darker patch behind the number. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
@@ -74,7 +56,7 @@ protected:
 	TObjectPtr<UTextBlock> AmmoText;
 
 	UPROPERTY(EditAnywhere, Category = "Inventory|Item")
-	FHadesAmmoColors AmmoColors;
+	FInventoryMeterColors AmmoColors;
 
 private:
 	UFUNCTION()

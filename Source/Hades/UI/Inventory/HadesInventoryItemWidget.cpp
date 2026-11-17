@@ -61,7 +61,7 @@ void UHadesInventoryItemWidget::RefreshMarks()
 	if (const FInventoryItemPreview* ShownPreview = GetPreview())
 	{
 		float Value = 0.0f;
-		SlotIndex = ShownPreview->FindTagValue(HadesGameplayTags::UI_Preview_Shortcut, Value) && Value >= 1.0f ? FMath::RoundToInt32(Value) - 1 : INDEX_NONE;
+		SlotIndex = ShownPreview->FindTagValue(HadesGameplayTags::UI_Preview_QuickSlot, Value) && Value >= 1.0f ? FMath::RoundToInt32(Value) - 1 : INDEX_NONE;
 		bInHand = ShownPreview->FindTagValue(HadesGameplayTags::UI_Preview_InHand, Value) && Value > 0.0f;
 
 		const FHadesGun* Gun = ShownPreview->Definition ? ShownPreview->Definition->FindFragment<FHadesGun>() : nullptr;
@@ -79,19 +79,19 @@ void UHadesInventoryItemWidget::RefreshMarks()
 		Rounds = Capacity > 0 ? Inventory->GetLoadedRounds(GetItem()) : 0;
 	}
 
-	if (ShortcutKeyWidget)
+	if (QuickSlotKeyWidget)
 	{
 		// The slot's input action comes from the quick slot component, which a preview has none of.
-		ShortcutKeyWidget->SetInputAction(SlotIndex != INDEX_NONE && Component ? Component->GetSlotInputAction(SlotIndex) : nullptr);
+		QuickSlotKeyWidget->SetInputAction(SlotIndex != INDEX_NONE && Component ? Component->GetSlotInputAction(SlotIndex) : nullptr);
 	}
-	if (ShortcutNumberText)
+	if (QuickSlotNumberText)
 	{
-		ShortcutNumberText->SetText(SlotIndex != INDEX_NONE ? FText::AsNumber(SlotIndex + 1) : FText::GetEmpty());
-		ShortcutNumberText->SetVisibility(SlotIndex != INDEX_NONE ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		QuickSlotNumberText->SetText(SlotIndex != INDEX_NONE ? FText::AsNumber(SlotIndex + 1) : FText::GetEmpty());
+		QuickSlotNumberText->SetVisibility(SlotIndex != INDEX_NONE ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
-	if (ShortcutMarker)
+	if (QuickSlotMarker)
 	{
-		ShortcutMarker->SetVisibility(SlotIndex != INDEX_NONE ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		QuickSlotMarker->SetVisibility(SlotIndex != INDEX_NONE ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
 
 	if (EquippedMarker)
@@ -105,7 +105,7 @@ void UHadesInventoryItemWidget::RefreshMarks()
 		if (Capacity > 0)
 		{
 			AmmoText->SetText(FText::AsNumber(Rounds));
-			AmmoText->SetColorAndOpacity(AmmoColors.Pick(Rounds, Capacity));
+			AmmoText->SetColorAndOpacity(FSlateColor(AmmoColors.Pick(static_cast<float>(Rounds) / Capacity)));
 		}
 	}
 

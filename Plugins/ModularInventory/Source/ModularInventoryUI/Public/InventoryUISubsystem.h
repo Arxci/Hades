@@ -186,7 +186,7 @@ public:
 	 * Accept say, and so does a screen's Item Menu action; call it from your own binding otherwise.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
-	void RequestContext(FInventoryItemHandle Item);
+	void RequestItemMenu(FInventoryItemHandle Item);
 
 	/**
 	 * Asks the screen to run the item's default action, the first of its Default Actions that can run, such as Use. Presses on items call
@@ -269,8 +269,9 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Inventory UI")
 	FInventoryUIItemSignature OnSelectedItemChanged;
 
+	/** Request Item Menu was called. Inventory screens open their Item Menu Class for the item. */
 	UPROPERTY(BlueprintAssignable, Category = "Inventory UI")
-	FInventoryUIItemSignature OnContextRequested;
+	FInventoryUIItemSignature OnItemMenuRequested;
 
 	/** Request Default Action was called. Inventory screens run their Default Actions for the item. */
 	UPROPERTY(BlueprintAssignable, Category = "Inventory UI")
