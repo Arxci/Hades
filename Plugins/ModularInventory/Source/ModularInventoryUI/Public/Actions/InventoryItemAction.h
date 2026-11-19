@@ -57,7 +57,10 @@ struct MODULARINVENTORYUI_API FInventoryItemActionContext
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Action")
 	TObjectPtr<UInventoryScreenWidget> Screen = nullptr;
 
-	/** The item menu the action was picked from, if any. It has closed by the time the action runs. */
+	/**
+	 * The item menu the action was picked from, if any. When the action runs, the menu is closing, or has closed, as its Action Timing
+	 * says; either way it takes no more input.
+	 */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Action")
 	TObjectPtr<UInventoryItemMenuWidget> Menu = nullptr;
 

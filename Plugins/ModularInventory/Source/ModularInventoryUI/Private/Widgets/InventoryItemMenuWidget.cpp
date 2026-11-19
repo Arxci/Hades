@@ -18,6 +18,7 @@
 #include "Input/CommonUIInputTypes.h"
 #include "InputCoreTypes.h"
 #include "Kismet/GameplayStatics.h"
+#include "Layout/WidgetPath.h"
 #include "Sound/SoundBase.h"
 
 #include "Data/InventoryItemDefinition.h"
@@ -86,6 +87,19 @@ namespace
 		return nullptr;
 	}
 
+	/** Whether the widget is on the path, such as the path to the widget taking focus. */
+	bool IsOnPath(const FWidgetPath& Path, const SWidget& Widget)
+	{
+		for (int32 Index = 0; Index < Path.Widgets.Num(); ++Index)
+		{
+			if (&Path.Widgets[Index].Widget.Get() == &Widget)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
 	/** Presses and lets go of the left mouse button where the cursor is, as Common UI does for a gamepad's Accept while its cursor shows. */
 	void ClickAtCursor(ULocalPlayer* LocalPlayer)
 	{
@@ -124,6 +138,9 @@ TOptional<FUIInputConfig> UInventoryItemMenuWidget::GetDesiredInputConfig() cons
 void UInventoryItemMenuWidget::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
+
+	// The whole menu fades, a full-screen backdrop included, and Menu Panel moves, as it alone is laid out around the item.
+	TransitionPlayer.Init(this, MenuPanel);
 
 	if (ConfirmButton)
 	{
@@ -211,7 +228,7 @@ void UInventoryItemMenuWidget::BindScreen(UInventoryScreenWidget* NewScreen)
 void UInventoryItemMenuWidget::HandleScreenDeactivated()
 {
 	// The game closed the screen under the menu, such as for a cutscene.
-	CloseNow();
+	CloseMenuNow();
 }
 
 void UInventoryItemMenuWidget::NativeOnActivated()
@@ -219,6 +236,7 @@ void UInventoryItemMenuWidget::NativeOnActivated()
 	Super::NativeOnActivated();
 
 	bClosing = false;
+	bWaitingForCloseAnimation = false;
 	AfterClosing = TFunction<void()>();
 	if (UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer()))
 	{
@@ -232,10 +250,22 @@ void UInventoryItemMenuWidget::NativeOnActivated()
 	{
 		UGameplayStatics::PlaySound2D(this, OpenSound);
 	}
+
+	// Set Item has placed it, so it comes from where it opened. It starts afresh, as a menu is reused from however it last closed.
+	TransitionPlayer.PlayIn(OpenTransition);
+	StartTransitionTicker();
 	if (OpenAnimation)
 	{
 		PlayAnimation(OpenAnimation);
 	}
+
+	// The first entry is highlighted at once, and takes focus once the menu is laid out: Common UI focuses it as the menu activates, but
+	// that can be before the menu was ever drawn, when it can't take focus yet. A menu shown again from under another keeps its entry,
+	// highlighted afresh so its hint shows again.
+	UCommonButtonBase* Entry = Cast<UCommonButtonBase>(GetDesiredFocusTarget());
+	ClearHighlight();
+	HighlightEntry(Entry, /*bFocus*/ false);
+	FocusNextFrame();
 }
 
 void UInventoryItemMenuWidget::NativeOnDeactivated()
@@ -250,11 +280,19 @@ void UInventoryItemMenuWidget::NativeOnDeactivated()
 		Input->OnInputMethodChangedNative.RemoveAll(this);
 	}
 
-	// Closed some other way while Close Animation played, such as with its screen.
+	// The transition stops where it got to: hidden after a close, and cut short by anything else. The next opening starts it afresh.
+	FTSTicker::GetCoreTicker().RemoveTicker(TransitionHandle);
+	TransitionHandle = FTSTicker::FDelegateHandle();
+	TransitionPlayer.Stop();
+
+	// Closed some other way while closing, such as with its screen: an action waiting for the close doesn't run. Cleared first, so the
+	// animation stopping doesn't finish the close again.
 	const bool bWasClosing = bClosing;
+	const bool bCloseAnimationPlaying = bWaitingForCloseAnimation;
 	bClosing = false;
+	bWaitingForCloseAnimation = false;
 	AfterClosing = TFunction<void()>();
-	if (bWasClosing && CloseAnimation)
+	if (bCloseAnimationPlaying && CloseAnimation)
 	{
 		StopAnimation(CloseAnimation);
 	}
@@ -273,9 +311,11 @@ void UInventoryItemMenuWidget::NativeOnDeactivated()
 	{
 		Interaction->SetSelectedItem(FInventoryItemHandle());
 	}
-	if (CloseSound)
+
+	// A close that played made its sound as it started.
+	if (!bWasClosing)
 	{
-		UGameplayStatics::PlaySound2D(this, CloseSound);
+		PlayCloseSound();
 	}
 
 	Super::NativeOnDeactivated();
@@ -288,18 +328,35 @@ UWidget* UInventoryItemMenuWidget::NativeGetDesiredFocusTarget() const
 		return Target;
 	}
 
-	// While a prompt asks: the count to choose, or the safe answer.
+	// While a prompt asks: its button the mouse or focus reached last, or else where it starts: the count to choose, then the safe answer
+	// to a confirmation, or the prompt's first button.
+	UCommonButtonBase* Highlighted = HighlightedEntry.Get();
+	const bool bHighlightUsable = Highlighted && Highlighted->IsVisible() && Highlighted->GetIsEnabled();
 	if (IsPrompting())
 	{
+		if (bHighlightUsable && IsPromptButton(Highlighted))
+		{
+			return Highlighted;
+		}
 		if (bPromptQuantity && QuantitySlider && QuantitySlider->IsVisible())
 		{
 			return QuantitySlider.Get();
 		}
-		if (CancelButton && CancelButton->IsVisible())
+		if (bConfirmStartsOnCancel && CancelButton && CancelButton->IsVisible())
 		{
 			return CancelButton.Get();
 		}
+		if (UCommonButtonBase* First = FindFirstButtonIn(PromptPanel.Get()))
+		{
+			return First;
+		}
 		return ConfirmButton.Get();
+	}
+
+	// The highlighted entry, such as the one a prompt was answered for, or else the first.
+	if (bHighlightUsable)
+	{
+		return Highlighted;
 	}
 	return FindFirstButtonIn(MenuPanel.Get());
 }
@@ -311,7 +368,7 @@ bool UInventoryItemMenuWidget::NativeOnHandleBackAction()
 		return Super::NativeOnHandleBackAction();
 	}
 
-	// Back answers a prompt first, then closes the menu, as the base class does, but after Close Animation.
+	// Back answers a prompt first, then closes the menu, as the base class does, but after its close transition and Close Animation.
 	if (!bClosing && IsPrompting())
 	{
 		HandlePromptCancelled();
@@ -341,22 +398,33 @@ void UInventoryItemMenuWidget::CloseThen(TFunction<void()>&& AfterClose)
 		return;
 	}
 
+	// From here the menu takes no more input, and the screen says its own hint again, as the menu starts to go.
+	bClosing = true;
+	AfterClosing = MoveTemp(AfterClose);
+	ShowHint(FText::GetEmpty());
+	PlayCloseSound();
+
+	if (bCloseReversesOpen)
+	{
+		TransitionPlayer.ReverseIn();
+	}
+	else
+	{
+		TransitionPlayer.PlayOut(CloseTransition);
+	}
+	StartTransitionTicker();
+
 	if (CloseAnimation)
 	{
-		bClosing = true;
-		AfterClosing = MoveTemp(AfterClose);
+		bWaitingForCloseAnimation = true;
 		PlayAnimation(CloseAnimation);
-		return;
 	}
 
-	DeactivateWidget();
-	if (AfterClose)
-	{
-		AfterClose();
-	}
+	// At once, when there's nothing to play.
+	FinishClosingWhenDone();
 }
 
-void UInventoryItemMenuWidget::CloseNow()
+void UInventoryItemMenuWidget::CloseMenuNow()
 {
 	if (IsActivated())
 	{
@@ -368,10 +436,50 @@ void UInventoryItemMenuWidget::OnAnimationFinished_Implementation(const UWidgetA
 {
 	Super::OnAnimationFinished_Implementation(Animation);
 
-	if (bClosing && Animation && Animation == CloseAnimation.Get())
+	if (bWaitingForCloseAnimation && Animation && Animation == CloseAnimation.Get())
+	{
+		bWaitingForCloseAnimation = false;
+		FinishClosingWhenDone();
+	}
+}
+
+void UInventoryItemMenuWidget::FinishClosingWhenDone()
+{
+	if (bClosing && !TransitionPlayer.IsPlaying() && !bWaitingForCloseAnimation)
 	{
 		FinishClosing();
 	}
+}
+
+void UInventoryItemMenuWidget::PlayCloseSound()
+{
+	if (CloseSound)
+	{
+		UGameplayStatics::PlaySound2D(this, CloseSound);
+	}
+}
+
+void UInventoryItemMenuWidget::StartTransitionTicker()
+{
+	FTSTicker::GetCoreTicker().RemoveTicker(TransitionHandle);
+	TransitionHandle = FTSTicker::FDelegateHandle();
+	if (!TransitionPlayer.IsPlaying())
+	{
+		return;
+	}
+
+	TransitionHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateWeakLambda(this, [this](float DeltaTime)
+	{
+		if (TransitionPlayer.Advance(DeltaTime))
+		{
+			return true;
+		}
+
+		// Cleared before the close finishes, as finishing it can open the menu again, with a ticker of its own.
+		TransitionHandle = FTSTicker::FDelegateHandle();
+		FinishClosingWhenDone();
+		return false;
+	}));
 }
 
 void UInventoryItemMenuWidget::FinishClosing()
@@ -388,10 +496,12 @@ void UInventoryItemMenuWidget::FinishClosing()
 
 void UInventoryItemMenuWidget::HandleRegistryChanged(const FInventoryChangeSet& Changes)
 {
+	// The item is gone, such as used up by the game behind the menu, so the menu goes as Back would close it. One already closing, such as
+	// for the action that used the item up, carries on.
 	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
 	if (Item.IsSet() && Inventory && !Inventory->IsValidItem(Item))
 	{
-		CloseNow();
+		CloseMenu();
 	}
 }
 
@@ -429,6 +539,7 @@ void UInventoryItemMenuWidget::GatherActions(TArray<UInventoryItemAction*>& OutA
 
 void UInventoryItemMenuWidget::RefreshActions()
 {
+	ClearHighlight();
 	ClearActionButtons();
 
 	TArray<UInventoryItemAction*> Gathered;
@@ -494,10 +605,11 @@ void UInventoryItemMenuWidget::RefreshActions()
 		Shown.UnavailableReason = Reason;
 	}
 
-	// What the first entry does, until another is highlighted.
-	if (!ShownActions.IsEmpty())
+	// Listed again while open: the first entry on screen, not the first listed, is highlighted again. Opening does this itself.
+	if (IsActivated())
 	{
-		HandleActionHovered(0);
+		HighlightEntry(Cast<UCommonButtonBase>(GetDesiredFocusTarget()), /*bFocus*/ false);
+		FocusNextFrame();
 	}
 }
 
@@ -536,13 +648,108 @@ void UInventoryItemMenuWidget::ClearActionButtons()
 
 void UInventoryItemMenuWidget::HandleActionHovered(int32 Index)
 {
+	// The mouse highlights what it's over, and takes focus there so Accept runs it. Gamepad focus already moved Common UI's hidden cursor
+	// onto the button, so its focus stays as it is.
+	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
+	const bool bMouse = Input && Input->GetCurrentInputType() == ECommonInputType::MouseAndKeyboard;
+	if (ShownActions.IsValidIndex(Index))
+	{
+		HighlightEntry(ShownActions[Index].Button.Get(), bMouse);
+	}
+}
+
+void UInventoryItemMenuWidget::ShowHintFor(int32 Index)
+{
+	// Not while prompting or closing: the prompt asks, and a closing menu gives the screen its own hint back.
 	const FShownAction* Shown = ShownActions.IsValidIndex(Index) ? &ShownActions[Index] : nullptr;
 	const UInventoryItemAction* Action = Shown ? Shown->Action.Get() : nullptr;
-	if (Action && !IsPrompting())
+	if (Action && !IsPrompting() && !bClosing)
 	{
 		const bool bShowReason = !Shown->bAvailable && !Shown->UnavailableReason.IsEmpty();
 		ShowHint(bShowReason ? Shown->UnavailableReason : Action->Description);
 	}
+}
+
+// Highlight
+void UInventoryItemMenuWidget::HighlightEntry(UCommonButtonBase* Entry, bool bFocus)
+{
+	if (bClosing || !IsEntry(Entry))
+	{
+		return;
+	}
+
+	UCommonButtonBase* Previous = HighlightedEntry.Get();
+	if (Entry == Previous)
+	{
+		return;
+	}
+	HighlightedEntry = Entry;
+
+	if (bKeepEntryHighlighted)
+	{
+		if (Previous)
+		{
+			Previous->ClearSelection();
+		}
+
+		// Selected, so its style's Selected look shows it, yet still clickable, and only the menu unselects it.
+		Entry->SetIsSelectable(true);
+		Entry->SetIsToggleable(false);
+		Entry->SetIsInteractableWhenSelected(true);
+		Entry->SetIsSelected(true, /*bGiveClickFeedback*/ false);
+	}
+
+	const int32 Index = ShownActions.IndexOfByPredicate([Entry](const FShownAction& Shown) { return Shown.Button.Get() == Entry; });
+	if (Index != INDEX_NONE)
+	{
+		ShowHintFor(Index);
+	}
+	if (bFocus)
+	{
+		Entry->SetFocus();
+	}
+}
+
+void UInventoryItemMenuWidget::ClearHighlight()
+{
+	UCommonButtonBase* Previous = HighlightedEntry.Get();
+	if (Previous && bKeepEntryHighlighted)
+	{
+		Previous->ClearSelection();
+	}
+	HighlightedEntry.Reset();
+}
+
+bool UInventoryItemMenuWidget::IsEntry(UCommonButtonBase* Button) const
+{
+	return Button && ((MenuPanel && Button->IsChildOf(MenuPanel.Get())) || IsPromptButton(Button));
+}
+
+bool UInventoryItemMenuWidget::IsPromptButton(UCommonButtonBase* Button) const
+{
+	return Button && (Button == ConfirmButton || Button == CancelButton || (PromptPanel && Button->IsChildOf(PromptPanel.Get())));
+}
+
+void UInventoryItemMenuWidget::NativeOnFocusChanging(const FWeakWidgetPath& PreviousFocusPath, const FWidgetPath& NewWidgetPath, const FFocusEvent& InFocusEvent)
+{
+	Super::NativeOnFocusChanging(PreviousFocusPath, NewWidgetPath, InFocusEvent);
+
+	// Gamepad and keyboard focus highlight the entry they reach, the prompt's buttons included. Focus on anything else, such as Quantity
+	// Slider, leaves the highlight where it was.
+	UCommonButtonBase* Focused = nullptr;
+	if (MenuPanel)
+	{
+		UWidgetTree::ForWidgetAndChildren(MenuPanel, [&Focused, &NewWidgetPath](UWidget* Widget)
+		{
+			UCommonButtonBase* Button = Cast<UCommonButtonBase>(Widget);
+			const TSharedPtr<SWidget> SlateButton = Button ? Button->GetCachedWidget() : TSharedPtr<SWidget>();
+			if (!Focused && SlateButton && IsOnPath(NewWidgetPath, *SlateButton))
+			{
+				Focused = Button;
+			}
+		});
+	}
+	HighlightEntry(Focused, /*bFocus*/ false);
 }
 
 void UInventoryItemMenuWidget::HandleActionClicked(int32 Index)
@@ -585,19 +792,30 @@ void UInventoryItemMenuWidget::HandleActionClicked(int32 Index)
 
 void UInventoryItemMenuWidget::RunAction(UInventoryItemAction* Action, int32 Count)
 {
-	// The menu closes first, so the screen has focus again for whatever the action starts, such as choosing another item or opening another
-	// menu. It's asked again as it runs, as a close animation may have played.
 	FInventoryItemActionContext Context = GetActionContext();
 	Context.Count = Count;
 	const TWeakObjectPtr<UInventoryItemAction> WeakAction = Action;
-	CloseThen([WeakAction, Context]()
+	TFunction<void()> Run = [WeakAction, Context]()
 	{
+		// Asked again as it runs, as the close may have taken a while.
 		UInventoryItemAction* ToRun = WeakAction.Get();
 		if (ToRun && ToRun->CanRunFor(Context))
 		{
 			ToRun->RunFor(Context);
 		}
-	});
+	};
+
+	if (ActionTiming == EInventoryMenuActionTiming::AfterMenuCloses)
+	{
+		// The menu closes first, so the screen has focus again for whatever the action starts, such as choosing another item.
+		CloseThen(MoveTemp(Run));
+		return;
+	}
+
+	// The menu starts to close first, so it takes no more input and the screen's hint is back, and a menu the action opens in the same
+	// stack replaces it at once.
+	CloseMenu();
+	Run();
 }
 
 void UInventoryItemMenuWidget::ShowHint(const FText& Hint)
@@ -618,6 +836,7 @@ void UInventoryItemMenuWidget::ShowPrompt(int32 Index)
 	}
 
 	PromptIndex = Index;
+	PromptEntry = ShownActions[Index].Button;
 	bPromptQuantity = Action->Prompt == EInventoryActionPrompt::Quantity;
 	int32 Min = 1;
 	int32 Max = 1;
@@ -650,6 +869,9 @@ void UInventoryItemMenuWidget::ShowPrompt(int32 Index)
 	}
 	PromptPanel->SetVisibility(PromptPanelVisibility);
 	PlaceBeside(Anchor);
+
+	// Where the prompt starts is highlighted at once, as the menu's first entry is as it opens, and takes focus once it's laid out.
+	HighlightEntry(Cast<UCommonButtonBase>(GetDesiredFocusTarget()), /*bFocus*/ false);
 	FocusNextFrame();
 }
 
@@ -669,7 +891,11 @@ void UInventoryItemMenuWidget::HidePrompt()
 	if (bWasPrompting && IsActivated())
 	{
 		PlaceBeside(Anchor);
+
+		// Back on the entry that asked, which takes focus again as the prompt's caller says.
+		HighlightEntry(PromptEntry.Get(), /*bFocus*/ false);
 	}
+	PromptEntry.Reset();
 }
 
 void UInventoryItemMenuWidget::RefreshPrompt()
@@ -709,12 +935,18 @@ void UInventoryItemMenuWidget::HandleQuantityChanged(float Value)
 void UInventoryItemMenuWidget::HandlePromptConfirmed()
 {
 	UInventoryItemAction* Action = ShownActions.IsValidIndex(PromptIndex) ? ShownActions[PromptIndex].Action.Get() : nullptr;
-	const int32 Count = GetChosenCount();
-	HidePrompt();
-	if (Action && !bClosing)
+	if (bClosing)
 	{
-		RunAction(Action, Count);
+		return;
 	}
+	if (!Action)
+	{
+		HidePrompt();
+		return;
+	}
+
+	// The prompt stays as the menu closes, rather than the actions coming back as it goes. Set Item hides it for the next item.
+	RunAction(Action, GetChosenCount());
 }
 
 void UInventoryItemMenuWidget::HandlePromptCancelled()
@@ -771,6 +1003,8 @@ void UInventoryItemMenuWidget::PlaceBeside(const FBox2D& Box)
 	UCanvasPanelSlot* PanelSlot = MenuPanel ? Cast<UCanvasPanelSlot>(MenuPanel->Slot) : nullptr;
 	if (!PanelSlot || Placement == EInventoryMenuPlacement::AsDesigned)
 	{
+		// Not laid out around the item, so transitions From Item come up from below, and grow from the middle.
+		TransitionPlayer.SetOrigin(FVector2D(0.0, -1.0), FVector2D(0.5, 0.5));
 		return;
 	}
 
@@ -788,6 +1022,10 @@ void UInventoryItemMenuWidget::PlaceBeside(const FBox2D& Box)
 	FVector2D Alignment = FVector2D::ZeroVector;
 	FVector2D Point;
 
+	// For transitions that come From Item: the way from the item to the menu, and the menu's corner nearest the item.
+	FVector2D Away;
+	FVector2D Corner;
+
 	const TOptional<FVector2D> CursorPoint = Placement == EInventoryMenuPlacement::AtCursor ? OpeningCursor : TOptional<FVector2D>();
 	if (CursorPoint.IsSet())
 	{
@@ -796,6 +1034,10 @@ void UInventoryItemMenuWidget::PlaceBeside(const FBox2D& Box)
 		const bool bOpenLeft = At.X + MenuGap + MenuSize.X > Inside.Max.X && At.X - MenuGap - MenuSize.X >= Inside.Min.X;
 		const bool bOpenUp = At.Y + MenuGap + MenuSize.Y > Inside.Max.Y && At.Y - MenuGap - MenuSize.Y >= Inside.Min.Y;
 		Point = FVector2D(bOpenLeft ? At.X - MenuGap - MenuSize.X : At.X + MenuGap, bOpenUp ? At.Y - MenuGap - MenuSize.Y : At.Y + MenuGap);
+
+		// Dropping down from the cursor, or up where it opened above it, as desktop menus do, from the corner at the cursor.
+		Away = FVector2D(0.0, bOpenUp ? -1.0 : 1.0);
+		Corner = FVector2D(bOpenLeft ? 1.0 : 0.0, bOpenUp ? 1.0 : 0.0);
 	}
 	else if (Placement == EInventoryMenuPlacement::TowardCenter || Placement == EInventoryMenuPlacement::AtCursor)
 	{
@@ -806,6 +1048,10 @@ void UInventoryItemMenuWidget::PlaceBeside(const FBox2D& Box)
 		const bool bOpenUp = Max.Y > Middle.Y;
 		Alignment = FVector2D(bOpenLeft ? 1.0 : 0.0, bOpenUp ? 1.0 : 0.0);
 		Point = FVector2D(bOpenLeft ? Min.X - MenuGap : Max.X + MenuGap, bOpenUp ? Max.Y : Min.Y);
+
+		// Out of the item's side, from the corner level with its edge.
+		Away = FVector2D(bOpenLeft ? -1.0 : 1.0, 0.0);
+		Corner = Alignment;
 	}
 	else
 	{
@@ -814,6 +1060,10 @@ void UInventoryItemMenuWidget::PlaceBeside(const FBox2D& Box)
 		const bool bRoomLeft = Min.X - MenuGap - MenuSize.X >= Inside.Min.X;
 		const bool bOpenLeft = Placement == EInventoryMenuPlacement::Left ? bRoomLeft || !bRoomRight : !bRoomRight && bRoomLeft;
 		Point = FVector2D(bOpenLeft ? Min.X - MenuGap - MenuSize.X : Max.X + MenuGap, Min.Y);
+
+		// Out of the item's side, from the top corner nearest it.
+		Away = FVector2D(bOpenLeft ? -1.0 : 1.0, 0.0);
+		Corner = FVector2D(bOpenLeft ? 1.0 : 0.0, 0.0);
 	}
 
 	// A negative padding can't push the menu off screen.
@@ -823,6 +1073,7 @@ void UInventoryItemMenuWidget::PlaceBeside(const FBox2D& Box)
 
 	PanelSlot->SetAlignment(Alignment);
 	PanelSlot->SetPosition(TopLeft + Alignment * MenuSize);
+	TransitionPlayer.SetOrigin(Away, Corner);
 }
 
 FBox2D UInventoryItemMenuWidget::AbsoluteBoxToViewport(const FBox2D& AbsoluteBox)
@@ -862,6 +1113,16 @@ FVector2D UInventoryItemMenuWidget::MeasureMenuPanel()
 // Mouse: a right press on the menu closes it, as Back does. A press outside Menu Panel closes it too, and with Pass Through it goes on to
 // the item under it, as if the menu weren't open. A left press then waits, as the item would, to see whether it ends in a click or a drag.
 // The screen may open another menu as the press reaches an item, perhaps this same one again, so nothing here is touched after that.
+FReply UInventoryItemMenuWidget::NativeOnPreviewMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	// The menu sees a press before its buttons do, so while it's closing, they can't be pressed or picked either.
+	if (bClosing)
+	{
+		return FReply::Handled();
+	}
+	return Super::NativeOnPreviewMouseButtonDown(InGeometry, InMouseEvent);
+}
+
 FReply UInventoryItemMenuWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
 	PressedItemWidget.Reset();
@@ -904,7 +1165,7 @@ FReply UInventoryItemMenuWidget::NativeOnMouseButtonDown(const FGeometry& InGeom
 		return FReply::Handled();
 	}
 
-	CloseNow();
+	CloseMenuNow();
 	Interaction->SetHoveredItem(ItemWidget->GetItem());
 	ItemWidget->RightClick(InMouseEvent);
 	return FReply::Handled();
@@ -923,7 +1184,7 @@ FReply UInventoryItemMenuWidget::NativeOnMouseButtonUp(const FGeometry& InGeomet
 	UInventoryUISubsystem* Interaction = GetInteraction();
 	const bool bClicked = Interaction && ItemWidget->GetCachedGeometry().IsUnderLocation(InMouseEvent.GetScreenSpacePosition())
 		&& !WouldReopen(ItemWidget, Interaction->GetStyle().LeftClick);
-	CloseNow();
+	CloseMenuNow();
 	if (bClicked)
 	{
 		Interaction->SetHoveredItem(ItemWidget->GetItem());
@@ -947,7 +1208,7 @@ FReply UInventoryItemMenuWidget::NativeOnMouseButtonDoubleClick(const FGeometry&
 	UInventoryItemWidget* ItemWidget = !bOnMenu && bDoubleClicks && InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton ? FindItemWidgetUnder(Position) : nullptr;
 	if (ItemWidget && ItemWidget == AnchorWidget.Get())
 	{
-		CloseNow();
+		CloseMenuNow();
 		ItemWidget->DoubleClick(InMouseEvent);
 		return FReply::Handled();
 	}
@@ -971,7 +1232,7 @@ void UInventoryItemMenuWidget::NativeOnDragDetected(const FGeometry& InGeometry,
 		Interaction->SetHoveredItem(ItemWidget->GetItem());
 	}
 	OutOperation = ItemWidget->BeginMouseDrag(InMouseEvent);
-	CloseNow();
+	CloseMenuNow();
 }
 
 UInventoryItemWidget* UInventoryItemMenuWidget::FindItemWidgetUnder(const FVector2D& ScreenPosition) const
@@ -995,6 +1256,14 @@ bool UInventoryItemMenuWidget::WouldReopen(const UInventoryItemWidget* ItemWidge
 FReply UInventoryItemMenuWidget::NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
 	RefreshConfirm();
+
+	// The mouse highlights any entry it's over, such as one a subclass placed, and focus goes with it so Accept runs what's highlighted.
+	// Off the entries, the last one stays highlighted.
+	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
+	if (Input && Input->GetCurrentInputType() == ECommonInputType::MouseAndKeyboard)
+	{
+		HighlightEntry(FindHoveredButton(), /*bFocus*/ true);
+	}
 	return Super::NativeOnMouseMove(InGeometry, InMouseEvent);
 }
 
@@ -1002,6 +1271,12 @@ FReply UInventoryItemMenuWidget::NativeOnMouseMove(const FGeometry& InGeometry, 
 // button, Accept clicks that one. The menu sees the key before its buttons do.
 FReply UInventoryItemMenuWidget::NativeOnPreviewKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
 {
+	// While closing, keys reach nothing on the menu either, so focus stays where it was and nothing more is picked.
+	if (bClosing)
+	{
+		return FReply::Handled();
+	}
+
 	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
 	const bool bMouse = Input && Input->GetCurrentInputType() == ECommonInputType::MouseAndKeyboard;
 	if (bMouse && FindHoveredButton() && FSlateApplication::Get().GetNavigationActionFromKey(InKeyEvent) == EUINavigationAction::Accept)

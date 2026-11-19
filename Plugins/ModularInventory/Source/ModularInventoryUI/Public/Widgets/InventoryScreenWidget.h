@@ -51,7 +51,8 @@ public:
 
 	/**
 	 * Opens Menu Class beside the item, unless the menu has nothing for it, such as no action that can run. The screen opens Item Menu
-	 * Class this way; an item action can open another, such as a menu to pick a quick slot.
+	 * Class this way; an item action can open another, such as a menu to pick a quick slot. The menu it opened last goes at once if it's
+	 * still closing, such as the one whose action opens this one.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Screen")
 	UInventoryItemMenuWidget* OpenItemMenu(FInventoryItemHandle Item, TSubclassOf<UInventoryItemMenuWidget> MenuClass);
@@ -318,6 +319,9 @@ private:
 
 	/** What an open menu's highlighted option does, from Show Action Hint. */
 	FText MenuHint;
+
+	/** The menu Open Item Menu opened last, wherever Push Item Menu put it, to close at once if it's still closing as another opens. */
+	TWeakObjectPtr<UInventoryItemMenuWidget> OpenedMenu;
 
 	/** What Action Hint Text shows now. */
 	FText ShownHint;

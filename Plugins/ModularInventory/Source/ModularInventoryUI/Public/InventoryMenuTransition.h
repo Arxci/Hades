@@ -1,0 +1,194 @@
+﻿#pragma once
+
+#include "CoreMinimal.h"
+
+#include "Kismet/KismetMathLibrary.h"
+#include "Slate/WidgetTransform.h"
+
+#include "InventoryMenuTransition.generated.h"
+
+class UCurveFloat;
+class UWidget;
+
+
+/** Which way a menu slides in as it opens, and back out as it closes. */
+UENUM(BlueprintType)
+enum class EInventoryMenuSlide : uint8
+{
+	/**
+	 * Out from what the menu opened for, as if from behind it: from the left for a menu opened on an item's right, and down from the
+	 * cursor for one opened below it. A menu placed As Designed slides up.
+	 */
+	FromItem,
+	FromAbove,
+	FromBelow,
+	FromLeft,
+	FromRight
+};
+
+
+/** Where a menu grows from as it opens, and shrinks back to as it closes. */
+UENUM(BlueprintType)
+enum class EInventoryMenuScaleOrigin : uint8
+{
+	/**
+	 * Its corner nearest what it opened for, such as its top left for a menu opened on an item's right, level with its top, so it grows
+	 * out of the item. A menu placed As Designed grows from its middle.
+	 */
+	Item,
+	/** Its middle. */
+	Center
+};
+
+
+/**
+ * How a menu comes in as it opens, or goes as it closes: a fade, a slide and a growth, each optional, played together. Played in code on
+ * the menu, so it follows wherever the menu opens, such as out from the item, without a widget animation.
+ */
+USTRUCT(BlueprintType)
+struct MODULARINVENTORYUI_API FInventoryMenuTransition
+{
+	GENERATED_BODY()
+
+	/** Whether it changes anything, over any time. Without, the menu shows or hides at once. */
+	bool HasEffect() const;
+
+	/** How far along it looks at Time, from 0 to 1 of its Duration: by Curve, or else by Easing. */
+	float Ease(float Time) const;
+
+	/** How long it takes, in seconds. 0 shows or hides the menu at once. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (ClampMin = "0", Units = "s"))
+	float Duration = 0.1f;
+
+	/** How it speeds up and slows down: Linear keeps one pace, and Ease Out starts quick and settles. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	TEnumAsByte<EEasingFunc::Type> Easing = EEasingFunc::EaseOut;
+
+	/** How sharp Ease In, Ease Out and Ease In Out are: 2 is gentle, and higher is sharper. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (ClampMin = "1"))
+	float EasingStrength = 2.0f;
+
+	/**
+	 * Used instead of Easing: across times 0 to 1, how far along it looks, from 0 to 1. Rise past 1 before settling on it to overshoot,
+	 * such as a menu that slides or grows a little too far and springs back. Either way, it starts and ends exactly as it should.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	TObjectPtr<UCurveFloat> Curve;
+
+	/** Fades in from Fade From. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	bool bFade = true;
+
+	/** The opacity it fades from: 0 is unseen. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (ClampMin = "0", ClampMax = "1", EditCondition = "bFade", EditConditionHides))
+	float FadeFrom = 0.0f;
+
+	/** Slides in from Slide Distance away. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	bool bSlide = true;
+
+	/** How far it slides, in pixels. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (ClampMin = "0", EditCondition = "bSlide", EditConditionHides))
+	float SlideDistance = 16.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (EditCondition = "bSlide", EditConditionHides))
+	EInventoryMenuSlide SlideFrom = EInventoryMenuSlide::FromItem;
+
+	/** Grows from Scale From of its size. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	bool bScale = false;
+
+	/**
+	 * The size it grows from, as a fraction of its own: 0.9 for a slight pop, or 0 from nothing. Leave one axis at 1 to unfold it along the
+	 * other, such as 1 and 0 to drop it open from its top.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (EditCondition = "bScale", EditConditionHides))
+	FVector2D ScaleFrom = FVector2D(0.9, 0.9);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (EditCondition = "bScale", EditConditionHides))
+	EInventoryMenuScaleOrigin ScaleOrigin = EInventoryMenuScaleOrigin::Item;
+};
+
+
+/**
+ * Plays menu transitions: fades one widget, such as a menu's root, and slides and grows another, such as the panel the menu is drawn in.
+ * Each transition carries on from however the widgets look as it starts, so a menu closed while it's still opening goes back smoothly.
+ * The widgets only change as Advance moves it on, such as from a ticker, so it plays whether or not they tick, with the game paused too.
+ * Transitions add to the render opacity and transform the widgets have when Init is called, such as those set in the designer.
+ */
+struct MODULARINVENTORYUI_API FInventoryMenuTransitionPlayer
+{
+	/** Fade Target fades, and Move Target slides and grows. Either can be null, or both the same widget. */
+	void Init(UWidget* InFadeTarget, UWidget* InMoveTarget);
+
+	/**
+	 * Where transitions From Item come from: Away, the way from the item to the menu, such as right for a menu on the item's right; and
+	 * Corner, the menu's corner nearest the item, from 0, 0 at its top left to 1, 1 at its bottom right. Takes effect at once, even mid-way.
+	 */
+	void SetOrigin(const FVector2D& InAway, const FVector2D& InCorner);
+
+	/** Comes in with Transition, from hidden as it says to shown. Shown at once when it has no effect. */
+	void PlayIn(const FInventoryMenuTransition& InTransition);
+
+	/**
+	 * Goes back the way the last Play In came, from wherever it is now, until hidden as it started: the opening played backwards. Plays
+	 * nothing when the last Play In had no effect, nor while going out.
+	 */
+	void ReverseIn();
+
+	/**
+	 * Goes out with Transition, from however it looks now, until hidden as it says. Quicker the less shown it still was, such as when it's
+	 * still coming in. Hidden at once when it has no effect.
+	 */
+	void PlayOut(const FInventoryMenuTransition& InTransition);
+
+	/** Stops where it is. */
+	void Stop() { Rate = 0.0f; }
+
+	/** Whether a transition is still playing, so Advance has more to do. */
+	bool IsPlaying() const { return Rate != 0.0f; }
+
+	/** Moves the transition on by Delta Time, in seconds. True while it's still playing. */
+	bool Advance(float DeltaTime);
+
+private:
+	/** How the widgets look partway through: the fade's opacity, the slide's offset and the growth's scale. */
+	struct FLook
+	{
+		float Opacity = 1.0f;
+		FVector2D Offset = FVector2D::ZeroVector;
+		FVector2D Scale = FVector2D::UnitVector;
+	};
+
+	static FLook Lerp(const FLook& From, const FLook& To, float Alpha);
+
+	/** How the widgets look hidden by Transition: before it comes in, or once it has gone out. What it doesn't change stays as in Look. */
+	FLook GetHiddenLook(const FInventoryMenuTransition& InTransition, const FLook& Look) const;
+	FLook GetLook() const;
+	void Apply(const FLook& Look) const;
+
+	TWeakObjectPtr<UWidget> FadeTarget;
+	TWeakObjectPtr<UWidget> MoveTarget;
+
+	/** How the widgets were at Init, which transitions add to. */
+	float BaseOpacity = 1.0f;
+	FWidgetTransform BaseTransform;
+	FVector2D BasePivot = FVector2D(0.5, 0.5);
+
+	FVector2D Away = FVector2D(0.0, -1.0);
+	FVector2D Corner = FVector2D(0.5, 0.5);
+
+	/** The transition playing, or played last. Whoever passed it in keeps its Curve. */
+	FInventoryMenuTransition Transition;
+
+	/** Transition goes out, from Out From to hidden, rather than in, from hidden to shown. */
+	bool bOut = false;
+	FLook OutFrom;
+
+	/** Grows from Corner rather than the middle, as the transition that grew it says. */
+	bool bGrowFromCorner = false;
+
+	/** How far along Transition is, from 0 to 1, and how fast it moves, per second: below 0 to go back the way it came in. */
+	float Position = 1.0f;
+	float Rate = 0.0f;
+};

@@ -7,6 +7,7 @@
 
 #include "Hades/Inventory/HadesQuickSlotComponent.h"
 #include "Hades/UI/Foundation/HadesInputKeyWidget.h"
+#include "Hades/UI/Inventory/HadesItemMenu.h"
 
 #include "Data/InventoryItemDefinition.h"
 #include "InventorySubsystem.h"
@@ -53,6 +54,12 @@ void UHadesQuickSlotMenuEntry::SetQuickSlot(int32 InSlotIndex, const UInputActio
 }
 
 // Menu
+UHadesQuickSlotMenu::UHadesQuickSlotMenu(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
+{
+	OpenTransition = UHadesItemMenu::MakeTransition();
+	bCloseReversesOpen = true;
+}
+
 void UHadesQuickSlotMenu::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();

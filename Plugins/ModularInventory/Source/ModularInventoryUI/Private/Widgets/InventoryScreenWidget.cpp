@@ -196,11 +196,21 @@ UInventoryItemMenuWidget* UInventoryScreenWidget::OpenItemMenu(FInventoryItemHan
 		return nullptr;
 	}
 
-	return PushItemMenu(MenuClass, [this, Item](UInventoryItemMenuWidget& Menu)
+	// The last menu, if it's still closing, such as the one whose action opens this one, goes at once. Covered by the new one in its stack,
+	// it would only be put aside, and come back as the new one closes.
+	UInventoryItemMenuWidget* Previous = OpenedMenu.Get();
+	if (Previous && Previous->IsClosing())
+	{
+		Previous->CloseMenuNow();
+	}
+
+	UInventoryItemMenuWidget* Opened = PushItemMenu(MenuClass, [this, Item](UInventoryItemMenuWidget& Menu)
 	{
 		Menu.SetScreen(this);
 		Menu.SetItem(Item, FindItemWidget(Item));
 	});
+	OpenedMenu = Opened;
+	return Opened;
 }
 
 UInventoryItemMenuWidget* UInventoryScreenWidget::PushItemMenu(TSubclassOf<UInventoryItemMenuWidget> MenuClass, TFunctionRef<void(UInventoryItemMenuWidget&)> InitMenu)
@@ -372,6 +382,7 @@ void UInventoryScreenWidget::NativeOnDeactivated()
 	TransferContainer = FInventoryContainerHandle();
 	LastAimedContainer = FInventoryContainerHandle();
 	MenuHint = FText::GetEmpty();
+	OpenedMenu.Reset();
 
 	Super::NativeOnDeactivated();
 }
