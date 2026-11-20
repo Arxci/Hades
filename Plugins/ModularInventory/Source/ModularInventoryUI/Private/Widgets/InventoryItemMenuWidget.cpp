@@ -132,7 +132,7 @@ UInventoryItemMenuWidget::UInventoryItemMenuWidget(const FObjectInitializer& Obj
 
 TOptional<FUIInputConfig> UInventoryItemMenuWidget::GetDesiredInputConfig() const
 {
-	return FUIInputConfig(ECommonInputMode::Menu, EMouseCaptureMode::NoCapture);
+	return FUIInputConfig(bGameKeepsInput ? ECommonInputMode::All : ECommonInputMode::Menu, EMouseCaptureMode::NoCapture);
 }
 
 void UInventoryItemMenuWidget::NativeOnInitialized()
@@ -174,7 +174,7 @@ void UInventoryItemMenuWidget::SetItem(FInventoryItemHandle InItem, UInventoryIt
 	Item = InItem;
 	AnchorWidget = ItemWidget;
 	Anchor = FindAnchor(ItemWidget);
-	OpeningCursor = GetCursorInViewport();
+	OpeningCursor = GetCursorPosition();
 	if (UInventoryScreenWidget* FoundScreen = FindEnclosing<UInventoryScreenWidget>(ItemWidget))
 	{
 		BindScreen(FoundScreen);
@@ -200,6 +200,7 @@ void UInventoryItemMenuWidget::SetItem(FInventoryItemHandle InItem, UInventoryIt
 
 	// Last, so the menu is measured with the buttons this item shows.
 	PlaceBeside(Anchor);
+	PlaceNextFrame();
 }
 
 void UInventoryItemMenuWidget::SetScreen(UInventoryScreenWidget* InScreen)
@@ -275,6 +276,8 @@ void UInventoryItemMenuWidget::NativeOnDeactivated()
 	RegistryListener.Unbind();
 	FTSTicker::GetCoreTicker().RemoveTicker(FocusHandle);
 	FocusHandle = FTSTicker::FDelegateHandle();
+	FTSTicker::GetCoreTicker().RemoveTicker(PlaceHandle);
+	PlaceHandle = FTSTicker::FDelegateHandle();
 	if (UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer()))
 	{
 		Input->OnInputMethodChangedNative.RemoveAll(this);
@@ -805,6 +808,24 @@ void UInventoryItemMenuWidget::RunAction(UInventoryItemAction* Action, int32 Cou
 		}
 	};
 
+	if (Action->bKeepsMenuOpen)
+	{
+		// Listed again for the item as the action left it, with the action still highlighted, unless running it closed the menu, such as by
+		// using the item up.
+		HidePrompt();
+		Run();
+		if (IsActivated() && !bClosing)
+		{
+			RefreshActions();
+			PlaceBeside(Anchor);
+			if (const FShownAction* Ran = ShownActions.FindByPredicate([&WeakAction](const FShownAction& Shown) { return Shown.Action == WeakAction; }))
+			{
+				HighlightEntry(Ran->Button.Get(), /*bFocus*/ false);
+			}
+		}
+		return;
+	}
+
 	if (ActionTiming == EInventoryMenuActionTiming::AfterMenuCloses)
 	{
 		// The menu closes first, so the screen has focus again for whatever the action starts, such as choosing another item.
@@ -820,7 +841,12 @@ void UInventoryItemMenuWidget::RunAction(UInventoryItemAction* Action, int32 Cou
 
 void UInventoryItemMenuWidget::ShowHint(const FText& Hint)
 {
-	if (UInventoryScreenWidget* ShownOn = Screen.Get())
+	if (DescriptionText)
+	{
+		DescriptionText->SetText(Hint);
+	}
+	UInventoryScreenWidget* ShownOn = Screen.Get();
+	if (ShownOn && bShowHintOnScreen)
 	{
 		ShownOn->ShowActionHint(Hint);
 	}
@@ -1003,15 +1029,15 @@ void UInventoryItemMenuWidget::PlaceBeside(const FBox2D& Box)
 	UCanvasPanelSlot* PanelSlot = MenuPanel ? Cast<UCanvasPanelSlot>(MenuPanel->Slot) : nullptr;
 	if (!PanelSlot || Placement == EInventoryMenuPlacement::AsDesigned)
 	{
-		// Not laid out around the item, so transitions From Item come up from below, and grow from the middle.
+		// Not laid out around the item, so transitions From Origin come up from below, and grow from the middle.
 		TransitionPlayer.SetOrigin(FVector2D(0.0, -1.0), FVector2D(0.5, 0.5));
 		return;
 	}
 
-	const FBox2D ItemBox = AbsoluteBoxToViewport(Box);
-	const FVector2D Min = ItemBox.Min;
-	const FVector2D Max = ItemBox.Max;
-	const FVector2D ScreenSize = UWidgetLayoutLibrary::GetViewportSize(this) / UWidgetLayoutLibrary::GetViewportScale(this);
+	// In the canvas's own space, where its slots are positioned.
+	const FVector2D Min = AbsoluteToCanvas(Box.Min);
+	const FVector2D Max = AbsoluteToCanvas(Box.Max);
+	const FVector2D ScreenSize = GetCanvasSize();
 	const FBox2D ScreenBox(FVector2D::ZeroVector, ScreenSize);
 	const FBox2D Inside(FVector2D(ScreenPadding.Left, ScreenPadding.Top), ScreenSize - FVector2D(ScreenPadding.Right, ScreenPadding.Bottom));
 
@@ -1022,11 +1048,12 @@ void UInventoryItemMenuWidget::PlaceBeside(const FBox2D& Box)
 	FVector2D Alignment = FVector2D::ZeroVector;
 	FVector2D Point;
 
-	// For transitions that come From Item: the way from the item to the menu, and the menu's corner nearest the item.
+	// For transitions that come From Origin: the way from the item to the menu, and the menu's corner nearest the item.
 	FVector2D Away;
 	FVector2D Corner;
 
-	const TOptional<FVector2D> CursorPoint = Placement == EInventoryMenuPlacement::AtCursor ? OpeningCursor : TOptional<FVector2D>();
+	const bool bAtCursor = Placement == EInventoryMenuPlacement::AtCursor && OpeningCursor.IsSet();
+	const TOptional<FVector2D> CursorPoint = bAtCursor ? TOptional<FVector2D>(AbsoluteToCanvas(OpeningCursor.GetValue())) : TOptional<FVector2D>();
 	if (CursorPoint.IsSet())
 	{
 		// At the cursor while there was one as the menu opened: down and to the right of it, unless only the other side has room.
@@ -1076,17 +1103,58 @@ void UInventoryItemMenuWidget::PlaceBeside(const FBox2D& Box)
 	TransitionPlayer.SetOrigin(Away, Corner);
 }
 
-FBox2D UInventoryItemMenuWidget::AbsoluteBoxToViewport(const FBox2D& AbsoluteBox)
+void UInventoryItemMenuWidget::PlaceNextFrame()
 {
-	FVector2D PixelPosition;
-	FVector2D Min;
-	FVector2D Max;
-	USlateBlueprintLibrary::AbsoluteToViewport(this, AbsoluteBox.Min, PixelPosition, Min);
-	USlateBlueprintLibrary::AbsoluteToViewport(this, AbsoluteBox.Max, PixelPosition, Max);
-	return FBox2D(Min, Max);
+	FTSTicker::GetCoreTicker().RemoveTicker(PlaceHandle);
+	PlaceHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateWeakLambda(this, [this](float)
+	{
+		PlaceHandle = FTSTicker::FDelegateHandle();
+		if (IsActivated() && !bClosing)
+		{
+			PlaceBeside(Anchor);
+		}
+		return false;
+	}));
 }
 
-TOptional<FVector2D> UInventoryItemMenuWidget::GetCursorInViewport()
+bool UInventoryItemMenuWidget::GetCanvasGeometry(FGeometry& OutGeometry) const
+{
+	const UWidget* Canvas = MenuPanel ? MenuPanel->GetParent() : nullptr;
+	if (!Canvas)
+	{
+		return false;
+	}
+
+	OutGeometry = Canvas->GetCachedGeometry();
+	const FVector2D Size = OutGeometry.GetLocalSize();
+	return Size.X > 0.0 && Size.Y > 0.0;
+}
+
+FVector2D UInventoryItemMenuWidget::AbsoluteToCanvas(const FVector2D& AbsolutePoint)
+{
+	FGeometry CanvasGeometry;
+	if (GetCanvasGeometry(CanvasGeometry))
+	{
+		return CanvasGeometry.AbsoluteToLocal(AbsolutePoint);
+	}
+
+	FVector2D PixelPosition;
+	FVector2D ViewportPosition;
+	USlateBlueprintLibrary::AbsoluteToViewport(this, AbsolutePoint, PixelPosition, ViewportPosition);
+	return ViewportPosition;
+}
+
+FVector2D UInventoryItemMenuWidget::GetCanvasSize()
+{
+	FGeometry CanvasGeometry;
+	if (GetCanvasGeometry(CanvasGeometry))
+	{
+		return CanvasGeometry.GetLocalSize();
+	}
+	return UWidgetLayoutLibrary::GetViewportSize(this) / UWidgetLayoutLibrary::GetViewportScale(this);
+}
+
+TOptional<FVector2D> UInventoryItemMenuWidget::GetCursorPosition() const
 {
 	ULocalPlayer* LocalPlayer = GetOwningLocalPlayer();
 	const TSharedPtr<FSlateUser> SlateUser = LocalPlayer ? LocalPlayer->GetSlateUser() : TSharedPtr<FSlateUser>();
@@ -1095,11 +1163,7 @@ TOptional<FVector2D> UInventoryItemMenuWidget::GetCursorInViewport()
 	{
 		return TOptional<FVector2D>();
 	}
-
-	FVector2D PixelPosition;
-	FVector2D ViewportPosition;
-	USlateBlueprintLibrary::AbsoluteToViewport(this, FVector2D(SlateUser->GetCursorPosition()), PixelPosition, ViewportPosition);
-	return TOptional<FVector2D>(ViewportPosition);
+	return TOptional<FVector2D>(FVector2D(SlateUser->GetCursorPosition()));
 }
 
 FVector2D UInventoryItemMenuWidget::MeasureMenuPanel()
@@ -1110,8 +1174,9 @@ FVector2D UInventoryItemMenuWidget::MeasureMenuPanel()
 	return MenuPanel ? MenuPanel->GetDesiredSize() : FVector2D::ZeroVector;
 }
 
-// Mouse: a right press on the menu closes it, as Back does. A press outside Menu Panel closes it too, and with Pass Through it goes on to
-// the item under it, as if the menu weren't open. A left press then waits, as the item would, to see whether it ends in a click or a drag.
+// Mouse: a right press on the menu closes it, as Back does, with Close On Right Press. A press outside Menu Panel closes it too, and with
+// Pass Through it goes on to the item under it, as if the menu weren't open. A left press then waits, as the item would, to see whether
+// it ends in a click or a drag.
 // The screen may open another menu as the press reaches an item, perhaps this same one again, so nothing here is touched after that.
 FReply UInventoryItemMenuWidget::NativeOnPreviewMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
@@ -1136,7 +1201,7 @@ FReply UInventoryItemMenuWidget::NativeOnMouseButtonDown(const FGeometry& InGeom
 	const FVector2D Position = InMouseEvent.GetScreenSpacePosition();
 	if (MenuPanel && MenuPanel->GetCachedGeometry().IsUnderLocation(Position))
 	{
-		if (Button == EKeys::RightMouseButton)
+		if (Button == EKeys::RightMouseButton && bCloseOnRightPress)
 		{
 			CloseMenu();
 			return FReply::Handled();

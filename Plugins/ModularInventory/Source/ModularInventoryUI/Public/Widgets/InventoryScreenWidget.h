@@ -2,12 +2,12 @@
 
 #include "CoreMinimal.h"
 
-#include "CommonActivatableWidget.h"
 #include "Engine/DataTable.h"
 #include "Input/UIActionBindingHandle.h"
 
 #include "InventoryTypes.h"
 #include "InventoryUITypes.h"
+#include "ModularActivatableWidget.h"
 
 #include "InventoryScreenWidget.generated.h"
 
@@ -26,15 +26,15 @@ enum class ECommonInputType : uint8;
 
 
 /**
- * A Common UI screen for an inventory: push it onto a layer stack to open it, and deactivate it to close it. Lay out its grids, lists,
- * slots and details in the designer.
+ * A Common UI screen for an inventory: push it onto a layer stack to open it, and close it with Close Widget. Lay out its grids, lists,
+ * slots and details in the designer. It can pause the game, and come in and go with Open Reveal, as any Modular Activatable Widget.
  * While it's active, Interaction Style decides how items are handled, and each action is bound only while it can work, so an action
  * bar shows what works now. Back stops choosing an item, or puts back the held item, before it closes the screen, and closing it
  * drops whatever was held or chosen. A right-click or the mouse wheel anywhere on it can put back or turn the held item, as the style says.
  * An item asking for its menu opens Item Menu Class in Item Menu Stack.
  */
 UCLASS(Abstract, Blueprintable)
-class MODULARINVENTORYUI_API UInventoryScreenWidget : public UCommonActivatableWidget
+class MODULARINVENTORYUI_API UInventoryScreenWidget : public UModularActivatableWidget
 {
 	GENERATED_BODY()
 
@@ -125,7 +125,11 @@ protected:
 	virtual UWidget* NativeGetDesiredFocusTarget() const override;
 	//~ End UCommonActivatableWidget Interface
 
-	/** Binds each action while it can work. Override to bind your own with Set Action Bound, after calling Super. */
+	//~ Begin UModularActivatableWidget Interface
+	virtual void NativeOnCloseStarted() override;
+	//~ End UModularActivatableWidget Interface
+
+	/** Binds each action while it can work, and none while the screen closes. Override to bind your own with Set Action Bound, after calling Super. */
 	virtual void RefreshActions();
 
 	/** Registers Row while bBound and unregisters it otherwise. */

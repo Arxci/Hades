@@ -36,7 +36,7 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "HUD")
 	TSoftClassPtr<UCommonActivatableWidget> InventoryScreenClass;
 
-	/** Played from the start whenever a quick slot's key is pressed, such as to show the slots for a moment, as the RE games do. */
+	/** Played from the start whenever a quick slot's key is pressed, such as to show the slots for a moment. */
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "HUD", meta = (BindWidgetAnimOptional))
 	TObjectPtr<UWidgetAnimation> ShowQuickSlotsAnimation;
 

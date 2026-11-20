@@ -15,7 +15,7 @@ enum class ECommonInputType : uint8;
 
 /**
  * The icon of the key the player has bound to an input action, for the device in use, from the platform's Common Input controller data.
- * It follows the player's rebinding, and switches between keyboard and gamepad keys as the device changes, as Lyra's action widget does.
+ * It follows the player's rebinding, and switches between keyboard and gamepad keys as the device changes.
  * Collapsed, as Common Action Widget is, whenever there's no icon to show: without an action, on a touch screen, while no key is bound for
  * the device, or for a key the controller data has no icon for.
  */

@@ -25,7 +25,6 @@ UHadesItemMenu::UHadesItemMenu(const FObjectInitializer& ObjectInitializer) : Su
 	AddAction(CreateDefaultSubobject<UHadesItemAction_Store>(TEXT("Store")), TEXT("StoreButton"));
 	AddAction(CreateDefaultSubobject<UHadesItemAction_Take>(TEXT("Take")), TEXT("TakeButton"));
 
-	// As in RE2, what was picked happens at once, such as the inventory dimming to choose an item to combine with, as the menu goes.
 	OpenTransition = MakeTransition();
 	bCloseReversesOpen = true;
 	ActionTiming = EInventoryMenuActionTiming::AsMenuCloses;
@@ -34,16 +33,16 @@ UHadesItemMenu::UHadesItemMenu(const FObjectInitializer& ObjectInitializer) : Su
 	bConfirmStartsOnCancel = false;
 }
 
-FInventoryMenuTransition UHadesItemMenu::MakeTransition()
+FModularUITransition UHadesItemMenu::MakeTransition()
 {
-	FInventoryMenuTransition Transition;
+	FModularUITransition Transition;
 	Transition.Duration = 5.0f / 60.0f;
 	Transition.Easing = EEasingFunc::Linear;
 	Transition.bFade = true;
 	Transition.FadeFrom = 0.0f;
 	Transition.bSlide = true;
 	Transition.SlideDistance = 20.0f;
-	Transition.SlideFrom = EInventoryMenuSlide::FromItem;
+	Transition.SlideFrom = EModularUISlide::FromOrigin;
 	Transition.bScale = false;
 	return Transition;
 }

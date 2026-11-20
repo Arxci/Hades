@@ -18,9 +18,9 @@ class UInventoryListWidget;
 
 /**
  * The player's inventory, pushed onto the GameMenu layer by the HUD, or by an item box when the screen has an Item Box List.
- * It plays like the RE games: a right-click or Accept on an item opens Item Menu Class beside it, on the Modal layer, and dragging or Move
- * picks it up, with the held item drawn on the cells it would land on. Putting it on another item picks that one up.
- * With a Tab List linked to Pages, the items only work on Items Page, and while an item is held the tab keys turn it instead, as in Requiem.
+ * A right-click or Accept on an item opens Item Menu Class beside it, on the Modal layer, and dragging or Move picks it up, with the held
+ * item drawn on the cells it would land on. Putting it on another item picks that one up.
+ * With a Tab List linked to Pages, the items only work on Items Page, and while an item is held the tab keys turn it instead.
  */
 UCLASS(Abstract, Blueprintable)
 class HADES_API UHadesInventoryScreen : public UInventoryScreenWidget
@@ -49,10 +49,6 @@ protected:
 	virtual void RefreshActions() override;
 	virtual UInventoryItemMenuWidget* PushItemMenu(TSubclassOf<UInventoryItemMenuWidget> MenuClass, TFunctionRef<void(UInventoryItemMenuWidget&)> InitMenu) override;
 	//~ End UInventoryScreenWidget Interface
-
-	/** The world stops while this is open. */
-	UPROPERTY(EditDefaultsOnly, Category = "Pause")
-	bool bPauseGame = true;
 
 	/** Shows the item box, which turns on Store and Take. Leave it out of the plain inventory screen. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory", meta = (BindWidgetOptional))

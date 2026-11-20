@@ -93,7 +93,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FInventoryEquipmentSignature, FInve
  * Applies whatever sits in the owner's equipment slots: ability system grants scaled by item level, spawned pieces and linked anim layers.
  * Items in an equipped item's equipment containers, such as weapon attachments, are applied too and their pieces attach to the parent's.
  * Needs an inventory component on the same actor; the equipment slots are its containers with equipment layouts.
- * Items can also be equipped in place, staying wherever they are in the inventory, as the RE games do with the weapon in hand.
+ * Items can also be equipped in place, staying wherever they are in the inventory, such as a weapon in hand that keeps its spot in a grid.
  */
 UCLASS(Blueprintable, ClassGroup = (Inventory), meta = (BlueprintSpawnableComponent))
 class MODULARINVENTORY_API UInventoryEquipmentComponent : public UActorComponent

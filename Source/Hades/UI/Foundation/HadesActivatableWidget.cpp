@@ -3,8 +3,6 @@
 #include "Editor/WidgetCompilerLog.h"
 #include "Input/CommonUIInputTypes.h"
 
-#include "Hades/Player/HadesPlayerController.h"
-
 #define LOCTEXT_NAMESPACE "Hades"
 
 TOptional<FUIInputConfig> UHadesActivatableWidget::GetDesiredInputConfig() const
@@ -33,28 +31,6 @@ void UHadesActivatableWidget::NativeOnInitialized()
 		ConfirmArgs.bConsumeInput = false;
 		RegisterUIActionBinding(ConfirmArgs);
 	}
-}
-
-void UHadesActivatableWidget::NativeOnActivated()
-{
-	Super::NativeOnActivated();
-
-	AHadesPlayerController* Controller = Cast<AHadesPlayerController>(GetOwningPlayer());
-	if (bPauseGame && Controller)
-	{
-		Controller->AddPauseRequest(this);
-	}
-}
-
-void UHadesActivatableWidget::NativeOnDeactivated()
-{
-	AHadesPlayerController* Controller = Cast<AHadesPlayerController>(GetOwningPlayer());
-	if (bPauseGame && Controller)
-	{
-		Controller->RemovePauseRequest(this);
-	}
-
-	Super::NativeOnDeactivated();
 }
 
 #if WITH_EDITOR

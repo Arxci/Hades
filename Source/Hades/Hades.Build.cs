@@ -12,7 +12,7 @@ public class Hades : ModuleRules
 
 		PublicDependencyModuleNames.AddRange(new string[] { "CommonUI", "CommonInput", "CommonGame", "AsyncMixin", "ModularGameplayActors", "DeveloperSettings" });
 
-		PublicDependencyModuleNames.AddRange(new string[] { "ModularInventory", "ModularInventoryUI" });
+		PublicDependencyModuleNames.AddRange(new string[] { "ModularInventory", "ModularInventoryUI", "ModularUI" });
 
 		PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
 

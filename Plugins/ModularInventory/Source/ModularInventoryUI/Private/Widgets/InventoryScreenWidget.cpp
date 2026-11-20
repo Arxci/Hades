@@ -403,6 +403,14 @@ bool UInventoryScreenWidget::NativeOnHandleBackAction()
 	return Super::NativeOnHandleBackAction();
 }
 
+void UInventoryScreenWidget::NativeOnCloseStarted()
+{
+	Super::NativeOnCloseStarted();
+
+	// Nothing on the screen works while it goes, its action bar included.
+	RefreshActions();
+}
+
 UWidget* UInventoryScreenWidget::NativeGetDesiredFocusTarget() const
 {
 	if (UWidget* Target = Super::NativeGetDesiredFocusTarget())
@@ -471,13 +479,13 @@ void UInventoryScreenWidget::HandleItemMenuRequested(FInventoryItemHandle Item)
 void UInventoryScreenWidget::RefreshActions()
 {
 	const UInventoryUISubsystem* Interaction = GetInteraction();
-	const bool bUsable = Interaction && IsInventoryShown();
+	const bool bUsable = Interaction && IsInventoryShown() && !IsClosing();
 
 	// With a gamepad, Accept goes to the focused cell, which aims, so Confirm is only shown. With the mouse, keyboard focus isn't on what
 	// the mouse is, so Confirm's key acts on the hovered item itself, and only while it can.
 	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
 	const bool bMouse = Input && Input->GetCurrentInputType() == ECommonInputType::MouseAndKeyboard;
-	SetConfirmShown(!bMouse);
+	SetConfirmShown(!bMouse && !IsClosing());
 	SetActionBound(ConfirmHandle, ConfirmAction, bUsable && bMouse && Interaction->CanActivateAimed(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleConfirmAction));
 
 	SetActionBound(MoveHandle, MoveAction, bUsable && Interaction->CanPickUpOrPlace(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleMoveAction));

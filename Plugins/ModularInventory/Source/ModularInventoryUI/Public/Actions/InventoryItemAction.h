@@ -130,6 +130,13 @@ public:
 	FText PromptText;
 
 	/**
+	 * The menu stays open after the action runs, and lists the actions again for the item as it's left, such as for Equip and Unequip.
+	 * Leave it off for actions that pick the item up, choose another item or open another menu, as those need the menu gone.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action")
+	bool bKeepsMenuOpen = false;
+
+	/**
 	 * The name of a button already in the menu's designer to use for this action, such as UseButton, instead of making one in its Action
 	 * Panel. For menus laid out by hand. The button keeps its own label. A menu without a button by that name makes one as usual.
 	 */

@@ -80,7 +80,7 @@ protected:
  * The quick slots, opened beside an item by the item menu's Assign Quick Slot action. Picking a slot puts the item on it, moving it from
  * any other; picking the slot it's already on takes it off.
  * The entries are either made for Entry Panel, one per quick slot in order, or placed in the designer, each with its Slot Index, such as
- * a cross laid out like the D-pad, as in the RE2 remake. Don't put entries of your own inside Entry Panel: it's emptied each time.
+ * a cross laid out like the D-pad. Don't put entries of your own inside Entry Panel: it's emptied each time.
  * It comes and goes as the item menu does.
  */
 UCLASS(Abstract, Blueprintable)

@@ -19,8 +19,7 @@
 
 UHadesInventoryScreen::UHadesInventoryScreen(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
-	// Plays like the RE games: Accept opens an item's menu, and a drag or Move picks it up. With the mouse, a right-click opens the menu,
-	// as on a desktop, and a left click does nothing, so items are only moved on purpose.
+	// A left click does nothing, so items are only moved on purpose, by a drag or Move.
 	InteractionStyle.LeftClick = EInventoryItemPress::None;
 	InteractionStyle.RightClick = EInventoryItemPress::OpenItemMenu;
 	InteractionStyle.Accept = EInventoryItemPress::OpenItemMenu;
@@ -31,6 +30,7 @@ UHadesInventoryScreen::UHadesInventoryScreen(const FObjectInitializer& ObjectIni
 	// Opens on the item last highlighted, or the first pocket, highlighted and in the details, with the mouse too.
 	bAimOnOpen = true;
 	bStartOnLastItem = true;
+	bPauseGame = true;
 
 	MoveHint = LOCTEXT("MoveHint", "Select an area to place this item.");
 	ChooseHint = LOCTEXT("CombineHint", "Select an item to combine with.");
@@ -69,11 +69,6 @@ void UHadesInventoryScreen::NativeOnActivated()
 {
 	Super::NativeOnActivated();
 
-	AHadesPlayerController* Controller = Cast<AHadesPlayerController>(GetOwningPlayer());
-	if (bPauseGame && Controller)
-	{
-		Controller->AddPauseRequest(this);
-	}
 	if (UInventoryUISubsystem* Interaction = GetInteraction())
 	{
 		Interaction->OnItemChosen.AddUniqueDynamic(this, &ThisClass::HandleItemChosen);
@@ -96,11 +91,6 @@ void UHadesInventoryScreen::NativeOnDeactivated()
 	if (UInventoryUISubsystem* Interaction = GetInteraction())
 	{
 		Interaction->OnItemChosen.RemoveDynamic(this, &ThisClass::HandleItemChosen);
-	}
-	AHadesPlayerController* Controller = Cast<AHadesPlayerController>(GetOwningPlayer());
-	if (bPauseGame && Controller)
-	{
-		Controller->RemovePauseRequest(this);
 	}
 
 	Super::NativeOnDeactivated();
@@ -143,17 +133,18 @@ void UHadesInventoryScreen::RefreshActions()
 {
 	Super::RefreshActions();
 
-	SetActionBound(OrganizeHandle, OrganizeAction, IsInventoryShown(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleOrganizeAction));
+	const bool bScreenClosing = IsClosing();
+	SetActionBound(OrganizeHandle, OrganizeAction, IsInventoryShown() && !bScreenClosing, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleOrganizeAction));
 
-	// As in Requiem, the tab keys turn the held item instead of changing tabs.
+	// While an item is held, the tab keys turn it instead of changing tabs. Neither works while the screen closes.
 	if (TabList)
 	{
 		const UInventoryUISubsystem* Interaction = GetInteraction();
 		const bool bHolding = Interaction && Interaction->IsHolding();
 		const FSimpleDelegate Rotate = FSimpleDelegate::CreateUObject(this, &ThisClass::HandleRotateAction);
-		TabList->SetListeningForInput(!bHolding);
-		SetActionBound(PreviousTabRotateHandle, TabList->GetPreviousTabAction(), bHolding, Rotate, /*bShowInActionBar*/ false);
-		SetActionBound(NextTabRotateHandle, TabList->GetNextTabAction(), bHolding, Rotate, /*bShowInActionBar*/ false);
+		TabList->SetListeningForInput(!bHolding && !bScreenClosing);
+		SetActionBound(PreviousTabRotateHandle, TabList->GetPreviousTabAction(), bHolding && !bScreenClosing, Rotate, /*bShowInActionBar*/ false);
+		SetActionBound(NextTabRotateHandle, TabList->GetNextTabAction(), bHolding && !bScreenClosing, Rotate, /*bShowInActionBar*/ false);
 	}
 }
 
@@ -183,7 +174,7 @@ void UHadesInventoryScreen::HandleOrganizeAction()
 
 void UHadesInventoryScreen::HandleCloseAction()
 {
-	DeactivateWidget();
+	CloseWidget();
 }
 
 // Helpers

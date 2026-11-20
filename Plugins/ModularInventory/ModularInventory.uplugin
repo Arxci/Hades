@@ -45,6 +45,10 @@
 			"Enabled": true
 		},
 		{
+			"Name": "ModularUI",
+			"Enabled": true
+		},
+		{
 			"Name": "DataValidation",
 			"Enabled": true
 		}

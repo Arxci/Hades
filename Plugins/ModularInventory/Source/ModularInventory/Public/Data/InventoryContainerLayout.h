@@ -71,8 +71,8 @@ public:
 
 	/**
 	 * How many cells can hold items, counted row by row from the top left. The rest are locked: nothing can go in them, and grid
-	 * widgets draw them disabled. 0 makes every cell usable. For pockets that grow a few cells at a time, as in the RE games:
-	 * a 4 x 3 grid with 10 usable cells has its last two cells locked.
+	 * widgets draw them disabled. 0 makes every cell usable. For pockets that grow a few cells at a time: a 4 x 3 grid with 10 usable
+	 * cells has its last two cells locked.
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Layout", meta = (ClampMin = "0", EditCondition = "Type == EInventoryContainerType::Grid", EditConditionHides))
 	int32 UsableCells = 0;

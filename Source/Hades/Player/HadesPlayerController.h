@@ -33,10 +33,6 @@ public:
 	/** Show Message on the controller of a player's pawn. Does nothing for other actors. */
 	static void ShowMessageTo(const AActor* PlayerPawn, const FText& Message);
 
-	/** The game stays paused, with the HUD hidden, while anything has asked for it, such as an open inventory. */
-	void AddPauseRequest(const UObject* Requester);
-	void RemovePauseRequest(const UObject* Requester);
-
 	UInventoryComponent* GetItemBoxInventory() const { return ItemBoxInventory; }
 
 	UPROPERTY(BlueprintAssignable, Category = "UI")
@@ -51,9 +47,9 @@ protected:
 	TArray<TObjectPtr<UInputMappingContext>> DefaultMappingContexts;
 
 	/**
-	 * Registers Default Mapping Contexts with Enhanced Input's user settings, as Lyra does, so the player can rebind their keys and the
-	 * keys they chose are used. Needs Enable User Settings in Project Settings > Enhanced Input, and Player Mappable Key Settings on each
-	 * input action that can be rebound.
+	 * Registers Default Mapping Contexts with Enhanced Input's user settings, so the player can rebind their keys and the keys they chose
+	 * are used. Needs Enable User Settings in Project Settings > Enhanced Input, and Player Mappable Key Settings on each input action that
+	 * can be rebound.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	bool bRegisterMappingsWithSettings = true;
@@ -65,16 +61,27 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "UI")
 	TSoftClassPtr<UCommonActivatableWidget> HUDLayoutClass;
 
-	/** On while a menu stops the world, which it greys out as Requiem does. Change its settings for another look. */
+	/**
+	 * Fades in while a menu pauses the world, greying it out, and back out as the world starts again. Its Blend Weight is how strong it is
+	 * once fully in. Change its settings for another look. The HUD hides meanwhile.
+	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI")
 	TObjectPtr<UPostProcessComponent> PausedPostProcess;
+
+	UPROPERTY(EditDefaultsOnly, Category = "UI", meta = (ClampMin = "0", Units = "s"))
+	float PausedFadeInTime = 0.15f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "UI", meta = (ClampMin = "0", Units = "s"))
+	float PausedFadeOutTime = 0.2f;
 
 	/** What every item box in the game opens, so it is one storage. Give it a container tagged Container.ItemBox. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Inventory")
 	TObjectPtr<UInventoryComponent> ItemBoxInventory;
 
 private:
-	void UpdatePause();
+	/** Menus that pause the world cover the screen, so the HUD would only show through them. */
+	UFUNCTION()
+	void HandlePauseChanged(bool bPaused);
 
 	/**
 	 * Registers Default Mapping Contexts with Enhanced Input's user settings, once each. False while there are no user settings: Enable User
@@ -83,5 +90,4 @@ private:
 	bool RegisterMappingContextsWithSettings();
 
 	TWeakObjectPtr<UCommonActivatableWidget> HUDLayout;
-	TArray<TWeakObjectPtr<const UObject>> PauseRequests;
 };

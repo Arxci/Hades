@@ -26,7 +26,7 @@ struct FHadesItemUse
 };
 
 
-/** Add to a gun's item definition's Fragments. Each gun keeps its own rounds. Combining a gun with its ammo loads it, as in the RE games. */
+/** Add to a gun's item definition's Fragments. Each gun keeps its own rounds. Combining a gun with its ammo loads it. */
 USTRUCT(BlueprintType)
 struct FHadesGun
 {
@@ -48,7 +48,7 @@ struct FHadesGun
 
 /**
  * The player's inventory with the game's rules on top: one item in hand, using, discarding and combining items, and pouches that grow the pockets.
- * The item in hand stays where it is in the pockets, as in the RE games. Its equip rules decide which hand slot it is equipped to.
+ * The item in hand stays where it is in the pockets. Its equip rules decide which hand slot it is equipped to.
  * Expects a Container.Pockets grid and a Container.KeyItems list, plus an Inventory Equipment Component on the same actor.
  */
 UCLASS(ClassGroup = (Inventory), meta = (BlueprintSpawnableComponent))

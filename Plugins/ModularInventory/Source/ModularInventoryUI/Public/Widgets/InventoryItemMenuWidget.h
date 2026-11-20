@@ -8,9 +8,9 @@
 #include "Input/UIActionBindingHandle.h"
 
 #include "Actions/InventoryItemAction.h"
-#include "InventoryMenuTransition.h"
 #include "InventoryTypes.h"
 #include "InventoryUITypes.h"
+#include "ModularUITransition.h"
 
 #include "InventoryItemMenuWidget.generated.h"
 
@@ -89,11 +89,11 @@ enum class EInventoryMenuActionTiming : uint8
  * with the screen's Open Item Menu. While it's open the item is selected, and nothing is held.
  * It lists the item actions of its Action Set and Actions: each on the button placed in the designer under its Button Name, or else on a
  * button made for it in Action Panel. An action can ask the player to confirm, or how many, in Prompt Panel first. As the menu opens,
- * its first entry is highlighted and takes focus; the mouse and focus move the highlight, and the screen's action hint says what the
- * highlighted one does.
- * Back, or a right press on the menu, closes it. A press outside Menu Panel closes it too, and goes on to the item under it as Left Press
- * Outside and Right Press Outside say. It also closes by itself when its item leaves the inventory, such as when it's used up, and when
- * its screen closes.
+ * its first entry is highlighted and takes focus; the mouse and focus move the highlight, and Description Text and the screen's action
+ * hint say what the highlighted one does.
+ * Running an action closes the menu, unless the action keeps it open. Back closes it, and so can a right press on it. A press outside
+ * Menu Panel closes it too, and goes on to the item under it as Left Press Outside and Right Press Outside say. It also closes by itself
+ * when its item leaves the inventory, such as when it's used up, and when its screen closes.
  * It comes in with Open Transition and goes with Close Transition, such as a fade and a slide out from the item and back, and plays
  * animations named OpenAnimation and CloseAnimation too.
  * Give the root a full-screen border that is hit-testable, so those presses reach the menu and nothing behind it can be hovered while it's open.
@@ -223,6 +223,14 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item Menu", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> ItemNameText;
 
+	/** What the highlighted entry does, or why it can't run. */
+	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item Menu", meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> DescriptionText;
+
+	/** Says what the highlighted entry does in the screen's action hint too. Turn it off when Description Text says it in the menu. */
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu")
+	bool bShowHintOnScreen = true;
+
 	/** Where the menu opens. */
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu")
 	EInventoryMenuPlacement Placement = EInventoryMenuPlacement::TowardCenter;
@@ -244,10 +252,14 @@ protected:
 
 	/**
 	 * What a right press outside Menu Panel does. With Pass Through, while right-clicks open item menus, a right-click on another item opens
-	 * that item's menu in place of this one, as desktop context menus do. A right press on the menu itself always closes it, as Back does.
+	 * that item's menu in place of this one, as desktop context menus do.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu")
 	EInventoryMenuOutsidePress RightPressOutside = EInventoryMenuOutsidePress::PassThrough;
+
+	/** A right press on Menu Panel closes the menu, as Back does. Off, it does nothing there, as on most desktop context menus. */
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu")
+	bool bCloseOnRightPress = true;
 
 	/** Played as the menu opens. Its buttons play their own hover and click sounds from their styles. */
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu")
@@ -264,7 +276,7 @@ protected:
 	 * Item Menu Stack's own transition at 0, so the two don't play over each other.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu|Transition")
-	FInventoryMenuTransition OpenTransition;
+	FModularUITransition OpenTransition;
 
 	/**
 	 * The menu closes by playing Open Transition backwards, from wherever it has got to, as if going back where it came from. Off, it plays
@@ -275,7 +287,7 @@ protected:
 
 	/** How the menu goes as it closes, from however it looks then, such as a quicker fade without a slide. */
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu|Transition", meta = (EditCondition = "!bCloseReversesOpen", EditConditionHides))
-	FInventoryMenuTransition CloseTransition;
+	FModularUITransition CloseTransition;
 
 	/**
 	 * Played as the menu opens, after it's placed, along with Open Transition. Name an animation OpenAnimation to use one. Give it every
@@ -306,7 +318,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu|Actions")
 	TSubclassOf<UInventoryItemActionButton> ActionButtonClass;
 
-	/** When an action picked in the menu runs: at once as the menu starts to close, or once it has closed. */
+	/**
+	 * When an action picked in the menu runs: at once as the menu starts to close, or once it has closed. One that keeps the menu open
+	 * runs at once.
+	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu|Actions")
 	EInventoryMenuActionTiming ActionTiming = EInventoryMenuActionTiming::AsMenuCloses;
 
@@ -363,6 +378,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
 	FDataTableRowHandle ConfirmAction;
 
+	/** The game keeps getting input while this is open, such as to keep walking. Off, only the UI gets it. */
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	bool bGameKeepsInput = false;
+
 private:
 	/** An action listed for the item, and the button showing it. */
 	struct FShownAction
@@ -376,11 +395,24 @@ private:
 	FBox2D FindAnchor(const UInventoryItemWidget* ItemWidget) const;
 	void PlaceBeside(const FBox2D& Box);
 
-	/** An absolute (desktop) box in viewport space, where Menu Panel's canvas positions are. */
-	FBox2D AbsoluteBoxToViewport(const FBox2D& AbsoluteBox);
+	/**
+	 * Places the menu beside its anchor again on the next frame. A menu is placed before it's first drawn, when its canvas's geometry
+	 * isn't known yet, so that first placement assumes the canvas covers the viewport.
+	 */
+	void PlaceNextFrame();
 
-	/** Where the cursor is in the viewport, while the mouse is in use. Unset on a gamepad, where the cursor is hidden. */
-	TOptional<FVector2D> GetCursorInViewport();
+	/**
+	 * Menu Panel's canvas's geometry, once it has been drawn. The canvas can be smaller than the viewport, or offset in it, such as within
+	 * the black bars of a constrained aspect ratio.
+	 */
+	bool GetCanvasGeometry(FGeometry& OutGeometry) const;
+
+	/** An absolute (desktop) point in the space Menu Panel's canvas positions its slots in, and that space's size. */
+	FVector2D AbsoluteToCanvas(const FVector2D& AbsolutePoint);
+	FVector2D GetCanvasSize();
+
+	/** Where the cursor is, in absolute (desktop) space, while the mouse is in use. Unset on a gamepad, where the cursor is hidden. */
+	TOptional<FVector2D> GetCursorPosition() const;
 
 	/** Menu Panel's size as it is now, with the buttons shown for this item. Lays the menu out first, as it may not have been drawn yet. */
 	FVector2D MeasureMenuPanel();
@@ -474,7 +506,7 @@ private:
 	TWeakObjectPtr<UInventoryItemWidget> AnchorWidget;
 	FBox2D Anchor = FBox2D(ForceInit);
 
-	/** Where the cursor was as the menu opened, for At Cursor, so the menu stays there as its size changes. */
+	/** Where the cursor was as the menu opened, in absolute space, for At Cursor, so the menu stays there as its size changes. */
 	TOptional<FVector2D> OpeningCursor;
 
 	TWeakObjectPtr<UInventoryScreenWidget> Screen;
@@ -508,10 +540,11 @@ private:
 	bool bWaitingForCloseAnimation = false;
 
 	/** Fades the whole menu, and slides and grows Menu Panel. */
-	FInventoryMenuTransitionPlayer TransitionPlayer;
+	FModularUITransitionPlayer TransitionPlayer;
 	FTSTicker::FDelegateHandle TransitionHandle;
 
 	FTSTicker::FDelegateHandle FocusHandle;
+	FTSTicker::FDelegateHandle PlaceHandle;
 
 	/** The entry highlighted now. Kept as the menu closes, and cleared as Set Item lists the actions again. */
 	TWeakObjectPtr<UCommonButtonBase> HighlightedEntry;

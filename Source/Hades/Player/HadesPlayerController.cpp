@@ -19,6 +19,7 @@
 #include "UserSettings/EnhancedInputUserSettings.h"
 
 #include "InventoryComponent.h"
+#include "ModularUIPauseSubsystem.h"
 
 AHadesPlayerController::AHadesPlayerController()
 {
@@ -61,6 +62,15 @@ void AHadesPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// Modular UI pauses the world for menus, and fades the paused post process in and out with it.
+	UModularUIPauseSubsystem* Pause = IsLocalController() ? UModularUIPauseSubsystem::Get(this) : nullptr;
+	if (Pause)
+	{
+		Pause->SetPausedPostProcess(PausedPostProcess, PausedFadeInTime, PausedFadeOutTime);
+		Pause->OnPauseChanged.AddUniqueDynamic(this, &ThisClass::HandlePauseChanged);
+		HandlePauseChanged(Pause->IsPauseRequested());
+	}
+
 	// Again here, as Enhanced Input may only make its user settings once the player is set up, which can be after input was.
 	if (IsLocalController() && bRegisterMappingsWithSettings && !RegisterMappingContextsWithSettings())
 	{
@@ -71,6 +81,11 @@ void AHadesPlayerController::BeginPlay()
 
 void AHadesPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (UModularUIPauseSubsystem* Pause = UModularUIPauseSubsystem::Get(this))
+	{
+		Pause->OnPauseChanged.RemoveDynamic(this, &ThisClass::HandlePauseChanged);
+	}
+
 	if (UCommonActivatableWidget* Layout = HUDLayout.Get())
 	{
 		Layout->DeactivateWidget();
@@ -85,7 +100,7 @@ void AHadesPlayerController::SetupInputComponent()
 
 	if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
 	{
-		// Registered before they're added, as Lyra does, so the keys the player rebound are the ones added, when the settings exist yet.
+		// Registered before they're added, so the keys the player rebound are the ones added, when the settings exist yet.
 		// Begin Play tries again if they don't.
 		RegisterMappingContextsWithSettings();
 		for (UInputMappingContext* MappingContext : DefaultMappingContexts)
@@ -138,34 +153,10 @@ void AHadesPlayerController::ShowMessageTo(const AActor* PlayerPawn, const FText
 	}
 }
 
-void AHadesPlayerController::AddPauseRequest(const UObject* Requester)
+void AHadesPlayerController::HandlePauseChanged(bool bPaused)
 {
-	PauseRequests.AddUnique(Requester);
-	UpdatePause();
-}
-
-void AHadesPlayerController::RemovePauseRequest(const UObject* Requester)
-{
-	if (PauseRequests.Remove(Requester) > 0)
-	{
-		UpdatePause();
-	}
-}
-
-void AHadesPlayerController::UpdatePause()
-{
-	PauseRequests.RemoveAll([](const TWeakObjectPtr<const UObject>& Requester) { return !Requester.IsValid(); });
-
-	const bool bWantsPause = !PauseRequests.IsEmpty();
-	if (bWantsPause != IsPaused())
-	{
-		SetPause(bWantsPause);
-	}
-
-	// Menus that stop the world cover the screen, so the HUD would only show through them.
 	if (UCommonActivatableWidget* Layout = HUDLayout.Get())
 	{
-		Layout->SetVisibility(bWantsPause ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
+		Layout->SetVisibility(bPaused ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
 	}
-	PausedPostProcess->bEnabled = bWantsPause;
 }
