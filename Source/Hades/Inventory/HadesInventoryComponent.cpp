@@ -5,6 +5,7 @@
 #include "Engine/World.h"
 #include "GameplayEffect.h"
 
+#include "Hades/Hades.h"
 #include "Hades/HadesGameplayTags.h"
 #include "Hades/Inventory/HadesItemPickup.h"
 #include "Hades/Player/HadesPlayerController.h"
@@ -179,14 +180,16 @@ bool UHadesInventoryComponent::CanCombine(FInventoryItemHandle Item) const
 
 bool UHadesInventoryComponent::CombineItems(FInventoryItemHandle Item, FInventoryItemHandle Other)
 {
+	// A gun and its ammo: loaded from the stack the player chose first.
 	const FInventoryItemHandle Gun = FindGunLoadedBy(Item, Other);
 	if (Gun.IsSet())
 	{
-		if (ReloadGun(Gun))
+		if (LoadGun(Gun, Gun == Item ? Other : Item))
 		{
 			return true;
 		}
-		AHadesPlayerController::ShowMessageTo(GetOwner(), LOCTEXT("GunFull", "It's already fully loaded."));
+		const bool bFull = GetLoadedRounds(Gun) >= GetCapacity(Gun);
+		AHadesPlayerController::ShowMessageTo(GetOwner(), bFull ? LOCTEXT("GunFull", "It's already fully loaded.") : LOCTEXT("CantLoad", "You can't load that right now."));
 		return false;
 	}
 
@@ -212,57 +215,114 @@ bool UHadesInventoryComponent::CombineItems(FInventoryItemHandle Item, FInventor
 }
 
 // Guns
-int32 UHadesInventoryComponent::GetLoadedRounds(FInventoryItemHandle Gun) const
+bool UHadesInventoryComponent::IsGun(FInventoryItemHandle Item) const
 {
+	return FindGun(Item) != nullptr;
+}
+
+bool UHadesInventoryComponent::IsAmmoFor(FInventoryItemHandle Gun, FInventoryItemHandle Ammo) const
+{
+	// An empty Ammo query would match every item, the gun included, so a gun without one loads nothing. Guns never load guns.
 	const UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
 	const FHadesGun* GunData = FindGun(Gun);
-	if (!InventorySubsystem || !GunData)
-	{
-		return 0;
-	}
+	return InventorySubsystem && GunData && !GunData->Ammo.IsEmpty() && Ammo.IsSet() && Ammo != Gun && !IsGun(Ammo)
+		&& InventorySubsystem->MatchesQuery(Ammo, GunData->Ammo);
+}
 
-	// Kept on the gun once it has been fired or loaded. Until then it has its starting rounds.
-	const FGameplayTag Rounds = HadesGameplayTags::Item_Stat_Rounds;
-	return InventorySubsystem->HasTagValue(Gun, Rounds)
-		? FMath::RoundToInt32(InventorySubsystem->GetTagValue(Gun, Rounds))
-		: FMath::Min(GunData->StartingRounds, GunData->Capacity);
+int32 UHadesInventoryComponent::GetLoadedRounds(FInventoryItemHandle Gun) const
+{
+	// The gun's own once it's been fired or loaded, or else its definition's: what it's found with.
+	const UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
+	return InventorySubsystem && IsGun(Gun) ? FMath::Max(0, FMath::RoundToInt32(InventorySubsystem->GetTagValue(Gun, HadesGameplayTags::Item_Stat_Rounds))) : 0;
 }
 
 int32 UHadesInventoryComponent::GetCapacity(FInventoryItemHandle Gun) const
 {
-	const FHadesGun* GunData = FindGun(Gun);
-	return GunData ? GunData->Capacity : 0;
+	// Effective, so attachments count, as item widgets and details panels read it.
+	const UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
+	return InventorySubsystem && IsGun(Gun) ? FMath::Max(0, FMath::RoundToInt32(InventorySubsystem->GetEffectiveTagValue(Gun, HadesGameplayTags::Item_Stat_Capacity))) : 0;
 }
 
 int32 UHadesInventoryComponent::GetSpareRounds(FInventoryItemHandle Gun) const
 {
+	const UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
 	const FHadesGun* GunData = FindGun(Gun);
-	return GunData && GunData->Ammo ? CountItems(MakeAmmoQuery(*GunData)) : 0;
+	if (!InventorySubsystem || !GunData || GunData->Ammo.IsEmpty())
+	{
+		return 0;
+	}
+
+	int32 Spare = 0;
+	for (const FInventoryItemHandle& Stack : FindItems(GunData->Ammo))
+	{
+		Spare += IsAmmoFor(Gun, Stack) ? InventorySubsystem->GetItemCount(Stack) : 0;
+	}
+	return Spare;
 }
 
 bool UHadesInventoryComponent::ReloadGun(FInventoryItemHandle Gun)
 {
+	return LoadGun(Gun, FInventoryItemHandle());
+}
+
+bool UHadesInventoryComponent::LoadGun(FInventoryItemHandle Gun, FInventoryItemHandle PreferredAmmo)
+{
 	UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
 	const FHadesGun* GunData = FindGun(Gun);
-	const int32 Loaded = GetLoadedRounds(Gun);
-	if (!InventorySubsystem || !GunData || !GunData->Ammo || !OwnsItem(Gun) || Loaded >= GunData->Capacity)
+	if (!InventorySubsystem || !GunData || !OwnsItem(Gun))
 	{
 		return false;
 	}
 
-	const int32 Taken = RemoveItems(MakeAmmoQuery(*GunData), GunData->Capacity - Loaded);
-	return Taken > 0 && InventorySubsystem->SetTagValue(Gun, HadesGameplayTags::Item_Stat_Rounds, Loaded + Taken);
+	const int32 Capacity = GetCapacity(Gun);
+	if (Capacity <= 0 || GunData->Ammo.IsEmpty())
+	{
+		UE_LOG(LogHadesInventory, Warning, TEXT("[Inventory] %s can't be loaded: give its definition an Item.Stat.Capacity tag value, and its Hades Gun fragment the Ammo that loads it."),
+			*GetNameSafe(InventorySubsystem->GetItemDefinition(Gun)));
+		return false;
+	}
+
+	const int32 Loaded = GetLoadedRounds(Gun);
+	const int32 Wanted = Capacity - Loaded;
+	if (Wanted <= 0)
+	{
+		return false;
+	}
+
+	// The stack the player chose first, then any other ammo for it.
+	TArray<FInventoryItemHandle> Stacks = FindItems(GunData->Ammo);
+	if (IsAmmoFor(Gun, PreferredAmmo) && OwnsItem(PreferredAmmo))
+	{
+		Stacks.Remove(PreferredAmmo);
+		Stacks.Insert(PreferredAmmo, 0);
+	}
+
+	// One change: the rounds go in only as the ammo comes out, or neither happens.
+	FInventoryRegistry& Registry = InventorySubsystem->GetRegistry();
+	int32 Taken = 0;
+	const EInventoryError Error = Registry.RunTransaction([&]() -> EInventoryError
+	{
+		for (const FInventoryItemHandle& Stack : Stacks)
+		{
+			if (Taken < Wanted && IsAmmoFor(Gun, Stack))
+			{
+				Taken += Registry.RemoveItem(Stack, FMath::Min(Wanted - Taken, InventorySubsystem->GetItemCount(Stack)));
+			}
+		}
+		return Taken > 0 ? Registry.SetTagValue(Gun, HadesGameplayTags::Item_Stat_Rounds, static_cast<float>(Loaded + Taken)) : EInventoryError::MissingIngredients;
+	});
+	return Error == EInventoryError::None;
 }
 
 bool UHadesInventoryComponent::SpendRounds(FInventoryItemHandle Gun, int32 Count)
 {
 	UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
 	const int32 Loaded = GetLoadedRounds(Gun);
-	if (!InventorySubsystem || !FindGun(Gun) || Count <= 0 || Count > Loaded)
+	if (!InventorySubsystem || !IsGun(Gun) || Count <= 0 || Count > Loaded)
 	{
 		return false;
 	}
-	return InventorySubsystem->SetTagValue(Gun, HadesGameplayTags::Item_Stat_Rounds, Loaded - Count);
+	return InventorySubsystem->SetTagValue(Gun, HadesGameplayTags::Item_Stat_Rounds, static_cast<float>(Loaded - Count));
 }
 
 const FHadesGun* UHadesInventoryComponent::FindGun(FInventoryItemHandle Item) const
@@ -272,22 +332,9 @@ const FHadesGun* UHadesInventoryComponent::FindGun(FInventoryItemHandle Item) co
 	return Definition ? Definition->FindFragment<FHadesGun>() : nullptr;
 }
 
-FInventoryItemQuery UHadesInventoryComponent::MakeAmmoQuery(const FHadesGun& Gun) const
-{
-	FInventoryItemQuery Query;
-	Query.Definitions.Add(Gun.Ammo);
-	return Query;
-}
-
 FInventoryItemHandle UHadesInventoryComponent::FindGunLoadedBy(FInventoryItemHandle Item, FInventoryItemHandle Other) const
 {
-	const UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
-	auto Loads = [&](FInventoryItemHandle Gun, FInventoryItemHandle Ammo)
-	{
-		const FHadesGun* GunData = FindGun(Gun);
-		return InventorySubsystem && GunData && GunData->Ammo && InventorySubsystem->GetItemDefinition(Ammo) == GunData->Ammo;
-	};
-	return Loads(Item, Other) ? Item : Loads(Other, Item) ? Other : FInventoryItemHandle();
+	return IsAmmoFor(Item, Other) ? Item : IsAmmoFor(Other, Item) ? Other : FInventoryItemHandle();
 }
 
 bool UHadesInventoryComponent::IsKeyItem(FInventoryItemHandle Item) const
@@ -297,20 +344,47 @@ bool UHadesInventoryComponent::IsKeyItem(FInventoryItemHandle Item) const
 }
 
 // Pockets
-bool UHadesInventoryComponent::UpgradePockets()
+bool UHadesInventoryComponent::GrowPockets(int32 Cells)
+{
+	// Within the one layout: it fails once every cell is unlocked.
+	UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
+	EInventoryError Error = EInventoryError::None;
+	return InventorySubsystem && Cells > 0 && InventorySubsystem->AddUsableCells(GetContainer(HadesGameplayTags::Container_Pockets), Cells, Error);
+}
+
+bool UHadesInventoryComponent::IsPouch(FInventoryItemHandle Item) const
+{
+	const UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
+	return InventorySubsystem && InventorySubsystem->HasItemTag(Item, HadesGameplayTags::Item_Type_Pouch);
+}
+
+bool UHadesInventoryComponent::UsePouch(FInventoryItemHandle Pouch)
 {
 	UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
-	const FInventoryContainerHandle Pockets = GetContainer(HadesGameplayTags::Container_Pockets);
-	const UInventoryContainerLayout* Current = InventorySubsystem ? InventorySubsystem->GetContainerLayout(Pockets) : nullptr;
-	if (!Current)
+	if (!InventorySubsystem || !IsPouch(Pouch))
 	{
 		return false;
 	}
 
-	// The starting layout isn't in the list, so it counts as the one before the first upgrade.
-	const int32 Next = PocketUpgrades.IndexOfByPredicate([Current](const TObjectPtr<UInventoryContainerLayout>& Layout) { return Layout.Get() == Current; }) + 1;
-	EInventoryError Error;
-	return PocketUpgrades.IsValidIndex(Next) && InventorySubsystem->SetContainerLayout(Pockets, PocketUpgrades[Next], Error);
+	// What it unlocks is on the pouch, so each kind of pouch can say its own.
+	const UInventoryItemDefinition* Definition = InventorySubsystem->GetItemDefinition(Pouch);
+	const int32 Cells = FMath::RoundToInt32(InventorySubsystem->GetTagValue(Pouch, HadesGameplayTags::Item_Stat_PocketCells));
+	if (Cells <= 0)
+	{
+		UE_LOG(LogHadesInventory, Warning, TEXT("[Inventory] %s is a pouch without an Item.Stat.PocketCells tag value, so it unlocks nothing. Give its definition one, such as 2."),
+			*GetNameSafe(Definition));
+		return false;
+	}
+	if (!GrowPockets(Cells))
+	{
+		UE_LOG(LogHadesInventory, Warning, TEXT("[Inventory] %s can't grow %s's pockets: every cell is already unlocked. Give the pockets' layout a bigger grid."),
+			*GetNameSafe(Definition), *GetNameSafe(GetOwner()));
+		return false;
+	}
+
+	AHadesPlayerController::ShowMessageTo(GetOwner(), FText::Format(LOCTEXT("PocketsGrew", "{0}: you can carry more."), Definition ? Definition->DisplayName : FText::GetEmpty()));
+	InventorySubsystem->RemoveItem(Pouch);
+	return true;
 }
 
 bool UHadesInventoryComponent::OrganizePockets()

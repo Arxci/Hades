@@ -32,8 +32,24 @@ UWorld* UInventoryItemAction::GetWorld() const
 	return ContextWorld.Get();
 }
 
+bool UInventoryItemAction::AppliesTo(const FInventoryItemActionContext& Context) const
+{
+	if (ItemFilter.IsEmpty())
+	{
+		return true;
+	}
+
+	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(GetContextObject(Context));
+	return Inventory && Inventory->MatchesQuery(Context.Item, ItemFilter);
+}
+
 bool UInventoryItemAction::CanRunFor(const FInventoryItemActionContext& Context) const
 {
+	if (!AppliesTo(Context))
+	{
+		return false;
+	}
+
 	TGuardValue<TWeakObjectPtr<UWorld>> World(ContextWorld, FindContextWorld(Context));
 	return CanRun(Context);
 }

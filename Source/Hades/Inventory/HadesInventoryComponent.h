@@ -9,7 +9,6 @@
 
 class AHadesItemPickup;
 class UGameplayEffect;
-class UInventoryContainerLayout;
 class UInventoryItemDefinition;
 class UInventoryRecipeBook;
 
@@ -26,30 +25,32 @@ struct FHadesItemUse
 };
 
 
-/** Add to a gun's item definition's Fragments. Each gun keeps its own rounds. Combining a gun with its ammo loads it. */
+/**
+ * Add to a gun's item definition's Fragments: it makes the item a gun and says what loads it. A gun's numbers are tag values on its
+ * definition, where Value Displays, details panels, loot rolls and attachments all see them:
+ * - Item.Stat.Capacity: the rounds it holds when full. Attachments add to it, such as an extended magazine's Attachment Value Modifiers.
+ * - Item.Stat.Rounds: the rounds it's found with. Each gun then keeps its own.
+ * Combining a gun with its ammo loads it, from that stack first.
+ */
 USTRUCT(BlueprintType)
 struct FHadesGun
 {
 	GENERATED_BODY()
 
-	/** Rounds it holds when full. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gun", meta = (ClampMin = "1"))
-	int32 Capacity = 10;
-
-	/** Rounds in it when it's found, up to Capacity. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gun", meta = (ClampMin = "0"))
-	int32 StartingRounds = 10;
-
-	/** The item it loads, such as Handgun Ammo. */
+	/**
+	 * What loads it: the definition Handgun Ammo, say, or a Tag Query for Item.Ammo.Handgun so every ammo tagged that does. Empty loads
+	 * nothing, as it would match every item. Other guns never load it.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gun")
-	TObjectPtr<UInventoryItemDefinition> Ammo;
+	FInventoryItemQuery Ammo;
 };
 
 
 /**
- * The player's inventory with the game's rules on top: one item in hand, using, discarding and combining items, and pouches that grow the pockets.
- * The item in hand stays where it is in the pockets. Its equip rules decide which hand slot it is equipped to.
- * Expects a Container.Pockets grid and a Container.KeyItems list, plus an Inventory Equipment Component on the same actor.
+ * The player's inventory with the game's rules on top: one item in hand, using, discarding and combining items, guns and their ammo, and
+ * pouches that grow the pockets. The item in hand stays where it is in the pockets. Its equip rules decide which hand slot it's equipped to.
+ * Expects a Container.Pockets grid and a Container.KeyItems list, plus an Inventory Equipment Component on the same actor. Give the pockets
+ * one layout at the biggest size they grow to, with Usable Cells set to what they start with: pouches unlock the rest.
  */
 UCLASS(ClassGroup = (Inventory), meta = (BlueprintSpawnableComponent))
 class HADES_API UHadesInventoryComponent : public UInventoryComponent
@@ -101,20 +102,27 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory|Actions")
 	bool IsKeyItem(FInventoryItemHandle Item) const;
 
-	// Guns
-	/** Rounds in a gun. Anything without a Hades Gun fragment has none. */
+	// Guns: items with a Hades Gun fragment. Their rounds and capacity are tag values on the item, so they show and save with it.
+	UFUNCTION(BlueprintPure, Category = "Inventory|Guns")
+	bool IsGun(FInventoryItemHandle Item) const;
+
+	/** Whether Ammo loads Gun: it matches the gun's Hades Gun Ammo, and isn't a gun itself. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Guns")
+	bool IsAmmoFor(FInventoryItemHandle Gun, FInventoryItemHandle Ammo) const;
+
+	/** Rounds in a gun: its Item.Stat.Rounds. 0 for anything that isn't a gun. */
 	UFUNCTION(BlueprintPure, Category = "Inventory|Guns")
 	int32 GetLoadedRounds(FInventoryItemHandle Gun) const;
 
-	/** Rounds a gun holds when full, or 0 for anything that isn't a gun. */
+	/** Rounds a gun holds when full: its Item.Stat.Capacity, with its attachments' bonuses, such as an extended magazine's. 0 for anything that isn't a gun. */
 	UFUNCTION(BlueprintPure, Category = "Inventory|Guns")
 	int32 GetCapacity(FInventoryItemHandle Gun) const;
 
-	/** Rounds for a gun in the inventory, not counting those in it. */
+	/** Rounds that would load a gun, held anywhere in this inventory, not counting those in it. */
 	UFUNCTION(BlueprintPure, Category = "Inventory|Guns")
 	int32 GetSpareRounds(FInventoryItemHandle Gun) const;
 
-	/** Fills a gun from its ammo in the inventory. False if it's full or there's none. */
+	/** Fills a gun from its ammo in the inventory, in one change: the rounds go in only as the ammo comes out. False when it's full or there's none. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Guns")
 	bool ReloadGun(FInventoryItemHandle Gun);
 
@@ -122,10 +130,21 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Guns")
 	bool SpendRounds(FInventoryItemHandle Gun, int32 Count = 1);
 
-	// Pockets
-	/** Moves the pockets on to the next of Pocket Upgrades. False once they are the biggest. */
+	// Pockets. They're one layout at the biggest size they grow to, with Usable Cells set to what they start with.
+	/** Unlocks Cells more of the pockets' cells, row by row. False, unlocking none, once every cell is unlocked. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Pockets")
-	bool UpgradePockets();
+	bool GrowPockets(int32 Cells);
+
+	/** An item tagged Item.Type.Pouch: it grows the pockets by its Item.Stat.PocketCells instead of going in them. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Pockets")
+	bool IsPouch(FInventoryItemHandle Item) const;
+
+	/**
+	 * Grows the pockets by the pouch's Item.Stat.PocketCells, uses the pouch up and tells the player. False, keeping it, when it isn't a
+	 * pouch, unlocks nothing, or the pockets are already at their biggest.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Pockets")
+	bool UsePouch(FInventoryItemHandle Pouch);
 
 	/** Repacks the pockets, biggest items first. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Pockets")
@@ -140,14 +159,12 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Inventory|Hades")
 	TObjectPtr<UInventoryRecipeBook> CombineRecipes;
 
-	/** Each pouch found moves the pockets on to the next layout here. Each must hold the one before, as items keep their cells. */
-	UPROPERTY(EditAnywhere, Category = "Inventory|Hades")
-	TArray<TObjectPtr<UInventoryContainerLayout>> PocketUpgrades;
-
 private:
 	FGameplayTag ChooseHand(FInventoryItemHandle Item) const;
 	const FHadesGun* FindGun(FInventoryItemHandle Item) const;
-	FInventoryItemQuery MakeAmmoQuery(const FHadesGun& Gun) const;
+
+	/** Fills a gun from its ammo, taking from Preferred Ammo first when it loads the gun, such as the stack the player combined it with. */
+	bool LoadGun(FInventoryItemHandle Gun, FInventoryItemHandle PreferredAmmo);
 
 	/** Whichever of the two is a gun the other one loads. */
 	FInventoryItemHandle FindGunLoadedBy(FInventoryItemHandle Item, FInventoryItemHandle Other) const;

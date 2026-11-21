@@ -5,8 +5,6 @@
 #include "Hades/Camera/HadesPlayerCameraManager.h"
 #include "Hades/UI/WorldMarker/HadesWorldMarkerManagerComponent.h"
 
-#include "Components/PostProcessComponent.h"
-
 #include "CommonActivatableWidget.h"
 #include "CommonUIExtensions.h"
 
@@ -27,14 +25,6 @@ AHadesPlayerController::AHadesPlayerController()
 
 	WorldMarkerManager = CreateDefaultSubobject<UHadesWorldMarkerManagerComponent>(TEXT("WorldMarkerManager"));
 	ItemBoxInventory = CreateDefaultSubobject<UInventoryComponent>(TEXT("ItemBoxInventory"));
-
-	PausedPostProcess = CreateDefaultSubobject<UPostProcessComponent>(TEXT("PausedPostProcess"));
-	PausedPostProcess->SetupAttachment(RootComponent);
-	PausedPostProcess->bUnbound = true;
-	PausedPostProcess->bEnabled = false;
-	PausedPostProcess->Priority = 1000.0f;
-	PausedPostProcess->Settings.bOverride_ColorSaturation = true;
-	PausedPostProcess->Settings.ColorSaturation = FVector4(0.0, 0.0, 0.0, 1.0);
 }
 
 void AHadesPlayerController::ReceivedPlayer()
@@ -62,11 +52,11 @@ void AHadesPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Modular UI pauses the world for menus, and fades the paused post process in and out with it.
+	// Modular UI pauses the world for menus, and fades in the look set in Project Settings > Plugins > Modular UI > Paused Look. The HUD
+	// hides meanwhile.
 	UModularUIPauseSubsystem* Pause = IsLocalController() ? UModularUIPauseSubsystem::Get(this) : nullptr;
 	if (Pause)
 	{
-		Pause->SetPausedPostProcess(PausedPostProcess, PausedFadeInTime, PausedFadeOutTime);
 		Pause->OnPauseChanged.AddUniqueDynamic(this, &ThisClass::HandlePauseChanged);
 		HandlePauseChanged(Pause->IsPauseRequested());
 	}

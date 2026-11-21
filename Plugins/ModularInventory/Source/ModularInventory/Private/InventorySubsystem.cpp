@@ -215,6 +215,33 @@ bool UInventorySubsystem::SetContainerLayout(FInventoryContainerHandle Container
 	return Succeeded(Registry.SetContainerLayout(Container, Layout), OutError);
 }
 
+bool UInventorySubsystem::SetUsableCellCount(FInventoryContainerHandle Container, int32 Count, EInventoryError& OutError)
+{
+	return Succeeded(Registry.SetUsableCellCount(Container, Count), OutError);
+}
+
+bool UInventorySubsystem::AddUsableCells(FInventoryContainerHandle Container, int32 Count, EInventoryError& OutError)
+{
+	const UInventoryContainerLayout* Layout = GetContainerLayout(Container);
+	if (!Layout)
+	{
+		return Succeeded(EInventoryError::InvalidContainer, OutError);
+	}
+	if (Layout->Type != EInventoryContainerType::Grid)
+	{
+		return Succeeded(EInventoryError::Rejected, OutError);
+	}
+
+	// Nothing left to unlock, or to lock, counts as failing, so callers such as a pouch pickup can tell the pockets are at their biggest.
+	const int32 Current = Registry.GetUsableCellCount(Container);
+	const int32 Wanted = FMath::Clamp(Current + Count, 0, Layout->GetCellCount());
+	if (Wanted == Current)
+	{
+		return Succeeded(Count != 0 ? EInventoryError::OutOfBounds : EInventoryError::None, OutError);
+	}
+	return Succeeded(Registry.SetUsableCellCount(Container, Wanted), OutError);
+}
+
 bool UInventorySubsystem::SortContainer(FInventoryContainerHandle Container, EInventoryError& OutError)
 {
 	return Succeeded(Registry.SortContainer(Container), OutError);

@@ -50,5 +50,7 @@ namespace HadesGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Item_Type_KeyItem, "Item.Type.KeyItem");
 	UE_DEFINE_GAMEPLAY_TAG(Item_Type_Pouch,   "Item.Type.Pouch");
 	UE_DEFINE_GAMEPLAY_TAG(Item_Stat_Uses,    "Item.Stat.Uses");
-	UE_DEFINE_GAMEPLAY_TAG(Item_Stat_Rounds,  "Item.Stat.Rounds");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Item_Stat_Rounds,   "Item.Stat.Rounds",   "Rounds loaded in a gun. Its definition's value is what it's found with.");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Item_Stat_Capacity, "Item.Stat.Capacity", "Rounds a gun holds when full. Attachments can add to it, such as an extended magazine.");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Item_Stat_PocketCells, "Item.Stat.PocketCells", "On a pouch: how many more of the pockets' cells it unlocks.");
 }

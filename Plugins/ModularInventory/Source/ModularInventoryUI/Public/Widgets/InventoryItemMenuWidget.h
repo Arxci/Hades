@@ -213,8 +213,9 @@ protected:
 	/**
 	 * One entry is always highlighted, as console-style menus keep one: the first as the menu opens, or as a prompt asks, then whichever
 	 * the mouse or focus reached last, so Accept runs the one the player sees. It's shown with its button style's Selected look: give
-	 * Selected Base and Selected Hovered your highlight, and Selected Text Style its text, the prompt's buttons too. Off, an entry looks
-	 * highlighted only while it's hovered, or focused on a gamepad, though the first still takes focus.
+	 * Selected Base and Selected Hovered your highlight, and Selected Text Style its text, the prompt's buttons too. Only the highlighted
+	 * entry is ever selected. On a gamepad, focus alone moves the highlight. Off, an entry looks highlighted only while it's hovered, or
+	 * focused on a gamepad, though the first still takes focus.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu")
 	bool bKeepEntryHighlighted = false;
@@ -475,6 +476,16 @@ private:
 	/** Whether the button is one of the prompt's, such as Confirm Button. */
 	bool IsPromptButton(UCommonButtonBase* Button) const;
 
+	/** Every entry, shown or not: the buttons in Menu Panel and the prompt's. */
+	void ForEachEntry(TFunctionRef<void(UCommonButtonBase&)> Callback) const;
+
+	/**
+	 * Has Slate work out again what's under the cursor on the next frame, so a button hidden or moved out from under it stops looking
+	 * hovered, such as the action whose prompt replaced the actions. Otherwise it would show hovered again, beside the highlighted entry,
+	 * the next time it shows.
+	 */
+	void RefreshHover();
+
 	// Prompt
 	bool IsPrompting() const { return PromptIndex != INDEX_NONE; }
 	void ShowPrompt(int32 Index);
@@ -545,6 +556,7 @@ private:
 
 	FTSTicker::FDelegateHandle FocusHandle;
 	FTSTicker::FDelegateHandle PlaceHandle;
+	FTSTicker::FDelegateHandle HoverHandle;
 
 	/** The entry highlighted now. Kept as the menu closes, and cleared as Set Item lists the actions again. */
 	TWeakObjectPtr<UCommonButtonBase> HighlightedEntry;

@@ -220,6 +220,82 @@ struct MODULARINVENTORYUI_API FInventoryMeterColors
 };
 
 
+/** Where a value display's number comes from. */
+UENUM(BlueprintType)
+enum class EInventoryValueSource : uint8
+{
+	/** A tag value, such as the rounds in a gun or a tool's durability. Shown only for items that have it, their definition's included. */
+	TagValue,
+	/** How many are in the stack. Shown only for items that stack. */
+	StackCount
+};
+
+
+/**
+ * A number an item widget shows, such as a gun's rounds or a stack's count, in Text Blocks and a Progress Bar you name in its designer.
+ * Several can name the same Text Block, such as a corner number that's a gun's rounds or else a stack's count: the first that applies to
+ * the item shows there, and a widget none applies to is collapsed.
+ */
+USTRUCT(BlueprintType)
+struct MODULARINVENTORYUI_API FInventoryValueDisplay
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	EInventoryValueSource Source = EInventoryValueSource::TagValue;
+
+	/** The tag value shown, such as Item.Stat.Rounds. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (EditCondition = "Source == EInventoryValueSource::TagValue", EditConditionHides))
+	FGameplayTag Tag;
+
+	/**
+	 * The tag value that's full, such as Item.Stat.Capacity, for the meter, the tint and {Max}, with the bonuses of attachments and sockets,
+	 * such as an extended magazine's. Without it, or for items without it, the value the definition starts Tag at is full.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (EditCondition = "Source == EInventoryValueSource::TagValue", EditConditionHides))
+	FGameplayTag MaxTag;
+
+	/** Adds attachments' and sockets' bonuses to the value, as for a stat such as damage. Off, it's the item's own, as for rounds or durability. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (EditCondition = "Source == EInventoryValueSource::TagValue", EditConditionHides))
+	bool bIncludeBonuses = false;
+
+	/** Only items that match show it, such as only guns. Empty shows it for every item with the value. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	FInventoryItemQuery ItemFilter;
+
+	/** The name of a Text Block in the item widget's designer that shows the number, such as CountText. None shows no number. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	FName TextWidget = TEXT("CountText");
+
+	/** What the Text Block says. {Value} is the number, {Max} what's full, and {Percent} how full it is, out of 100. Such as x{Value}, or {Value}/{Max}. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	FText Format = INVTEXT("{Value}");
+
+	/** The name of a Progress Bar in the designer, filled to how full the value is, such as a durability bar. None shows no bar. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	FName MeterWidget;
+
+	/** The name of any widget in the designer shown only while this value is, such as a darker patch behind the number. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	FName FrameWidget;
+
+	/** A stack of one shows no count, so only real stacks show a number. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (EditCondition = "Source == EInventoryValueSource::StackCount", EditConditionHides))
+	bool bHideSingle = false;
+
+	/** Not shown while full, so only spent or worn items show it, such as a knife's durability. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	bool bHideWhenFull = false;
+
+	/** Colors the Text Block and the bar by how full the value is, such as green when full and red when empty. Off, they keep the designer's colors. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	bool bTintByFullness = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (EditCondition = "bTintByFullness"))
+	FInventoryMeterColors Colors;
+};
+
+
 /** A color for items with a tag, such as a rarity's. */
 USTRUCT(BlueprintType)
 struct MODULARINVENTORYUI_API FInventoryTagColor

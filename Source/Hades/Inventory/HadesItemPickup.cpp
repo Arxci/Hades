@@ -90,7 +90,7 @@ void AHadesItemPickup::HandleInteractionCompleted(AActor* Interactor)
 	UHadesQuickSlotComponent* QuickSlots = Interactor->FindComponentByClass<UHadesQuickSlotComponent>();
 	for (const FInventoryItemHandle& Item : GetItems())
 	{
-		if (HadesTaker && Subsystem->HasItemTag(Item, HadesGameplayTags::Item_Type_Pouch))
+		if (HadesTaker && HadesTaker->IsPouch(Item))
 		{
 			TakePouch(*HadesTaker, Item);
 			continue;
@@ -115,17 +115,13 @@ void AHadesItemPickup::HandleInteractionCompleted(AActor* Interactor)
 
 void AHadesItemPickup::TakePouch(UHadesInventoryComponent& Taker, FInventoryItemHandle Pouch)
 {
+	// A pouch grows the pockets instead of going in them. One that can't, such as once they're at their biggest, is used up all the same,
+	// so the pickup still empties; the inventory component has logged why.
 	UInventorySubsystem* Subsystem = UInventorySubsystem::Get(this);
-	const UInventoryItemDefinition* Definition = Subsystem->GetItemDefinition(Pouch);
-	if (Taker.UpgradePockets())
+	if (!Taker.UsePouch(Pouch) && Subsystem)
 	{
-		AHadesPlayerController::ShowMessageTo(Taker.GetOwner(), FText::Format(LOCTEXT("PocketsGrew", "{0}: you can carry more."), Definition->DisplayName));
+		Subsystem->RemoveItem(Pouch);
 	}
-	else
-	{
-		UE_LOG(LogHadesInventory, Warning, TEXT("[Pickup] %s: %s has no bigger pockets left in Pocket Upgrades."), *GetNameSafe(this), *GetNameSafe(Taker.GetOwner()));
-	}
-	Subsystem->RemoveItem(Pouch);
 }
 
 void AHadesItemPickup::HandleStateTagChanged(FGameplayTag Tag, bool bAdded)

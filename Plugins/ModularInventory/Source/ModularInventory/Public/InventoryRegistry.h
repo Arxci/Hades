@@ -89,6 +89,13 @@ struct MODULARINVENTORY_API FInventoryContainerRecord
 	UPROPERTY(SaveGame)
 	TArray<FInstancedStruct> Fragments;
 
+	/**
+	 * Grids: how many cells can hold items, counted row by row from the top left, as set with SetUsableCellCount. INDEX_NONE follows the
+	 * layout's Usable Cells.
+	 */
+	UPROPERTY(SaveGame)
+	int32 UnlockedCells = INDEX_NONE;
+
 	/** Grids: the item index on each cell. Slots: the item index in each slot. INDEX_NONE when empty. Rebuilt from the items' placements. */
 	UPROPERTY()
 	TArray<int32> Cells;
@@ -177,6 +184,10 @@ public:
 	EInventoryError CanPlace(FInventoryItemHandle Item, FInventoryContainerHandle Container, const FInventoryPlacement& Placement) const;
 	/** The first free spot, trying the item's current rotation first. */
 	bool FindPlacement(FInventoryItemHandle Item, FInventoryContainerHandle Container, FInventoryPlacement& OutPlacement) const;
+	/** Whether a grid cell can hold items: inside the grid and not locked, by SetUsableCellCount or else the layout's Usable Cells. */
+	bool IsCellUsable(FInventoryContainerHandle Container, const FIntPoint& Cell) const;
+	/** How many of a grid's cells can hold items now, counted row by row from the top left. 0 for slots and lists. */
+	int32 GetUsableCellCount(FInventoryContainerHandle Container) const;
 
 	// Containers
 	FInventoryContainerHandle CreateContainer(const UInventoryContainerLayout* Layout, const FGameplayTag& Tag, UObject* Owner);
@@ -184,9 +195,17 @@ public:
 	EInventoryError DestroyContainer(FInventoryContainerHandle Container);
 	/**
 	 * Gives the container another layout of the same type, such as a bigger grid for an upgraded backpack. Items keep their places.
-	 * Fails without changing anything when an item no longer fits or the new filter refuses it.
+	 * Fails without changing anything when an item no longer fits or the new filter refuses it. Cells unlocked with SetUsableCellCount
+	 * go back to following the new layout's Usable Cells.
 	 */
 	EInventoryError SetContainerLayout(FInventoryContainerHandle Container, const UInventoryContainerLayout* Layout);
+	/**
+	 * Unlocks or locks a grid's cells, row by row from the top left, so that Count of them can hold items, such as pockets that grow as
+	 * pouches are found while the grid shows its full size. It overrides the layout's Usable Cells for this container only. Count 0 locks
+	 * every cell, the grid's cell count or more unlocks them all, and a negative Count follows the layout's Usable Cells again.
+	 * Fails without changing anything when an item sits on a cell it would lock, or the container isn't a grid.
+	 */
+	EInventoryError SetUsableCellCount(FInventoryContainerHandle Container, int32 Count);
 	/**
 	 * Sorts a grid or list: merges partial stacks, then orders the items biggest first in a grid, then by name, so the same items sit
 	 * together. A grid puts each on the first spot that fits. All or nothing.
@@ -321,6 +340,8 @@ private:
 	TArray<int32> FindEquipConflicts(int32 ItemIndex, const FInventoryItemRecord& Item, const FInventoryContainerRecord& Container, int32 SlotIndex) const;
 	bool FindPlacementFor(int32 ItemIndex, const FInventoryItemRecord& Item, FInventoryContainerHandle Container, FInventoryPlacement& OutPlacement) const;
 	int32 FindOccupant(const FInventoryContainerRecord& Container, const FInventoryPlacement& Placement) const;
+	static int32 GetRecordUsableCellCount(const FInventoryContainerRecord& Container);
+	static bool IsRecordCellUsable(const FInventoryContainerRecord& Container, const FIntPoint& Cell);
 
 	bool RecordMatchesQuery(const FInventoryItemRecord& Item, const FInventoryItemQuery& Query) const;
 	bool RecordsCanStack(const FInventoryItemRecord& Item, const FInventoryItemRecord& Other) const;

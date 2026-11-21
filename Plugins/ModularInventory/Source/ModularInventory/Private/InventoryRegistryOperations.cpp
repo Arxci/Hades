@@ -77,8 +77,8 @@ EInventoryError FInventoryRegistry::CanOccupy(int32 ItemIndex, const FInventoryI
 		{
 			for (int32 X = Cell.X; X < Cell.X + Size.X; ++X)
 			{
-				// Cells locked by the layout's Usable Cells are outside the part of the grid that can be used.
-				if (!Layout.IsCellUsable(FIntPoint(X, Y)))
+				// Locked cells, past the container's usable cells, are outside the part of the grid that can be used.
+				if (!IsRecordCellUsable(*ContainerRecord, FIntPoint(X, Y)))
 				{
 					return EInventoryError::OutOfBounds;
 				}
@@ -118,6 +118,37 @@ EInventoryError FInventoryRegistry::CanOccupy(int32 ItemIndex, const FInventoryI
 	}
 	}
 	return EInventoryError::None;
+}
+
+bool FInventoryRegistry::IsCellUsable(FInventoryContainerHandle Container, const FIntPoint& Cell) const
+{
+	const FInventoryContainerRecord* Record = FindContainer(Container);
+	return Record && IsRecordCellUsable(*Record, Cell);
+}
+
+int32 FInventoryRegistry::GetUsableCellCount(FInventoryContainerHandle Container) const
+{
+	const FInventoryContainerRecord* Record = FindContainer(Container);
+	return Record ? GetRecordUsableCellCount(*Record) : 0;
+}
+
+int32 FInventoryRegistry::GetRecordUsableCellCount(const FInventoryContainerRecord& Container)
+{
+	const UInventoryContainerLayout& Layout = *Container.Layout;
+	if (Layout.Type != EInventoryContainerType::Grid)
+	{
+		return 0;
+	}
+
+	// The container's own count, set at runtime, or else the layout's Usable Cells.
+	return Container.UnlockedCells >= 0 ? FMath::Min(Container.UnlockedCells, Layout.GetCellCount()) : Layout.GetUsableCellCount();
+}
+
+bool FInventoryRegistry::IsRecordCellUsable(const FInventoryContainerRecord& Container, const FIntPoint& Cell)
+{
+	const UInventoryContainerLayout& Layout = *Container.Layout;
+	const bool bInside = Layout.Type == EInventoryContainerType::Grid && Cell.X >= 0 && Cell.Y >= 0 && Cell.X < Layout.GridSize.X && Cell.Y < Layout.GridSize.Y;
+	return bInside && Cell.Y * Layout.GridSize.X + Cell.X < GetRecordUsableCellCount(Container);
 }
 
 EInventoryError FInventoryRegistry::CanEquipInSlot(int32 ItemIndex, const FInventoryItemRecord& Item, const FInventoryContainerRecord& Container, int32 SlotIndex) const
@@ -854,8 +885,10 @@ EInventoryError FInventoryRegistry::SetContainerLayout(FInventoryContainerHandle
 
 	return RunTransaction([&]() -> EInventoryError
 	{
+		// A new shape comes with its own Usable Cells, so cells unlocked on the old one don't carry over.
 		FInventoryContainerRecord& Edited = EditContainer(Container.Index);
 		Edited.Layout = Layout;
+		Edited.UnlockedCells = INDEX_NONE;
 		Edited.Cells.Init(INDEX_NONE, Layout->Type == EInventoryContainerType::Grid ? Layout->GetCellCount() : Layout->GetSlotCount());
 		if (Layout->Type == EInventoryContainerType::List && Layout->Capacity > 0 && Edited.Items.Num() > Layout->Capacity)
 		{
@@ -876,6 +909,43 @@ EInventoryError FInventoryRegistry::SetContainerLayout(FInventoryContainerHandle
 				return Error;
 			}
 			StampCells(Container.Index, Item.Index, Item.Index);
+		}
+		return EInventoryError::None;
+	});
+}
+
+EInventoryError FInventoryRegistry::SetUsableCellCount(FInventoryContainerHandle Container, int32 Count)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(Inventory_SetUsableCellCount);
+
+	const FInventoryContainerRecord* Record = FindContainer(Container);
+	if (!Record)
+	{
+		return EInventoryError::InvalidContainer;
+	}
+	if (Record->Layout->Type != EInventoryContainerType::Grid)
+	{
+		return EInventoryError::Rejected;
+	}
+
+	const int32 Unlocked = Count < 0 ? INDEX_NONE : FMath::Min(Count, Record->Layout->GetCellCount());
+	if (Unlocked == Record->UnlockedCells)
+	{
+		return EInventoryError::None;
+	}
+
+	return RunTransaction([&]() -> EInventoryError
+	{
+		EditContainer(Container.Index).UnlockedCells = Unlocked;
+
+		// An item on a cell this would lock keeps it unlocked: nothing changes.
+		for (const FInventoryItemHandle& Item : Containers[Container.Index].Items)
+		{
+			const EInventoryError Error = CanOccupy(Item.Index, Items[Item.Index], Container, Items[Item.Index].Placement);
+			if (Error != EInventoryError::None)
+			{
+				return Error;
+			}
 		}
 		return EInventoryError::None;
 	});

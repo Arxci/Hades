@@ -28,7 +28,9 @@ struct FInventoryChangeSet;
  * around it, so the held item moves on as the cursor crosses the middle of a gap.
  * With the Inventory UI Subsystem's Snap Held Item on, it also draws the held item on those cells, using Item Class.
  * The highlighted item is drawn above the others, so a glow around it can spill over its neighbours.
- * Cells the layout locks, past its Usable Cells, are disabled: they draw with the cell style's Disabled brush and take no focus.
+ * Locked cells, past the container's usable cells, are disabled: they draw with the cell style's Disabled brush and take no focus. They
+ * unlock as the container's usable cells grow, by Set Usable Cell Count or a layout with more Usable Cells. With Hide Locked Rows, rows
+ * that are wholly locked aren't drawn at all, so the grid grows a row at a time.
  */
 UCLASS(Abstract)
 class MODULARINVENTORYUI_API UInventoryGridWidget : public UUserWidget
@@ -102,6 +104,14 @@ protected:
 	/** How fast the preview, and a snapped held item, glide to new cells. Higher is snappier; 0 jumps. */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Grid", meta = (ClampMin = "0"))
 	float PreviewGlideSpeed = 0.0f;
+
+	/**
+	 * Rows with no usable cell aren't drawn, so the grid grows a row at a time as its cells unlock, as pockets do in RE2. A row that's only
+	 * partly usable still draws its locked cells, disabled. Off, every cell of the grid is drawn, the locked ones disabled, so the player
+	 * sees all the room there is to unlock.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Inventory|Grid")
+	bool bHideLockedRows = false;
 
 	/** Draws thin lines between the cells, under them, sized to the grid as it grows. With a Cell Gap, they run along the middle of the gaps. */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Grid|Lines")
@@ -199,7 +209,9 @@ private:
 
 	void Refresh();
 	void ClearCells();
-	void RebuildCells(const UInventoryContainerLayout* Layout);
+
+	/** Builds a cell for each of the layout's cells, or each row with a usable one with Hide Locked Rows, and locks those past Usable Cells. */
+	void RebuildCells(const UInventoryContainerLayout* Layout, int32 UsableCells);
 	void RefreshItems();
 	void RefreshItemOrder();
 	void RefreshGridLines();

@@ -8,17 +8,6 @@
 #include "Hades/Inventory/HadesQuickSlotComponent.h"
 #include "Hades/UI/Foundation/HadesInputKeyWidget.h"
 
-#include "Data/InventoryItemDefinition.h"
-
-namespace
-{
-	bool IsShown(const UWidget* Widget)
-	{
-		const ESlateVisibility Visibility = Widget ? Widget->GetVisibility() : ESlateVisibility::Collapsed;
-		return Visibility != ESlateVisibility::Collapsed && Visibility != ESlateVisibility::Hidden;
-	}
-}
-
 void UHadesInventoryItemWidget::NativeConstruct()
 {
 	APawn* Pawn = GetOwningPlayerPawn();
@@ -53,30 +42,19 @@ void UHadesInventoryItemWidget::RefreshMarks()
 {
 	// From the player's inventory, or from a designer preview's tag values, as the designer has no inventory.
 	const UHadesQuickSlotComponent* Component = QuickSlots.Get();
-	const UHadesInventoryComponent* Inventory = Cast<UHadesInventoryComponent>(UInventoryComponent::FindInventoryComponent(GetOwningPlayerPawn()));
 	int32 SlotIndex = INDEX_NONE;
 	bool bInHand = false;
-	int32 Capacity = 0;
-	int32 Rounds = 0;
 	if (const FInventoryItemPreview* ShownPreview = GetPreview())
 	{
 		float Value = 0.0f;
 		SlotIndex = ShownPreview->FindTagValue(HadesGameplayTags::UI_Preview_QuickSlot, Value) && Value >= 1.0f ? FMath::RoundToInt32(Value) - 1 : INDEX_NONE;
 		bInHand = ShownPreview->FindTagValue(HadesGameplayTags::UI_Preview_InHand, Value) && Value > 0.0f;
-
-		const FHadesGun* Gun = ShownPreview->Definition ? ShownPreview->Definition->FindFragment<FHadesGun>() : nullptr;
-		Capacity = Gun ? Gun->Capacity : 0;
-		if (Gun)
-		{
-			Rounds = ShownPreview->FindTagValue(HadesGameplayTags::Item_Stat_Rounds, Value) ? FMath::RoundToInt32(Value) : FMath::Min(Gun->StartingRounds, Gun->Capacity);
-		}
 	}
 	else
 	{
+		const UHadesInventoryComponent* Inventory = Cast<UHadesInventoryComponent>(UInventoryComponent::FindInventoryComponent(GetOwningPlayerPawn()));
 		SlotIndex = Component ? Component->FindSlot(GetItem()) : INDEX_NONE;
 		bInHand = Inventory && Inventory->IsInHand(GetItem());
-		Capacity = Inventory ? Inventory->GetCapacity(GetItem()) : 0;
-		Rounds = Capacity > 0 ? Inventory->GetLoadedRounds(GetItem()) : 0;
 	}
 
 	if (QuickSlotKeyWidget)
@@ -97,21 +75,5 @@ void UHadesInventoryItemWidget::RefreshMarks()
 	if (EquippedMarker)
 	{
 		EquippedMarker->SetVisibility(bInHand ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
-	}
-
-	if (AmmoText)
-	{
-		AmmoText->SetVisibility(Capacity > 0 ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
-		if (Capacity > 0)
-		{
-			AmmoText->SetText(FText::AsNumber(Rounds));
-			AmmoText->SetColorAndOpacity(FSlateColor(AmmoColors.Pick(static_cast<float>(Rounds) / Capacity)));
-		}
-	}
-
-	// Count Text's visibility is set by the base before this runs, for stacks only.
-	if (CountPatch)
-	{
-		CountPatch->SetVisibility(IsShown(CountText) || IsShown(AmmoText) ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
 }

@@ -2,7 +2,6 @@
 
 #include "CoreMinimal.h"
 
-#include "InventoryUITypes.h"
 #include "Widgets/InventoryItemWidget.h"
 
 #include "HadesInventoryItemWidget.generated.h"
@@ -13,7 +12,11 @@ class UTextBlock;
 
 
 /**
- * An item in the inventory with the game's marks on it: the key of the quick slot it's on, whether it's in hand, and a gun's rounds.
+ * An item in the inventory with the game's marks on it: the key of the quick slot it's on, and whether it's in hand.
+ * Numbers such as a gun's rounds and a stack's count are the plugin's Value Displays, set in Class Defaults:
+ * - Tag Value Item.Stat.Rounds, Max Tag Item.Stat.Capacity, Tint By Fullness, Text Widget AmmoText, or CountText to share the corner.
+ * - Stack Count, Text Widget CountText.
+ * Both with Frame Widget CountPatch, so the patch shows behind whichever number does.
  * The plugin's item widget highlights it and hides its Background on the stand-in for a moved item.
  */
 UCLASS(Abstract)
@@ -43,20 +46,9 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> QuickSlotMarker;
 
-	/** Shown only while Count Text or Ammo Text shows, such as the darker patch behind the number. */
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
-	TObjectPtr<UWidget> CountPatch;
-
 	/** Shown while the item is in hand. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> EquippedMarker;
-
-	/** A gun's rounds, colored by how full it is. Collapsed for anything else. */
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> AmmoText;
-
-	UPROPERTY(EditAnywhere, Category = "Inventory|Item")
-	FInventoryMeterColors AmmoColors;
 
 private:
 	UFUNCTION()

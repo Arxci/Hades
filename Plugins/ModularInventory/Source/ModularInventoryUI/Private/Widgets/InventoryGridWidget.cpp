@@ -77,7 +77,8 @@ void UInventoryGridWidget::RefreshDesignerPreview()
 
 	// Built afresh each time, as the designer runs this again whenever the widget changes.
 	ClearCells();
-	RebuildCells(PreviewGridSize.X > 0 && PreviewGridSize.Y > 0 ? PreviewLayout.Get() : nullptr);
+	const bool bHasPreviewGrid = PreviewGridSize.X > 0 && PreviewGridSize.Y > 0;
+	RebuildCells(bHasPreviewGrid ? PreviewLayout.Get() : nullptr, bHasPreviewGrid ? PreviewLayout->GetUsableCellCount() : 0);
 
 	for (UInventoryItemWidget* ItemWidget : PreviewItemWidgets)
 	{
@@ -208,7 +209,8 @@ void UInventoryGridWidget::Refresh()
 	const UInventoryContainerLayout* Layout = Inventory ? Inventory->GetContainerLayout(Container) : nullptr;
 	const bool bIsGrid = Layout && Layout->Type == EInventoryContainerType::Grid;
 
-	RebuildCells(bIsGrid ? Layout : nullptr);
+	// The container's own usable cells, as cells unlock at runtime, not only its layout's.
+	RebuildCells(bIsGrid ? Layout : nullptr, bIsGrid ? Inventory->GetUsableCellCount(Container) : 0);
 	RefreshItems();
 	RefreshPreview();
 	OnContainerRefreshed();
@@ -227,9 +229,16 @@ void UInventoryGridWidget::ClearCells()
 	BuiltGridSize = FIntPoint::ZeroValue;
 }
 
-void UInventoryGridWidget::RebuildCells(const UInventoryContainerLayout* Layout)
+void UInventoryGridWidget::RebuildCells(const UInventoryContainerLayout* Layout, int32 UsableCells)
 {
-	const FIntPoint GridSize = Layout ? Layout->GridSize : FIntPoint::ZeroValue;
+	// Cells unlock row by row from the top left, so with Hide Locked Rows, the rows down to the last usable cell are drawn.
+	const FIntPoint LayoutSize = Layout ? Layout->GridSize : FIntPoint::ZeroValue;
+	FIntPoint GridSize = LayoutSize;
+	if (bHideLockedRows && LayoutSize.X > 0)
+	{
+		GridSize.Y = FMath::Min(LayoutSize.Y, FMath::DivideAndRoundUp(FMath::Max(0, UsableCells), LayoutSize.X));
+	}
+
 	if (GridSize != BuiltGridSize)
 	{
 		ClearCells();
@@ -256,12 +265,13 @@ void UInventoryGridWidget::RebuildCells(const UInventoryContainerLayout* Layout)
 		}
 	}
 
-	// The same cells serve whichever container of this size is shown, and its layout decides which of them are locked.
+	// The same cells serve whichever container of this size is shown, and its usable cells, counted row by row, decide which are locked.
+	// Only whole rows are ever left out, so a cell's index is still its index in the container's full grid.
 	for (int32 Index = 0; Index < Cells.Num(); ++Index)
 	{
 		const FIntPoint Cell(Index % GridSize.X, Index / GridSize.X);
 		Cells[Index]->SetPlacement(Container, FInventoryPlacement::AtCell(Cell));
-		Cells[Index]->SetLocked(Layout && !Layout->IsCellUsable(Cell));
+		Cells[Index]->SetLocked(Layout && Index >= UsableCells);
 	}
 	RefreshGridLines();
 }

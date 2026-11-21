@@ -182,6 +182,63 @@ void FInventoryFeatureSpec::Define()
 			TestTrue(TEXT("Unlocked layout kept"), Registry->FindContainer(Pockets)->Layout.Get() == Data->Grid4x2);
 		});
 
+		It("unlock cells at runtime, row by row, within one layout", [this]()
+		{
+			// 4 x 2 starting with four usable cells: the whole bottom row is locked.
+			UInventoryContainerLayout* Partial = Data->Make<UInventoryContainerLayout>();
+			Partial->GridSize = FIntPoint(4, 2);
+			Partial->UsableCells = 4;
+			const FInventoryContainerHandle Pockets = Registry->CreateContainer(Partial, FGameplayTag(), nullptr);
+			TestEqual(TEXT("Usable cells from the layout"), Registry->GetUsableCellCount(Pockets), 4);
+			TestFalse(TEXT("Bottom row locked"), Registry->IsCellUsable(Pockets, FIntPoint(0, 1)));
+
+			TestTrue(TEXT("Two more unlocked"), Registry->SetUsableCellCount(Pockets, 6) == EInventoryError::None);
+			TestEqual(TEXT("Usable cells after unlocking"), Registry->GetUsableCellCount(Pockets), 6);
+			TestTrue(TEXT("First cell of the bottom row usable"), Registry->IsCellUsable(Pockets, FIntPoint(1, 1)));
+			TestFalse(TEXT("Third cell of the bottom row still locked"), Registry->IsCellUsable(Pockets, FIntPoint(2, 1)));
+			TestTrue(TEXT("The layout is unchanged"), Partial->UsableCells == 4);
+
+			const FInventoryItemHandle Stone = AddTestItem(*Registry, Data->Stone, Pockets, 1, FInventoryPlacement::AtCell(FIntPoint(1, 1)));
+			TestTrue(TEXT("Stone on a newly unlocked cell"), Stone.IsSet());
+
+			TestTrue(TEXT("More than the grid unlocks every cell"), Registry->SetUsableCellCount(Pockets, 100) == EInventoryError::None);
+			TestEqual(TEXT("Every cell usable"), Registry->GetUsableCellCount(Pockets), 8);
+		});
+
+		It("refuse to lock a cell an item sits on", [this]()
+		{
+			UInventoryContainerLayout* Partial = Data->Make<UInventoryContainerLayout>();
+			Partial->GridSize = FIntPoint(4, 2);
+			const FInventoryContainerHandle Pockets = Registry->CreateContainer(Partial, FGameplayTag(), nullptr);
+			AddTestItem(*Registry, Data->Stone, Pockets, 1, FInventoryPlacement::AtCell(FIntPoint(3, 1)));
+
+			const EInventoryError Error = Registry->SetUsableCellCount(Pockets, 6);
+			TestTrue(*DescribeErrors(TEXT("Locking the stone's cell"), Error, EInventoryError::OutOfBounds), Error == EInventoryError::OutOfBounds);
+			TestEqual(TEXT("Nothing locked"), Registry->GetUsableCellCount(Pockets), 8);
+		});
+
+		It("go back to the layout's usable cells with a new layout or a negative count", [this]()
+		{
+			UInventoryContainerLayout* Partial = Data->Make<UInventoryContainerLayout>();
+			Partial->GridSize = FIntPoint(4, 2);
+			Partial->UsableCells = 4;
+			const FInventoryContainerHandle Pockets = Registry->CreateContainer(Partial, FGameplayTag(), nullptr);
+
+			Registry->SetUsableCellCount(Pockets, 6);
+			TestTrue(TEXT("Back to the layout's"), Registry->SetUsableCellCount(Pockets, -1) == EInventoryError::None);
+			TestEqual(TEXT("The layout's usable cells"), Registry->GetUsableCellCount(Pockets), 4);
+
+			Registry->SetUsableCellCount(Pockets, 5);
+			TestTrue(TEXT("New layout"), Registry->SetContainerLayout(Pockets, Data->Grid4x2) == EInventoryError::None);
+			TestEqual(TEXT("The new layout's usable cells"), Registry->GetUsableCellCount(Pockets), 8);
+		});
+
+		It("only unlock cells in grids", [this]()
+		{
+			const EInventoryError Error = Registry->SetUsableCellCount(Hands, 1);
+			TestTrue(*DescribeErrors(TEXT("Unlocking cells in slots"), Error, EInventoryError::Rejected), Error == EInventoryError::Rejected);
+		});
+
 		It("sort biggest first and merge partial stacks", [this]()
 		{
 			const FInventoryItemHandle Knife = AddTestItem(*Registry, Data->Knife, Grid, 1, FInventoryPlacement::AtCell(FIntPoint(3, 2)));

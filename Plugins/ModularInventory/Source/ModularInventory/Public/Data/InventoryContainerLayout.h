@@ -72,7 +72,8 @@ public:
 	/**
 	 * How many cells can hold items, counted row by row from the top left. The rest are locked: nothing can go in them, and grid
 	 * widgets draw them disabled. 0 makes every cell usable. For pockets that grow a few cells at a time: a 4 x 3 grid with 10 usable
-	 * cells has its last two cells locked.
+	 * cells has its last two cells locked. This is where each container starts: the Inventory Subsystem's Set Usable Cell Count and Add
+	 * Usable Cells unlock more of one container's cells at runtime, so one layout with the biggest grid serves every size of pockets.
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Layout", meta = (ClampMin = "0", EditCondition = "Type == EInventoryContainerType::Grid", EditConditionHides))
 	int32 UsableCells = 0;

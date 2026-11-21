@@ -120,6 +120,26 @@ namespace
 		const FPointerEvent Release(UserIndex, FSlateApplication::CursorPointerIndex, Position, Position, SlateApp.GetPressedMouseButtons(), EKeys::LeftMouseButton, 0.0f, Modifiers);
 		SlateApp.ProcessMouseButtonUpEvent(Release);
 	}
+
+	/**
+	 * Moves the cursor nowhere, as Slate does itself when what's under a still cursor changes: widgets no longer under it get Mouse Leave
+	 * and stop looking hovered, and the one under it now gets Mouse Enter. Synthetic, so it changes neither the input method nor tooltips.
+	 */
+	void MoveCursorInPlace(ULocalPlayer* LocalPlayer)
+	{
+		const TSharedPtr<FSlateUser> SlateUser = LocalPlayer && FSlateApplication::IsInitialized() ? LocalPlayer->GetSlateUser() : TSharedPtr<FSlateUser>();
+		if (!SlateUser)
+		{
+			return;
+		}
+
+		FSlateApplication& SlateApp = FSlateApplication::Get();
+		const FVector2D Position = SlateUser->GetCursorPosition();
+		const FModifierKeysState Modifiers = SlateApp.GetPlatformApplication()->GetModifierKeys();
+		const uint32 UserIndex = static_cast<uint32>(SlateUser->GetUserIndex());
+		const FPointerEvent Move(UserIndex, FSlateApplication::CursorPointerIndex, Position, Position, SlateApp.GetPressedMouseButtons(), EKeys::Invalid, 0.0f, Modifiers);
+		SlateApp.ProcessMouseMoveEvent(Move, /*bIsSynthetic*/ true);
+	}
 }
 
 UInventoryItemMenuWidget::UInventoryItemMenuWidget(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
@@ -267,6 +287,9 @@ void UInventoryItemMenuWidget::NativeOnActivated()
 	ClearHighlight();
 	HighlightEntry(Entry, /*bFocus*/ false);
 	FocusNextFrame();
+
+	// The menu is reused, and a button it last closed under, or hid under the cursor for a prompt, can still think it's hovered.
+	RefreshHover();
 }
 
 void UInventoryItemMenuWidget::NativeOnDeactivated()
@@ -320,6 +343,9 @@ void UInventoryItemMenuWidget::NativeOnDeactivated()
 	{
 		PlayCloseSound();
 	}
+
+	// The buttons it goes from under stop looking hovered, so they don't come back lit the next time it opens.
+	RefreshHover();
 
 	Super::NativeOnDeactivated();
 }
@@ -550,8 +576,10 @@ void UInventoryItemMenuWidget::RefreshActions()
 	const FInventoryItemActionContext Context = GetActionContext();
 	for (UInventoryItemAction* Action : Gathered)
 	{
-		const bool bAvailable = Action->CanRunFor(Context);
-		const bool bShown = bAvailable || Action->WhenUnavailable == EInventoryActionUnavailable::ShowDisabled;
+		// An action whose Item Filter leaves the item out isn't for it at all, so it isn't shown even disabled.
+		const bool bApplies = Action->AppliesTo(Context);
+		const bool bAvailable = bApplies && Action->CanRunFor(Context);
+		const bool bShown = bAvailable || (bApplies && Action->WhenUnavailable == EInventoryActionUnavailable::ShowDisabled);
 
 		UCommonButtonBase* Button = nullptr;
 		if (!Action->ButtonName.IsNone())
@@ -622,7 +650,7 @@ bool UInventoryItemMenuWidget::CanOpenFor(const FInventoryItemActionContext& Con
 	GatherActions(Gathered);
 	return Gathered.IsEmpty() || Gathered.ContainsByPredicate([&Context](const UInventoryItemAction* Action)
 	{
-		return Action->WhenUnavailable == EInventoryActionUnavailable::ShowDisabled || Action->CanRunFor(Context);
+		return Action->AppliesTo(Context) && (Action->WhenUnavailable == EInventoryActionUnavailable::ShowDisabled || Action->CanRunFor(Context));
 	});
 }
 
@@ -651,12 +679,14 @@ void UInventoryItemMenuWidget::ClearActionButtons()
 
 void UInventoryItemMenuWidget::HandleActionHovered(int32 Index)
 {
-	// The mouse highlights what it's over, and takes focus there so Accept runs it. Gamepad focus already moved Common UI's hidden cursor
-	// onto the button, so its focus stays as it is.
+	// The mouse highlights what it's over, and takes focus there so Accept runs it. On a gamepad, focus alone decides, through Native On
+	// Focus Changing: Common UI's hidden cursor follows focus, but where it's left over another button, such as after the menu moved, its
+	// hover would highlight that one while focus stays on another.
 	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
-	const bool bMouse = Input && Input->GetCurrentInputType() == ECommonInputType::MouseAndKeyboard;
-	if (ShownActions.IsValidIndex(Index))
+	const bool bGamepad = Input && Input->GetCurrentInputType() == ECommonInputType::Gamepad;
+	if (!bGamepad && ShownActions.IsValidIndex(Index))
 	{
+		const bool bMouse = Input && Input->GetCurrentInputType() == ECommonInputType::MouseAndKeyboard;
 		HighlightEntry(ShownActions[Index].Button.Get(), bMouse);
 	}
 }
@@ -690,10 +720,15 @@ void UInventoryItemMenuWidget::HighlightEntry(UCommonButtonBase* Entry, bool bFo
 
 	if (bKeepEntryHighlighted)
 	{
-		if (Previous)
+		// Only one entry is ever selected: not only the one highlighted before, but any other left selected, such as a prompt's button
+		// from the last time this reused menu was open, or one a button style selects as it takes focus.
+		ForEachEntry([Entry](UCommonButtonBase& Other)
 		{
-			Previous->ClearSelection();
-		}
+			if (&Other != Entry && Other.GetSelected())
+			{
+				Other.ClearSelection();
+			}
+		});
 
 		// Selected, so its style's Selected look shows it, yet still clickable, and only the menu unselects it.
 		Entry->SetIsSelectable(true);
@@ -733,6 +768,46 @@ bool UInventoryItemMenuWidget::IsPromptButton(UCommonButtonBase* Button) const
 	return Button && (Button == ConfirmButton || Button == CancelButton || (PromptPanel && Button->IsChildOf(PromptPanel.Get())));
 }
 
+void UInventoryItemMenuWidget::ForEachEntry(TFunctionRef<void(UCommonButtonBase&)> Callback) const
+{
+	// The prompt's buttons are usually inside Menu Panel, but needn't be, so each button is visited once wherever it is.
+	TSet<const UCommonButtonBase*> Visited;
+	for (UWidget* Root : { static_cast<UWidget*>(MenuPanel.Get()), static_cast<UWidget*>(PromptPanel.Get()),
+		static_cast<UWidget*>(ConfirmButton.Get()), static_cast<UWidget*>(CancelButton.Get()) })
+	{
+		if (!Root)
+		{
+			continue;
+		}
+		UWidgetTree::ForWidgetAndChildren(Root, [&Visited, &Callback](UWidget* Widget)
+		{
+			UCommonButtonBase* Button = Cast<UCommonButtonBase>(Widget);
+			bool bAlreadyVisited = false;
+			if (Button)
+			{
+				Visited.Add(Button, &bAlreadyVisited);
+			}
+			if (Button && !bAlreadyVisited)
+			{
+				Callback(*Button);
+			}
+		});
+	}
+}
+
+void UInventoryItemMenuWidget::RefreshHover()
+{
+	// Slate only sends a widget Mouse Leave as the cursor moves, so one hidden or moved from under a still cursor stays hovered. A move in
+	// place sends it, on the next frame, once the change has been drawn: what's under the cursor is found from what was drawn last.
+	FTSTicker::GetCoreTicker().RemoveTicker(HoverHandle);
+	HoverHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateWeakLambda(this, [this](float)
+	{
+		HoverHandle = FTSTicker::FDelegateHandle();
+		MoveCursorInPlace(GetOwningLocalPlayer());
+		return false;
+	}));
+}
+
 void UInventoryItemMenuWidget::NativeOnFocusChanging(const FWeakWidgetPath& PreviousFocusPath, const FWidgetPath& NewWidgetPath, const FFocusEvent& InFocusEvent)
 {
 	Super::NativeOnFocusChanging(PreviousFocusPath, NewWidgetPath, InFocusEvent);
@@ -740,18 +815,14 @@ void UInventoryItemMenuWidget::NativeOnFocusChanging(const FWeakWidgetPath& Prev
 	// Gamepad and keyboard focus highlight the entry they reach, the prompt's buttons included. Focus on anything else, such as Quantity
 	// Slider, leaves the highlight where it was.
 	UCommonButtonBase* Focused = nullptr;
-	if (MenuPanel)
+	ForEachEntry([&Focused, &NewWidgetPath](UCommonButtonBase& Button)
 	{
-		UWidgetTree::ForWidgetAndChildren(MenuPanel, [&Focused, &NewWidgetPath](UWidget* Widget)
+		const TSharedPtr<SWidget> SlateButton = Button.GetCachedWidget();
+		if (!Focused && SlateButton && IsOnPath(NewWidgetPath, *SlateButton))
 		{
-			UCommonButtonBase* Button = Cast<UCommonButtonBase>(Widget);
-			const TSharedPtr<SWidget> SlateButton = Button ? Button->GetCachedWidget() : TSharedPtr<SWidget>();
-			if (!Focused && SlateButton && IsOnPath(NewWidgetPath, *SlateButton))
-			{
-				Focused = Button;
-			}
-		});
-	}
+			Focused = &Button;
+		}
+	});
 	HighlightEntry(Focused, /*bFocus*/ false);
 }
 
@@ -896,9 +967,11 @@ void UInventoryItemMenuWidget::ShowPrompt(int32 Index)
 	PromptPanel->SetVisibility(PromptPanelVisibility);
 	PlaceBeside(Anchor);
 
-	// Where the prompt starts is highlighted at once, as the menu's first entry is as it opens, and takes focus once it's laid out.
+	// Where the prompt starts is highlighted at once, as the menu's first entry is as it opens, and takes focus once it's laid out. The
+	// action just picked was under the cursor as its panel went, so it's told it no longer is.
 	HighlightEntry(Cast<UCommonButtonBase>(GetDesiredFocusTarget()), /*bFocus*/ false);
 	FocusNextFrame();
+	RefreshHover();
 }
 
 void UInventoryItemMenuWidget::HidePrompt()
@@ -918,8 +991,10 @@ void UInventoryItemMenuWidget::HidePrompt()
 	{
 		PlaceBeside(Anchor);
 
-		// Back on the entry that asked, which takes focus again as the prompt's caller says.
+		// Back on the entry that asked, which takes focus again as the prompt's caller says. The prompt's buttons went from under the
+		// cursor, so they're told they no longer are under it.
 		HighlightEntry(PromptEntry.Get(), /*bFocus*/ false);
+		RefreshHover();
 	}
 	PromptEntry.Reset();
 }

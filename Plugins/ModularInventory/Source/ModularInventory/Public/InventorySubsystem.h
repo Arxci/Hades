@@ -196,9 +196,35 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
 	bool DestroyContainer(FInventoryContainerHandle Container);
 
-	/** Another layout of the same type, such as a bigger grid for an upgraded backpack. Items keep their places; fails if one no longer fits. */
+	/**
+	 * Another layout of the same type, such as a bigger grid for an upgraded backpack. Items keep their places; fails if one no longer fits.
+	 * Cells unlocked with Set Usable Cell Count go back to following the new layout's Usable Cells.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
 	bool SetContainerLayout(FInventoryContainerHandle Container, const UInventoryContainerLayout* Layout, EInventoryError& OutError);
+
+	/** Whether a grid cell can hold items now: inside the grid and not locked. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Containers")
+	bool IsCellUsable(FInventoryContainerHandle Container, FIntPoint Cell) const { return Registry.IsCellUsable(Container, Cell); }
+
+	/** How many of a grid's cells can hold items now, counted row by row from the top left. 0 for slots and lists. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Containers")
+	int32 GetUsableCellCount(FInventoryContainerHandle Container) const { return Registry.GetUsableCellCount(Container); }
+
+	/**
+	 * Unlocks or locks a grid's cells, row by row from the top left, so Count of them can hold items, such as pockets drawn at their full
+	 * size that unlock as pouches are found. It overrides the layout's Usable Cells for this container only. 0 locks every cell, and a
+	 * negative Count follows the layout's Usable Cells again. Fails, changing nothing, while an item sits on a cell it would lock.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
+	bool SetUsableCellCount(FInventoryContainerHandle Container, int32 Count, EInventoryError& OutError);
+
+	/**
+	 * Unlocks Count more of a grid's cells, row by row, such as 2 for a pouch, or locks them again with a negative Count. Fails, changing
+	 * nothing, when every cell is already unlocked, or while an item sits on a cell it would lock.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
+	bool AddUsableCells(FInventoryContainerHandle Container, int32 Count, EInventoryError& OutError);
 
 	/** Sorts a grid or list: merges partial stacks, then orders the items biggest first in a grid, then by name. All or nothing. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")

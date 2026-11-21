@@ -116,8 +116,9 @@ void FGameplayDebuggerCategory_Inventory::AddContainerLines(const FInventoryRegi
 	}
 
 	const UInventoryContainerLayout& Layout = *Record->Layout;
-	const bool bHasLockedCells = Layout.GetUsableCellCount() < Layout.GetCellCount();
-	const FString Locked = bHasLockedCells ? FString::Printf(TEXT(" (%d usable)"), Layout.GetUsableCellCount()) : FString();
+	const int32 UsableCells = Registry.GetUsableCellCount(Container);
+	const bool bHasLockedCells = UsableCells < Layout.GetCellCount();
+	const FString Locked = bHasLockedCells ? FString::Printf(TEXT(" (%d usable)"), UsableCells) : FString();
 	const FString Size = Layout.Type == EInventoryContainerType::Grid ? FString::Printf(TEXT(" %dx%d%s"), Layout.GridSize.X, Layout.GridSize.Y, *Locked) : FString();
 	AddLine(FString::Printf(TEXT("%s{green}%s{white} %s%s%s  %d items"), *Indent(Depth), *Record->Tag.ToString(), DescribeType(Layout.Type), *Size,
 		Layout.bEquipment ? TEXT(" equipment") : TEXT(""), Record->Items.Num()));
@@ -161,7 +162,7 @@ void FGameplayDebuggerCategory_Inventory::AddGridLines(const FInventoryRegistry&
 			const int32 CellIndex = Y * GridSize.X + X;
 			const int32 Occupant = Record.Cells.IsValidIndex(CellIndex) ? Record.Cells[CellIndex] : INDEX_NONE;
 			const TCHAR* Letter = Letters.Find(Occupant);
-			const TCHAR EmptyChar = Record.Layout->IsCellUsable(FIntPoint(X, Y)) ? TEXT('.') : TEXT('#');
+			const TCHAR EmptyChar = Registry.IsCellUsable(Container, FIntPoint(X, Y)) ? TEXT('.') : TEXT('#');
 			Row.AppendChar(Letter ? *Letter : EmptyChar);
 		}
 		AddLine(Row + TEXT("{white}"));

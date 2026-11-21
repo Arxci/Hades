@@ -1,5 +1,7 @@
 #include "Widgets/InventoryItemWidget.h"
 
+#include "Algo/AllOf.h"
+#include "Blueprint/WidgetTree.h"
 #include "CommonInputSubsystem.h"
 #include "CommonInputTypeEnum.h"
 #include "Components/Image.h"
@@ -16,6 +18,32 @@
 #include "Widgets/InventoryDragDropOperation.h"
 #include "Widgets/InventoryItemDetailsWidget.h"
 
+#if WITH_EDITOR
+#include "Editor/WidgetCompilerLog.h"
+#endif
+
+void UInventoryItemWidget::PostLoad()
+{
+	Super::PostLoad();
+
+	// The single meter came before Value Displays, which do all it did. A widget set up with it gets an entry that shows the same tag value
+	// in the same Meter and Meter Text, and saves with it from then on, so nothing needs setting up again.
+	if (MeterTag_DEPRECATED.IsValid())
+	{
+		FInventoryValueDisplay& Display = ValueDisplays.AddDefaulted_GetRef();
+		Display.Source = EInventoryValueSource::TagValue;
+		Display.Tag = MeterTag_DEPRECATED;
+		Display.MaxTag = MeterMaxTag_DEPRECATED;
+		Display.TextWidget = TEXT("MeterText");
+		Display.Format = MeterFormat_DEPRECATED;
+		Display.MeterWidget = TEXT("Meter");
+		Display.bHideWhenFull = bHideFullMeter_DEPRECATED;
+		Display.bTintByFullness = bTintMeter_DEPRECATED;
+		Display.Colors = MeterColors_DEPRECATED;
+		MeterTag_DEPRECATED = FGameplayTag();
+	}
+}
+
 void UInventoryItemWidget::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
@@ -25,6 +53,32 @@ void UInventoryItemWidget::NativeOnInitialized()
 		DefaultTagTint = TagTint->GetColorAndOpacity();
 	}
 	DefaultRenderOpacity = GetRenderOpacity();
+	FindValueDisplayWidgets();
+}
+
+void UInventoryItemWidget::FindValueDisplayWidgets()
+{
+	// Each display's widgets are found once, with the colors the designer gave them, which a display that doesn't tint goes back to.
+	ValueDisplayWidgets.Reset();
+	bValueDisplaysShowCount = false;
+	for (const FInventoryValueDisplay& Display : ValueDisplays)
+	{
+		FValueDisplayWidgets& Widgets = ValueDisplayWidgets.AddDefaulted_GetRef();
+		UTextBlock* Text = Display.TextWidget.IsNone() ? nullptr : Cast<UTextBlock>(GetWidgetFromName(Display.TextWidget));
+		UProgressBar* DisplayMeter = Display.MeterWidget.IsNone() ? nullptr : Cast<UProgressBar>(GetWidgetFromName(Display.MeterWidget));
+		Widgets.Text = Text;
+		Widgets.Meter = DisplayMeter;
+		Widgets.Frame = Display.FrameWidget.IsNone() ? nullptr : GetWidgetFromName(Display.FrameWidget);
+		if (Text)
+		{
+			Widgets.DefaultTextColor = Text->GetColorAndOpacity();
+			bValueDisplaysShowCount |= Text == CountText;
+		}
+		if (DisplayMeter)
+		{
+			Widgets.DefaultMeterColor = DisplayMeter->GetFillColorAndOpacity();
+		}
+	}
 }
 
 void UInventoryItemWidget::NativeConstruct()
@@ -160,6 +214,12 @@ int32 UInventoryItemWidget::GetCount() const
 
 void UInventoryItemWidget::Refresh()
 {
+	// Widgets made in the designer, such as a grid's preview, aren't initialized as in game, so they find them here.
+	if (ValueDisplayWidgets.Num() != ValueDisplays.Num())
+	{
+		FindValueDisplayWidgets();
+	}
+
 	const UInventoryItemDefinition* Definition = GetDefinition();
 	if (Definition != ShownDefinition.Get())
 	{
@@ -172,7 +232,7 @@ void UInventoryItemWidget::Refresh()
 	{
 		NameText->SetText(Definition ? Definition->DisplayName : FText::GetEmpty());
 	}
-	if (CountText)
+	if (CountText && !bValueDisplaysShowCount)
 	{
 		const int32 Count = GetCount();
 		const bool bShowCount = Definition && Definition->GetMaxStackSize() > 1 && (Count > 1 || !bHideCountOfOne);
@@ -183,7 +243,7 @@ void UInventoryItemWidget::Refresh()
 	{
 		DetailsTooltip->SetItem(Item);
 	}
-	RefreshMeter();
+	RefreshValueDisplays();
 	RefreshTagTint();
 	RefreshHighlight();
 
@@ -191,63 +251,206 @@ void UInventoryItemWidget::Refresh()
 	OnItemChanged();
 }
 
-void UInventoryItemWidget::RefreshMeter()
+void UInventoryItemWidget::RefreshValueDisplays()
 {
-	if (!Meter && !MeterText)
+	if (ValueDisplays.IsEmpty())
 	{
 		return;
 	}
 
-	// A preview has no item, so its values come from the preview and its definition, filled the way the registry fills an item's.
-	float Value = 0.0f;
-	float Max = 0.0f;
-	bool bHasValue = false;
-	if (const FInventoryItemPreview* Shown = GetPreview())
+	// Each named widget shows the first display that applies to the item. One that none applies to is collapsed.
+	TSet<const UWidget*> Claimed;
+	TSet<UWidget*> Named;
+	for (int32 Index = 0; Index < ValueDisplays.Num() && ValueDisplayWidgets.IsValidIndex(Index); ++Index)
 	{
-		bHasValue = Shown->FindTagValue(MeterTag, Value);
-		const FInventoryTagValue* Starting = Shown->Definition ? Shown->Definition->FindTagValue(MeterTag) : nullptr;
-		if (!MeterMaxTag.IsValid() || !Shown->FindTagValue(MeterMaxTag, Max))
+		const FInventoryValueDisplay& Display = ValueDisplays[Index];
+		const FValueDisplayWidgets& Widgets = ValueDisplayWidgets[Index];
+		UTextBlock* Text = Widgets.Text.Get();
+		UProgressBar* DisplayMeter = Widgets.Meter.Get();
+		UWidget* Frame = Widgets.Frame.Get();
+		for (UWidget* Widget : { static_cast<UWidget*>(Text), static_cast<UWidget*>(DisplayMeter), Frame })
 		{
-			Max = Starting ? Starting->Value : 0.0f;
+			if (Widget)
+			{
+				Named.Add(Widget);
+			}
 		}
-	}
-	else if (const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this))
-	{
-		bHasValue = Inventory->HasTagValue(Item, MeterTag);
-		Value = Inventory->GetTagValue(Item, MeterTag);
-		Max = Inventory->GetTagValueMax(Item, MeterTag, MeterMaxTag);
-	}
 
-	const bool bHasMeter = bHasValue && Max > 0.0f;
-	const float Fraction = bHasMeter ? FMath::Clamp(Value / Max, 0.0f, 1.0f) : 0.0f;
-	const bool bShown = bHasMeter && !(bHideFullMeter && Fraction >= 1.0f);
-	const ESlateVisibility MeterVisibility = bShown ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed;
-
-	if (Meter)
-	{
-		Meter->SetVisibility(MeterVisibility);
-		Meter->SetPercent(Fraction);
-		if (bTintMeter)
+		float Value = 0.0f;
+		float Max = 0.0f;
+		if (!ResolveValueDisplay(Display, Value, Max))
 		{
-			Meter->SetFillColorAndOpacity(MeterColors.Pick(Fraction));
+			continue;
 		}
-	}
-	if (MeterText)
-	{
-		MeterText->SetVisibility(MeterVisibility);
-		if (bShown)
+
+		// Without a maximum, nothing says how full it is, so it's neither tinted nor filled.
+		const bool bHasMax = Max > 0.0f;
+		const float Fraction = bHasMax ? FMath::Clamp(Value / Max, 0.0f, 1.0f) : 0.0f;
+		const bool bTint = Display.bTintByFullness && bHasMax;
+		if (Text && !Claimed.Contains(Text))
 		{
-			MeterText->SetText(FText::FormatNamed(MeterFormat,
+			Claimed.Add(Text);
+			Text->SetText(FText::FormatNamed(Display.Format,
 				TEXT("Value"), FText::AsNumber(FMath::RoundToInt(Value)),
 				TEXT("Max"), FText::AsNumber(FMath::RoundToInt(Max)),
 				TEXT("Percent"), FText::AsNumber(FMath::RoundToInt(Fraction * 100.0f))));
+			Text->SetColorAndOpacity(bTint ? FSlateColor(Display.Colors.Pick(Fraction)) : Widgets.DefaultTextColor);
+			Text->SetVisibility(ESlateVisibility::HitTestInvisible);
 		}
-		if (bTintMeter)
+		if (DisplayMeter && !Claimed.Contains(DisplayMeter))
 		{
-			MeterText->SetColorAndOpacity(FSlateColor(MeterColors.Pick(Fraction)));
+			Claimed.Add(DisplayMeter);
+			DisplayMeter->SetPercent(bHasMax ? Fraction : 1.0f);
+			DisplayMeter->SetFillColorAndOpacity(bTint ? Display.Colors.Pick(Fraction) : Widgets.DefaultMeterColor);
+			DisplayMeter->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+		if (Frame && !Claimed.Contains(Frame))
+		{
+			Claimed.Add(Frame);
+			Frame->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+	}
+
+	for (UWidget* Widget : Named)
+	{
+		if (!Claimed.Contains(Widget))
+		{
+			Widget->SetVisibility(ESlateVisibility::Collapsed);
 		}
 	}
 }
+
+bool UInventoryItemWidget::ResolveValueDisplay(const FInventoryValueDisplay& Display, float& OutValue, float& OutMax) const
+{
+	OutValue = 0.0f;
+	OutMax = 0.0f;
+	const UInventoryItemDefinition* Definition = GetDefinition();
+	if (!Definition || !MatchesShownItem(Display.ItemFilter))
+	{
+		return false;
+	}
+
+	switch (Display.Source)
+	{
+	case EInventoryValueSource::StackCount:
+	{
+		const int32 Count = GetCount();
+		const int32 MaxStackSize = Definition->GetMaxStackSize();
+		if (MaxStackSize <= 1 || (Display.bHideSingle && Count <= 1))
+		{
+			return false;
+		}
+		OutValue = static_cast<float>(Count);
+		OutMax = static_cast<float>(MaxStackSize);
+		break;
+	}
+	case EInventoryValueSource::TagValue:
+	{
+		if (!Display.Tag.IsValid())
+		{
+			return false;
+		}
+
+		// A preview has no item, so its values come from the preview and its definition, filled the way the registry fills an item's.
+		if (const FInventoryItemPreview* Shown = GetPreview())
+		{
+			if (!Shown->FindTagValue(Display.Tag, OutValue))
+			{
+				return false;
+			}
+			if (!Display.MaxTag.IsValid() || !Shown->FindTagValue(Display.MaxTag, OutMax))
+			{
+				const FInventoryTagValue* Starting = Definition->FindTagValue(Display.Tag);
+				OutMax = Starting ? Starting->Value : 0.0f;
+			}
+			break;
+		}
+
+		const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
+		if (!Inventory || !Inventory->HasTagValue(Item, Display.Tag))
+		{
+			return false;
+		}
+		OutValue = Display.bIncludeBonuses ? Inventory->GetEffectiveTagValue(Item, Display.Tag) : Inventory->GetTagValue(Item, Display.Tag);
+		OutMax = Inventory->GetTagValueMax(Item, Display.Tag, Display.MaxTag);
+		break;
+	}
+	}
+
+	return !(Display.bHideWhenFull && OutMax > 0.0f && OutValue >= OutMax);
+}
+
+bool UInventoryItemWidget::MatchesShownItem(const FInventoryItemQuery& Filter) const
+{
+	if (Filter.IsEmpty())
+	{
+		return true;
+	}
+
+	const FInventoryItemPreview* Shown = GetPreview();
+	if (!Shown)
+	{
+		const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
+		return Inventory && Inventory->MatchesQuery(Item, Filter);
+	}
+
+	const UInventoryItemDefinition* Definition = Shown->Definition;
+	if (!Definition)
+	{
+		return false;
+	}
+	const bool bDefinitionMatches = Filter.Definitions.IsEmpty() || Filter.Definitions.ContainsByPredicate([Definition](const TObjectPtr<UInventoryItemDefinition>& Each)
+	{
+		return Each.Get() == Definition;
+	});
+	return bDefinitionMatches
+		&& InventoryTags::PassesQuery(Filter.TagQuery, Definition->Tags)
+		&& Algo::AllOf(Filter.ValueConditions, [Shown](const FInventoryTagValueCondition& Condition)
+		{
+			float Value = 0.0f;
+			Shown->FindTagValue(Condition.Tag, Value);
+			return Condition.Test(Value);
+		});
+}
+
+#if WITH_EDITOR
+void UInventoryItemWidget::ValidateCompiledWidgetTree(const UWidgetTree& BlueprintWidgetTree, IWidgetCompilerLog& CompileLog) const
+{
+	Super::ValidateCompiledWidgetTree(BlueprintWidgetTree, CompileLog);
+
+	// A name that's misspelt, or names the wrong kind of widget, would otherwise just show nothing.
+	auto CheckNamed = [&BlueprintWidgetTree, &CompileLog](int32 Index, FName Name, const UClass* Expected, const TCHAR* Field)
+	{
+		if (Name.IsNone())
+		{
+			return;
+		}
+		const UWidget* Found = BlueprintWidgetTree.FindWidget(Name);
+		if (!Found)
+		{
+			CompileLog.Warning(FText::Format(NSLOCTEXT("InventoryItemWidget", "MissingValueWidget", "Value Displays {0}: {1} names {2}, but the designer has no widget by that name."),
+				FText::AsNumber(Index), FText::FromString(Field), FText::FromName(Name)));
+		}
+		else if (Expected && !Found->IsA(Expected))
+		{
+			CompileLog.Warning(FText::Format(NSLOCTEXT("InventoryItemWidget", "WrongValueWidget", "Value Displays {0}: {1} names {2}, which is a {3}, not a {4}."),
+				FText::AsNumber(Index), FText::FromString(Field), FText::FromName(Name), Found->GetClass()->GetDisplayNameText(), Expected->GetDisplayNameText()));
+		}
+	};
+
+	for (int32 Index = 0; Index < ValueDisplays.Num(); ++Index)
+	{
+		const FInventoryValueDisplay& Display = ValueDisplays[Index];
+		CheckNamed(Index, Display.TextWidget, UTextBlock::StaticClass(), TEXT("Text Widget"));
+		CheckNamed(Index, Display.MeterWidget, UProgressBar::StaticClass(), TEXT("Meter Widget"));
+		CheckNamed(Index, Display.FrameWidget, nullptr, TEXT("Frame Widget"));
+		if (Display.Source == EInventoryValueSource::TagValue && !Display.Tag.IsValid())
+		{
+			CompileLog.Warning(FText::Format(NSLOCTEXT("InventoryItemWidget", "NoValueTag", "Value Displays {0} shows a Tag Value but has no Tag, so it never shows."), FText::AsNumber(Index)));
+		}
+	}
+}
+#endif
 
 void UInventoryItemWidget::RefreshTagTint()
 {

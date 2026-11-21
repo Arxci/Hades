@@ -10,7 +10,6 @@ class UCommonActivatableWidget;
 class UInputMappingContext;
 class UInventoryComponent;
 class UHadesWorldMarkerManagerComponent;
-class UPostProcessComponent;
 
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FHadesMessageSignature, const FText&, Message);
@@ -60,19 +59,6 @@ protected:
 	/** Pushed onto the Game layer for the local player. Place a World Marker Layer in it to draw world markers. */
 	UPROPERTY(EditDefaultsOnly, Category = "UI")
 	TSoftClassPtr<UCommonActivatableWidget> HUDLayoutClass;
-
-	/**
-	 * Fades in while a menu pauses the world, greying it out, and back out as the world starts again. Its Blend Weight is how strong it is
-	 * once fully in. Change its settings for another look. The HUD hides meanwhile.
-	 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI")
-	TObjectPtr<UPostProcessComponent> PausedPostProcess;
-
-	UPROPERTY(EditDefaultsOnly, Category = "UI", meta = (ClampMin = "0", Units = "s"))
-	float PausedFadeInTime = 0.15f;
-
-	UPROPERTY(EditDefaultsOnly, Category = "UI", meta = (ClampMin = "0", Units = "s"))
-	float PausedFadeOutTime = 0.2f;
 
 	/** What every item box in the game opens, so it is one storage. Give it a container tagged Container.ItemBox. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Inventory")

@@ -74,6 +74,7 @@ struct MODULARINVENTORYUI_API FInventoryItemActionContext
  * Something the player can do with an item, listed in item menus, such as Use, Equip or Drop. Subclass it in C++ or Blueprint: Can Run
  * says whether it works for an item now, and Run does it. Add actions to an Item Action Set, or straight to an item menu's Actions.
  * Each entry has its own text, icon, hotkey and prompt, so one class can serve several entries.
+ * Which items an entry is for is data: Item Filter leaves out items that don't match it, such as by their tags, before Can Run is asked.
  * While it's asked about an item, it has that player's world, so Blueprint subclasses can use world functions.
  */
 UCLASS(Abstract, Blueprintable, EditInlineNew, DefaultToInstanced, CollapseCategories)
@@ -86,7 +87,14 @@ public:
 	virtual UWorld* GetWorld() const override;
 	//~ End UObject Interface
 
+	/**
+	 * Whether the action is for this item at all: the item matches Item Filter. Menus leave out actions that aren't, even those shown
+	 * disabled while they can't run. Can Run For asks this too.
+	 */
+	bool AppliesTo(const FInventoryItemActionContext& Context) const;
+
 	// What menus and screens call. Each gives the action the context's world while it runs.
+	/** Applies To, then Can Run. */
 	bool CanRunFor(const FInventoryItemActionContext& Context) const;
 	FText GetUnavailableReasonFor(const FInventoryItemActionContext& Context) const;
 	void GetQuantityRangeFor(const FInventoryItemActionContext& Context, int32& OutMin, int32& OutMax, int32& OutDefault) const;
@@ -114,7 +122,15 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
 	FDataTableRowHandle InputAction;
 
-	/** Whether a menu lists the action disabled while it can't run, or leaves it out. */
+	/**
+	 * Only items that match are offered the action, such as a Tag Query of Item.Type.Consumable for Use, or one leaving out items tagged
+	 * Item.Trait.NoDiscard for Discard. Give an item the action by giving it what the filter asks for, and take it away the same way.
+	 * Items that don't match never list it, even with When Unavailable set to Show Disabled. Empty offers it to every item Can Run allows.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action")
+	FInventoryItemQuery ItemFilter;
+
+	/** Whether a menu lists the action disabled while it can't run, or leaves it out. Items Item Filter leaves out never list it. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action")
 	EInventoryActionUnavailable WhenUnavailable = EInventoryActionUnavailable::Hide;
 

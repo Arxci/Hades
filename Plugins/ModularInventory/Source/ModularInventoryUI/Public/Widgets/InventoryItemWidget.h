@@ -113,6 +113,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory|Item")
 	bool IsDragVisual() const { return bDragVisual; }
 
+	//~ Begin UObject Interface
+	virtual void PostLoad() override;
+	//~ End UObject Interface
+
+#if WITH_EDITOR
+	virtual void ValidateCompiledWidgetTree(const UWidgetTree& BlueprintWidgetTree, class IWidgetCompilerLog& CompileLog) const override;
+#endif
+
 protected:
 	//~ Begin UUserWidget Interface
 	virtual void NativeOnInitialized() override;
@@ -192,9 +200,18 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> NameText;
 
-	/** Collapsed for items that don't stack. */
+	/** Collapsed for items that don't stack. While a Value Display names it, the Value Displays decide what it shows instead. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> CountText;
+
+	/**
+	 * Numbers shown on the item, such as a gun's rounds, a stack's count or a tool's durability, each in Text Blocks and a Progress Bar you
+	 * name in the designer, so any number can be added without code. For a corner number that's a gun's rounds or else a stack's count,
+	 * add a Tag Value entry and then a Stack Count entry, both naming the same Text Block: the first that applies to the item shows there.
+	 * A named widget none applies to is collapsed. Widget names that don't exist are reported when the widget compiles.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Inventory|Item|Values", meta = (TitleProperty = "{Source} {Tag} in {TextWidget}"))
+	TArray<FInventoryValueDisplay> ValueDisplays;
 
 	/** Collapses Count Text for a stack of one too, so only real stacks show a number. */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Item")
@@ -217,37 +234,6 @@ protected:
 
 	UPROPERTY(EditAnywhere, Category = "Inventory|Item")
 	TArray<FInventoryTagColor> TagColors;
-
-	/** Filled to Meter Tag's value out of its maximum, such as durability or rounds. Collapsed for items without the value. */
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
-	TObjectPtr<UProgressBar> Meter;
-
-	/** Meter Tag's value in Meter Format. Shown and hidden with the meter. */
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> MeterText;
-
-	/** The tag value Meter and Meter Text show, such as Item.Durability. */
-	UPROPERTY(EditAnywhere, Category = "Inventory|Item|Meter")
-	FGameplayTag MeterTag;
-
-	/** The tag value that fills the meter, such as Item.MaxDurability. Without it, the value the definition starts Meter Tag at fills it. */
-	UPROPERTY(EditAnywhere, Category = "Inventory|Item|Meter")
-	FGameplayTag MeterMaxTag;
-
-	/** {Value} is Meter Tag's value, {Max} what fills the meter and {Percent} how full it is, out of 100. */
-	UPROPERTY(EditAnywhere, Category = "Inventory|Item|Meter")
-	FText MeterFormat = INVTEXT("{Value}");
-
-	/** Hides the meter while it's full, so only worn or spent items show one. */
-	UPROPERTY(EditAnywhere, Category = "Inventory|Item|Meter")
-	bool bHideFullMeter = false;
-
-	/** Colors Meter and Meter Text by how full the meter is. Off, they keep their own colors. */
-	UPROPERTY(EditAnywhere, Category = "Inventory|Item|Meter")
-	bool bTintMeter = false;
-
-	UPROPERTY(EditAnywhere, Category = "Inventory|Item|Meter", meta = (EditCondition = "bTintMeter"))
-	FInventoryMeterColors MeterColors;
 
 	/** Follows the cursor while dragging, unless the Inventory UI Subsystem's Snap Held Item is on. None uses this widget's own class. */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Item")
@@ -277,7 +263,14 @@ private:
 	UInventoryUISubsystem* GetInteraction() const;
 
 	void Refresh();
-	void RefreshMeter();
+	void FindValueDisplayWidgets();
+	void RefreshValueDisplays();
+
+	/** The display's number and what's full, for the item or the preview shown. False when it doesn't apply to it, or is hidden as it is. */
+	bool ResolveValueDisplay(const FInventoryValueDisplay& Display, float& OutValue, float& OutMax) const;
+
+	/** Whether the item or the preview shown matches Filter. A preview has no item, so its definition and its values stand in for one. */
+	bool MatchesShownItem(const FInventoryItemQuery& Filter) const;
 	void RefreshTagTint();
 	void RefreshInteraction();
 	void RefreshHighlight();
@@ -320,6 +313,39 @@ private:
 
 	TWeakObjectPtr<const UInventoryItemDefinition> ShownDefinition;
 	TSharedPtr<FStreamableHandle> IconHandle;
+
+	/** The widgets each of Value Displays names, found once, with their designer colors to go back to. */
+	struct FValueDisplayWidgets
+	{
+		TWeakObjectPtr<UTextBlock> Text;
+		TWeakObjectPtr<UProgressBar> Meter;
+		TWeakObjectPtr<UWidget> Frame;
+		FSlateColor DefaultTextColor;
+		FLinearColor DefaultMeterColor = FLinearColor::White;
+	};
+	TArray<FValueDisplayWidgets> ValueDisplayWidgets;
+
+	/** A Value Display names Count Text, so the displays decide what it shows. */
+	bool bValueDisplaysShowCount = false;
+
+	// The single meter that came before Value Displays. Loaded only so PostLoad can turn a widget's setup into a Value Displays entry.
+	UPROPERTY()
+	FGameplayTag MeterTag_DEPRECATED;
+
+	UPROPERTY()
+	FGameplayTag MeterMaxTag_DEPRECATED;
+
+	UPROPERTY()
+	FText MeterFormat_DEPRECATED = INVTEXT("{Value}");
+
+	UPROPERTY()
+	bool bHideFullMeter_DEPRECATED = false;
+
+	UPROPERTY()
+	bool bTintMeter_DEPRECATED = false;
+
+	UPROPERTY()
+	FInventoryMeterColors MeterColors_DEPRECATED;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UInventoryItemDetailsWidget> DetailsTooltip;
