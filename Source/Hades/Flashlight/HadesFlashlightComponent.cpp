@@ -38,6 +38,60 @@ namespace
 		Rate = (Rate - Temp * Omega) * Decay;
 		Value = Target + (Change + Temp) * Decay;
 	}
+
+	// Keeps Aim within MaxDegrees of Target, dropping the part of its motion that would carry it further away.
+	void LimitLag(FVector& Aim, FVector& Rate, const FVector& Target, float MaxDegrees)
+	{
+		if (FVector::DotProduct(Aim, Target) >= FMath::Cos(FMath::DegreesToRadians(MaxDegrees)))
+		{
+			return;
+		}
+
+		const FVector Axis = FVector::CrossProduct(Target, Aim).GetSafeNormal();
+		if (Axis.IsZero())
+		{
+			Aim = Target;
+			Rate = FVector::ZeroVector;
+			return;
+		}
+
+		Aim = Target.RotateAngleAxis(MaxDegrees, Axis);
+		const FVector Away = (Aim - Target).GetSafeNormal();
+		const double SpeedAway = FVector::DotProduct(Rate, Away);
+		if (SpeedAway > 0.0)
+		{
+			Rate -= Away * SpeedAway;
+		}
+	}
+
+	// Aim as it should be shown: exactly where it is up to 70% of MaxDegrees from Target, then easing toward MaxDegrees
+	// without a corner, so it never stops dead.
+	FVector EaseLag(const FVector& Aim, const FVector& Target, float MaxDegrees)
+	{
+		if (MaxDegrees <= 0.0f)
+		{
+			return Target;
+		}
+
+		const double Angle = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(FVector::DotProduct(Aim, Target), -1.0, 1.0)));
+		const double Knee = 0.7 * MaxDegrees;
+		if (Angle <= Knee)
+		{
+			return Aim;
+		}
+
+		const FVector Axis = FVector::CrossProduct(Target, Aim).GetSafeNormal();
+		if (Axis.IsZero())
+		{
+			return Target;
+		}
+
+		// tanh, which starts with the same slope as the spring's own lag at the knee.
+		const double Room = MaxDegrees - Knee;
+		const double Over = (Angle - Knee) / Room;
+		const double Eased = Knee + Room * (1.0 - 2.0 / (FMath::Exp(2.0 * Over) + 1.0));
+		return Target.RotateAngleAxis(Eased, Axis);
+	}
 }
 
 UHadesFlashlightComponent::UHadesFlashlightComponent()
@@ -91,7 +145,7 @@ void UHadesFlashlightComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
 	UpdatePlacement(DeltaTime, false);
-	UpdateBeam(DeltaTime);
+	UpdateBeam();
 }
 
 void UHadesFlashlightComponent::SetFlashlightOn(bool bOn)
@@ -122,7 +176,7 @@ void UHadesFlashlightComponent::ApplyOnState()
 	{
 		// Tick won't run until next frame, and the light should come on pointing where the view is, not where it was when it went off.
 		UpdatePlacement(0.0f, true);
-		UpdateBeam(0.0f);
+		UpdateBeam();
 	}
 }
 
@@ -142,7 +196,7 @@ void UHadesFlashlightComponent::SetBeamMaterial(UMaterialInterface* NewBeamMater
 		if (BeamComponent)
 		{
 			BeamComponent->SetVisibility(bFlashlightOn);
-			UpdateBeam(0.0f);
+			UpdateBeam();
 		}
 	}
 }
@@ -191,8 +245,17 @@ void UHadesFlashlightComponent::UpdatePlacement(float DeltaTime, bool bSnap)
 		QueryParams.AddIgnoredActors(AttachedActors);
 	}
 
-	// Where the hand holds it, pulled back toward the eye if that would put it in a wall.
+	// Where the hand holds it, kept in front of the body, and pulled back toward the eye if that would put it in a wall.
 	FVector LightLocation = ViewLocation + ViewRotation.RotateVector(HandOffset);
+	if (BodyClearance > 0.0f)
+	{
+		const FVector LevelForward = FRotator(0.0, ViewRotation.Rotator().Yaw, 0.0).Vector();
+		const double InFront = FVector::DotProduct(LightLocation - ViewLocation, LevelForward);
+		if (InFront < BodyClearance)
+		{
+			LightLocation += LevelForward * (BodyClearance - InFront);
+		}
+	}
 	if (WallClearance > 0.0f)
 	{
 		FHitResult Hit;
@@ -231,7 +294,7 @@ void UHadesFlashlightComponent::UpdatePlacement(float DeltaTime, bool bSnap)
 		TargetDirection = (AimPoint - LightLocation).GetSafeNormal(UE_SMALL_NUMBER, ViewForward);
 	}
 
-	// Trail behind the view, but never by more than the max angle.
+	// Trail behind the view on a spring.
 	if (bSnap || LagSmoothingTime <= 0.0f)
 	{
 		AimDirection = TargetDirection;
@@ -242,30 +305,16 @@ void UHadesFlashlightComponent::UpdatePlacement(float DeltaTime, bool bSnap)
 		CriticallyDampedStep(AimDirection, AimDirectionRate, TargetDirection, DeltaTime, LagSmoothingTime);
 		AimDirection = AimDirection.GetSafeNormal(UE_SMALL_NUMBER, TargetDirection);
 
-		if (FVector::DotProduct(AimDirection, TargetDirection) < FMath::Cos(FMath::DegreesToRadians(MaxLagAngle)))
-		{
-			const FVector Axis = FVector::CrossProduct(TargetDirection, AimDirection).GetSafeNormal();
-			if (Axis.IsZero())
-			{
-				AimDirection = TargetDirection;
-				AimDirectionRate = FVector::ZeroVector;
-			}
-			else
-			{
-				// Drag it along at the limit, and drop the part of its motion that would carry it further behind.
-				AimDirection = TargetDirection.RotateAngleAxis(MaxLagAngle, Axis);
-				const FVector Behind = (AimDirection - TargetDirection).GetSafeNormal();
-				const double SpeedBehind = FVector::DotProduct(AimDirectionRate, Behind);
-				if (SpeedBehind > 0.0)
-				{
-					AimDirectionRate -= Behind * SpeedBehind;
-				}
-			}
-		}
+		// Only a safety net for spinning on the spot: the spring can trail well past Max Lag Angle, but not halfway round.
+		LimitLag(AimDirection, AimDirectionRate, TargetDirection, FMath::Max(MaxLagAngle * 2.5f, 1.0f));
 	}
 
+	// The light shows the spring's lag up to most of Max Lag Angle, then eases into it. Easing only what's shown keeps
+	// fast turns from stopping dead against a limit, and lets the light swing back as soon as the turn ends.
+	const FVector LightDirection = EaseLag(AimDirection, TargetDirection, MaxLagAngle);
+
 	// Roll follows the view, so a light function or IES pattern doesn't spin.
-	SetWorldLocationAndRotation(LightLocation, FRotationMatrix::MakeFromXZ(AimDirection, ViewUp).ToQuat());
+	SetWorldLocationAndRotation(LightLocation, FRotationMatrix::MakeFromXZ(LightDirection, ViewUp).ToQuat());
 }
 
 void UHadesFlashlightComponent::CreateBeam()
@@ -315,7 +364,7 @@ void UHadesFlashlightComponent::DestroyBeam()
 	BeamMaterialInstance = nullptr;
 }
 
-void UHadesFlashlightComponent::UpdateBeam(float DeltaTime)
+void UHadesFlashlightComponent::UpdateBeam()
 {
 	if (!BeamComponent || !BeamMaterialInstance || !Light)
 	{
@@ -351,16 +400,21 @@ void UHadesFlashlightComponent::UpdateBeam(float DeltaTime)
 	const float CosInner = FMath::Cos(InnerConeRadians);
 	const FLinearColor Shape(Radius, CosOuter, 1.0f / (CosInner - CosOuter), FMath::Max(BeamFadeInDistance, 1.0f));
 
-	// The light's own brightness and colour, so the beam dims and tints with it. Haze Density is per metre; the shader works in centimetres.
+	// The light's own brightness and colour, so the beam dims and tints with it. Haze Density is per metre; the shader
+	// works in centimetres. Kept just above zero so dust still shows with no haze.
+	const float HazePerCm = FMath::Max(HazeDensity, 1e-6f) * 0.01f;
 	FLinearColor Color = FLinearColor(Light->LightColor) * Light->ComputeLightBrightness();
 	if (Light->bUseTemperature)
 	{
 		Color *= FLinearColor::MakeFromColorTemperature(Light->Temperature);
 	}
-	Color *= FMath::Max(HazeDensity, 0.0f) * 0.01f * FMath::Max(BeamIntensity, 0.0f);
+	Color *= HazePerCm * FMath::Max(BeamIntensity, 0.0f);
 	Color.A = 1.0f;
 
-	const FLinearColor Look(FMath::Clamp(HazeAnisotropy, -0.9f, 0.9f), FMath::Clamp(HazeNoiseAmount, 0.0f, 1.0f), 0.0f, 0.0f);
+	// The shader lights dust with the same colour, so the haze is divided back out. Specks reflect like a mid-grey surface (0.5 / pi).
+	const float DustBrightness = FMath::Max(DustAmount, 0.0f) * (0.5f / UE_PI) / HazePerCm;
+	const float CosHotspot = FMath::Cos(FMath::DegreesToRadians(FMath::Clamp(HotspotAngle, 0.5f, 30.0f)));
+	const FLinearColor Look(FMath::Clamp(HazeNoiseAmount, 0.0f, 1.0f), DustBrightness, CosHotspot, FMath::Clamp(SpillBrightness, 0.0f, 1.0f));
 
 	if (!bBeamParametersSet || !Shape.Equals(LastBeamShape))
 	{
@@ -378,11 +432,11 @@ void UHadesFlashlightComponent::UpdateBeam(float DeltaTime)
 		LastBeamLook = Look;
 	}
 
-	// Drifts with the game clock, so it stops when the game pauses.
-	HazeOffset += HazeWind * DeltaTime;
+	// The shader moves the haze and dust from the wind and the game clock, so they stop when the game pauses.
+	const UWorld* World = GetWorld();
 	BeamMaterialInstance->SetVectorParameterValue(BeamNoiseParameter, FLinearColor(
-		static_cast<float>(HazeOffset.X), static_cast<float>(HazeOffset.Y), static_cast<float>(HazeOffset.Z),
-		1.0f / FMath::Max(HazeNoiseSize, 1.0f)));
+		static_cast<float>(HazeWind.X), static_cast<float>(HazeWind.Y), static_cast<float>(HazeWind.Z),
+		World ? static_cast<float>(World->GetTimeSeconds()) : 0.0f));
 
 	bBeamParametersSet = true;
 }

@@ -54,25 +54,21 @@ AHadesHeroCharacter::AHadesHeroCharacter(const FObjectInitializer& ObjectInitial
 	ArmsMesh->SetCastShadow(false);
 	ArmsMesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 
-	Flashlight = CreateDefaultSubobject<UHadesFlashlightComponent>(TEXT("Flashlight"));
-	Flashlight->SetupAttachment(ViewRoot);
-	// A small LED flashlight.
 	FlashlightLight = CreateDefaultSubobject<USpotLightComponent>(TEXT("FlashlightLight"));
 	FlashlightLight->SetupAttachment(Flashlight);
 	FlashlightLight->SetMobility(EComponentMobility::Movable);
 	FlashlightLight->IntensityUnits = ELightUnits::Candelas;
-	FlashlightLight->Intensity = 1000.0f;
-	FlashlightLight->AttenuationRadius = 2000.0f;
-	FlashlightLight->InnerConeAngle = 12.0f;
-	FlashlightLight->OuterConeAngle = 30.0f;
+	FlashlightLight->Intensity = 2000.0f;
+	FlashlightLight->AttenuationRadius = 1500.0f;
+	FlashlightLight->InnerConeAngle = 21.0f;
+	FlashlightLight->OuterConeAngle = 24.0f;
 	FlashlightLight->SourceRadius = 2.0f;
 	FlashlightLight->bUseTemperature = true;
-	FlashlightLight->Temperature = 5000.0f;
+	FlashlightLight->Temperature = 6800.0f;
 	FlashlightLight->ContactShadowLength = 0.02f;
 	// The flashlight component draws the beam; volumetric fog's version smears as the view turns.
 	FlashlightLight->VolumetricScatteringIntensity = 0.0f;
 	
-
 	InteractorComponent = CreateDefaultSubobject<UHadesInteractorComponent>(TEXT("InteractorComponent"));
 	InventoryComponent = CreateDefaultSubobject<UHadesInventoryComponent>(TEXT("InventoryComponent"));
 	EquipmentComponent = CreateDefaultSubobject<UInventoryEquipmentComponent>(TEXT("EquipmentComponent"));

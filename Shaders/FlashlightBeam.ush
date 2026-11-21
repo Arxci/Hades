@@ -2,8 +2,12 @@
 //
 // Volumetric fog blends each frame with the frames before it, so a beam that turns with the camera smears.
 // This draws the beam instead: for each pixel it finds the part of the view ray inside the light's cone,
-// stops it at the first opaque surface, and adds up the light scattered back toward the camera along it.
-// Nothing carries over between frames, so there's no lag.
+// stops it at the first opaque surface, and adds up the light scattered back toward the camera along it,
+// plus dust specks catching the light near the camera. Nothing carries over between frames, so there's no lag.
+//
+// The beam has the shape of a real flashlight: a bright core in the middle of a dimmer spill, with the light's
+// cone as its outer edge. FlashlightLED.ies (in SourceArt/Lighting) gives the light the same shape, so the beam
+// lines up with the circle it lights.
 //
 // Unreal maps <Project>/Shaders to /Project, so a material includes this file as /Project/FlashlightBeam.ush.
 //
@@ -46,16 +50,88 @@
 // Treats the light as a few centimetres wide rather than a point, so rays that pass right by the lens stay finite.
 #define HADES_FLASHLIGHT_BEAM_SOFTENING_CM 10.0
 
-// 0..1 for an integer lattice cell.
-float HadesFlashlightBeam_Hash(int3 Cell)
+// How much more light the haze scatters onward than back. Your own beam is seen from behind, so keep this low.
+#define HADES_FLASHLIGHT_BEAM_ANISOTROPY 0.15
+
+// The bright core fades into the spill between the core angle and this many times it.
+// FlashlightLED.ies is built with the same value.
+#define HADES_FLASHLIGHT_BEAM_CORE_FALLOFF 2.5
+
+// Haze patches: a large layer carried by the air, and a finer one that rises and moves against it,
+// so the haze changes shape instead of sliding past.
+#define HADES_FLASHLIGHT_HAZE_SIZE_CM 100.0
+#define HADES_FLASHLIGHT_HAZE_DETAIL_CM 45.0
+
+// Dust: each cell of a grid carried by the air has this chance of holding one speck.
+#define HADES_FLASHLIGHT_DUST_CELL_CM 18.0
+#define HADES_FLASHLIGHT_DUST_CHANCE 0.6
+#define HADES_FLASHLIGHT_DUST_RADIUS_CM 0.05
+// Each speck floats around its own resting spot, up to this far each way. Resting spots stay in the middle of the
+// cell (this fraction of it), which keeps a wandering speck inside its cell so the grid walk always finds it:
+// 18 * (1 - 0.36) / 2 - 4.5 leaves 1.26 cm, more than a speck's widest footprint.
+#define HADES_FLASHLIGHT_DUST_WANDER_CM 4.5
+#define HADES_FLASHLIGHT_DUST_HOME_SPREAD 0.36
+// Specks are only drawn this far from the camera; further away they're too small to see.
+#define HADES_FLASHLIGHT_DUST_RANGE_CM 300.0
+#define HADES_FLASHLIGHT_DUST_MAX_CELLS 64
+// About one pixel's angle at 1440p with a 90 degree view. Specks smaller than a pixel are spread over one at the
+// same total brightness, so distant specks dim instead of flickering.
+#define HADES_FLASHLIGHT_PIXEL_ANGLE 0.0008
+
+struct FHadesFlashlightBeamLight
 {
-	uint H = (uint(Cell.x) * 73856093u) ^ (uint(Cell.y) * 19349663u) ^ (uint(Cell.z) * 83492791u);
+	float3 Position; // relative to the camera
+	float3 Axis;
+	float InvRadiusSq;
+	float CosOuter;
+	float InvCosConeDifference;
+	float CosCore;
+	float CosCoreOuter;
+	float Spill;
+	float FadeInDistance;
+};
+
+uint HadesFlashlightBeam_Mix(uint H)
+{
 	H ^= H >> 16;
 	H *= 0x7feb352du;
 	H ^= H >> 15;
 	H *= 0x846ca68bu;
 	H ^= H >> 16;
+	return H;
+}
+
+uint HadesFlashlightBeam_CellSeed(int3 Cell)
+{
+	return (uint(Cell.x) * 73856093u) ^ (uint(Cell.y) * 19349663u) ^ (uint(Cell.z) * 83492791u);
+}
+
+float HadesFlashlightBeam_ToUnit(uint H)
+{
 	return float(H >> 8) * (1.0 / 16777216.0);
+}
+
+// 0..1 from the low bits ToUnit doesn't use.
+float HadesFlashlightBeam_LowToUnit(uint H)
+{
+	return float(H & 0xffu) * (1.0 / 256.0);
+}
+
+// How far the air has carried the haze and dust by Time (seconds): a steady wind whose direction wanders slowly,
+// like drafts in a room. It's the integral of a wandering velocity, so the motion stays smooth.
+float3 HadesFlashlightBeam_Drift(float3 Wind, float Time)
+{
+	const float Speed = length(Wind);
+	return Wind * Time
+		+ Speed * float3(0.55, -0.35, 0.15) * (sin(Time * 0.37 + 0.7) / 0.37)
+		+ Speed * float3(-0.25, 0.45, -0.10) * (sin(Time * 0.21 + 2.1) / 0.21)
+		+ Speed * float3(0.20, 0.20, 0.12) * (sin(Time * 0.13 + 4.0) / 0.13);
+}
+
+// 0..1 for an integer lattice cell.
+float HadesFlashlightBeam_Hash(int3 Cell)
+{
+	return HadesFlashlightBeam_ToUnit(HadesFlashlightBeam_Mix(HadesFlashlightBeam_CellSeed(Cell)));
 }
 
 // Smooth 0..1 value noise with one feature per unit.
@@ -145,11 +221,146 @@ bool HadesFlashlightBeam_RayCone(float3 Dir, float3 Apex, float3 Axis, float Cos
 	return OriginAxis + 0.5 * (Near + Far) * DirAxis >= 0.0;
 }
 
+// Share of the light's peak brightness heading from the light toward FromLight: the bright core over the dimmer spill,
+// cut off by the cone's edge and the attenuation radius, and faded in away from the lens. Inverse-square is left to the caller.
+float HadesFlashlightBeam_LightShape(FHadesFlashlightBeamLight Light, float3 FromLight, float DistanceSq)
+{
+	const float Distance = sqrt(DistanceSq);
+	const float CosAngle = dot(FromLight, Light.Axis) / max(Distance, 1e-3);
+
+	// The cone's edge uses the same falloff Unreal gives the light itself.
+	const float Edge = saturate((CosAngle - Light.CosOuter) * Light.InvCosConeDifference);
+	const float Core = smoothstep(Light.CosCoreOuter, Light.CosCore, CosAngle);
+	const float Range = saturate(1.0 - DistanceSq * DistanceSq * Light.InvRadiusSq * Light.InvRadiusSq);
+
+	return Edge * Edge * Range * Range * lerp(Light.Spill, 1.0, Core) * smoothstep(0.0, Light.FadeInDistance, Distance);
+}
+
+// Where a ray crossing a grid axis next reaches a cell boundary.
+float HadesFlashlightBeam_FirstCrossing(float Start, int Cell, float Dir, float TStart, float CellSize)
+{
+	if (Dir > 1e-6)
+	{
+		return TStart + (float(Cell + 1) - Start) * CellSize / Dir;
+	}
+	if (Dir < -1e-6)
+	{
+		return TStart + (float(Cell) - Start) * CellSize / Dir;
+	}
+	return 1e20;
+}
+
+// Dust specks the ray passes between TStart and TEnd, each lit like a tiny surface by the flashlight.
+// Walks the grid cells along the ray, so only specks near it are looked at.
+float HadesFlashlightBeam_Dust(FHadesFlashlightBeamLight Light, float3 Dir, float3 CamPos, float3 Drift, float Time, float TStart, float TEnd)
+{
+	const float CellSize = HADES_FLASHLIGHT_DUST_CELL_CM;
+
+	// The grid moves with the haze, so the dust drifts with it.
+	const float3 Start = (CamPos - Drift + Dir * TStart) / CellSize;
+	const int3 StartCell = int3(floor(Start));
+	int3 Cell = StartCell;
+
+	// Specks are placed relative to the first cell, which keeps their positions precise far from the world origin.
+	const float3 StartCellPos = float3(StartCell) * CellSize + Drift - CamPos;
+
+	const int3 StepDir = int3(Dir.x > 0.0 ? 1 : -1, Dir.y > 0.0 ? 1 : -1, Dir.z > 0.0 ? 1 : -1);
+	float3 TNext = float3(
+		HadesFlashlightBeam_FirstCrossing(Start.x, Cell.x, Dir.x, TStart, CellSize),
+		HadesFlashlightBeam_FirstCrossing(Start.y, Cell.y, Dir.y, TStart, CellSize),
+		HadesFlashlightBeam_FirstCrossing(Start.z, Cell.z, Dir.z, TStart, CellSize));
+	const float3 TStep = float3(
+		abs(Dir.x) > 1e-6 ? CellSize / abs(Dir.x) : 1e20,
+		abs(Dir.y) > 1e-6 ? CellSize / abs(Dir.y) : 1e20,
+		abs(Dir.z) > 1e-6 ? CellSize / abs(Dir.z) : 1e20);
+
+	const float SpeckRadiusSq = HADES_FLASHLIGHT_DUST_RADIUS_CM * HADES_FLASHLIGHT_DUST_RADIUS_CM;
+	float Sum = 0.0;
+
+	[loop]
+	for (int Visit = 0; Visit < HADES_FLASHLIGHT_DUST_MAX_CELLS; ++Visit)
+	{
+		const uint Seed = HadesFlashlightBeam_Mix(HadesFlashlightBeam_CellSeed(Cell) ^ 0x68e31da4u);
+		if (HadesFlashlightBeam_ToUnit(Seed) < HADES_FLASHLIGHT_DUST_CHANCE)
+		{
+			const uint H1 = HadesFlashlightBeam_Mix(Seed + 0x9e3779b9u);
+			const uint H2 = HadesFlashlightBeam_Mix(H1 + 0x9e3779b9u);
+			const uint H3 = HadesFlashlightBeam_Mix(H2 + 0x9e3779b9u);
+			const uint H4 = HadesFlashlightBeam_Mix(H3 + 0x9e3779b9u);
+			const uint H5 = HadesFlashlightBeam_Mix(H4 + 0x9e3779b9u);
+			const uint H6 = HadesFlashlightBeam_Mix(H5 + 0x9e3779b9u);
+			const uint H7 = HadesFlashlightBeam_Mix(H6 + 0x9e3779b9u);
+
+			// Its resting spot, and a slow float around it on each axis at its own speeds (two waves each, so it doesn't loop
+			// visibly), plus a little twinkle as it turns.
+			const float3 Home = 0.5 + (float3(HadesFlashlightBeam_ToUnit(H1), HadesFlashlightBeam_ToUnit(H2), HadesFlashlightBeam_ToUnit(H3)) - 0.5)
+				* HADES_FLASHLIGHT_DUST_HOME_SPREAD;
+			const float3 WanderRate = 0.15 + 0.4 * float3(HadesFlashlightBeam_ToUnit(H4), HadesFlashlightBeam_ToUnit(H5), HadesFlashlightBeam_ToUnit(H6));
+			const float3 Phase = 6.2831853 * float3(HadesFlashlightBeam_LowToUnit(H4), HadesFlashlightBeam_LowToUnit(H5), HadesFlashlightBeam_LowToUnit(H6));
+			const float3 Wander = (0.5 * HADES_FLASHLIGHT_DUST_WANDER_CM)
+				* (sin(WanderRate * Time + Phase) + sin(1.618 * WanderRate * Time + 2.0 * Phase + 1.0));
+			const float Twinkle = 0.6 + 0.4 * sin((0.8 + 2.4 * HadesFlashlightBeam_ToUnit(H7)) * Time + 6.2831853 * HadesFlashlightBeam_LowToUnit(H7));
+
+			const float3 Speck = StartCellPos + (float3(Cell - StartCell) + Home) * CellSize + Wander;
+
+			const float TSpeck = dot(Speck, Dir);
+			const float3 OffRay = Speck - TSpeck * Dir;
+			const float Footprint = max(HADES_FLASHLIGHT_DUST_RADIUS_CM, TSpeck * HADES_FLASHLIGHT_PIXEL_ANGLE);
+			const float FootprintSq = Footprint * Footprint;
+			const float OffRaySq = dot(OffRay, OffRay) / FootprintSq;
+
+			if (TSpeck > TStart && TSpeck < TEnd && OffRaySq < 1.0)
+			{
+				const float3 FromLight = Speck - Light.Position;
+				const float DistanceSq = dot(FromLight, FromLight);
+				const float Lit = HadesFlashlightBeam_LightShape(Light, FromLight, DistanceSq)
+					/ (DistanceSq + HADES_FLASHLIGHT_BEAM_SOFTENING_CM * HADES_FLASHLIGHT_BEAM_SOFTENING_CM);
+
+				// A soft dot holding the speck's total brightness, faded out right in front of the camera.
+				const float Spread = 1.0 - OffRaySq;
+				const float Coverage = 3.0 * Spread * Spread * SpeckRadiusSq / FootprintSq;
+				Sum += Lit * Coverage * Twinkle * smoothstep(15.0, 40.0, TSpeck);
+			}
+		}
+
+		// Into the next cell along the ray.
+		if (TNext.x < TNext.y && TNext.x < TNext.z)
+		{
+			if (TNext.x > TEnd)
+			{
+				break;
+			}
+			Cell.x += StepDir.x;
+			TNext.x += TStep.x;
+		}
+		else if (TNext.y < TNext.z)
+		{
+			if (TNext.y > TEnd)
+			{
+				break;
+			}
+			Cell.y += StepDir.y;
+			TNext.y += TStep.y;
+		}
+		else
+		{
+			if (TNext.z > TEnd)
+			{
+				break;
+			}
+			Cell.z += StepDir.z;
+			TNext.z += TStep.z;
+		}
+	}
+
+	return Sum;
+}
+
 // Light scattered toward the camera along this pixel's ray, in the same units as lit surfaces.
 //   BeamShape: x attenuation radius (cm), y cos(outer cone), z 1 / (cos(inner cone) - cos(outer cone)), w fade-in distance from the lens (cm)
-//   BeamColor: light colour * brightness (Unreal's internal units) * scattering per cm * artistic scale
-//   BeamNoise: xyz how far the haze has drifted (cm), w haze features per cm
-//   BeamLook:  x anisotropy (-0.9..0.9, positive scatters forward), y haze noise amount (0..1)
+//   BeamColor: light colour * peak brightness (Unreal's internal units) * haze scattering per cm * artistic scale
+//   BeamNoise: xyz wind (cm/s), w game time (s)
+//   BeamLook:  x haze noise amount (0..1), y dust brightness relative to the haze, z cos(core angle), w spill brightness relative to the core (0..1)
 float3 HadesFlashlightBeam(
 	float3 CamRelPos,
 	float3 CamRelLightPos,
@@ -181,10 +392,18 @@ float3 HadesFlashlightBeam(
 	const float SceneDistance = RayLength * max(OpaqueDepth, 0.0) / FragDepth;
 
 	const float Radius = max(BeamShape.x, 1.0);
-	const float CosOuter = BeamShape.y;
-	const float InvCosConeDifference = BeamShape.z;
-	const float FadeInDistance = max(BeamShape.w, 1.0);
-	const float3 Axis = LightAxis * rsqrt(max(dot(LightAxis, LightAxis), 1e-8));
+	const float CoreAngle = max(acos(clamp(BeamLook.z, -1.0, 1.0)), 1e-3);
+
+	FHadesFlashlightBeamLight Light;
+	Light.Position = CamRelLightPos;
+	Light.Axis = LightAxis * rsqrt(max(dot(LightAxis, LightAxis), 1e-8));
+	Light.InvRadiusSq = 1.0 / (Radius * Radius);
+	Light.CosOuter = BeamShape.y;
+	Light.InvCosConeDifference = BeamShape.z;
+	Light.CosCore = cos(CoreAngle);
+	Light.CosCoreOuter = cos(min(CoreAngle * HADES_FLASHLIGHT_BEAM_CORE_FALLOFF, 3.0));
+	Light.Spill = saturate(BeamLook.w);
+	Light.FadeInDistance = max(BeamShape.w, 1.0);
 
 	// Inside the attenuation radius.
 	const float ClosestT = dot(CamRelLightPos, Dir);
@@ -199,7 +418,7 @@ float3 HadesFlashlightBeam(
 	// Inside the cone.
 	float ConeEnter;
 	float ConeExit;
-	if (!HadesFlashlightBeam_RayCone(Dir, CamRelLightPos, Axis, CosOuter, ConeEnter, ConeExit))
+	if (!HadesFlashlightBeam_RayCone(Dir, CamRelLightPos, Light.Axis, Light.CosOuter, ConeEnter, ConeExit))
 	{
 		return 0;
 	}
@@ -211,20 +430,24 @@ float3 HadesFlashlightBeam(
 		return 0;
 	}
 
-	// Sample evenly in the angle the ray sweeps as seen from the light. With t = ClosestT + H * tan(Theta),
+	// Haze. Sample evenly in the angle the ray sweeps as seen from the light. With t = ClosestT + H * tan(Theta),
 	// dt / (distance^2 + softening^2) becomes dTheta / H, so the falloff is exact and every sample counts equally.
 	const float H = sqrt(LineDistanceSq + HADES_FLASHLIGHT_BEAM_SOFTENING_CM * HADES_FLASHLIGHT_BEAM_SOFTENING_CM);
 	const float Theta0 = atan((T0 - ClosestT) / H);
 	const float Theta1 = atan((T1 - ClosestT) / H);
 	const float ThetaStep = (Theta1 - Theta0) / HADES_FLASHLIGHT_BEAM_SAMPLES;
 
-	const float InvRadiusSq = 1.0 / (Radius * Radius);
-	const float G = clamp(BeamLook.x, -0.95, 0.95);
+	const float G = HADES_FLASHLIGHT_BEAM_ANISOTROPY;
 	const float PhaseScale = (1.0 - G * G) * 0.0795774715; // (1 - g^2) / (4 * pi)
-	const float NoiseAmount = saturate(BeamLook.y);
+	const float NoiseAmount = saturate(BeamLook.x);
 	const bool bNoise = NoiseAmount > 0.0;
 
-	float Sum = 0.0;
+	// Where the air has carried things: the big haze patches and the dust ride it, the fine patches rise against it.
+	const float Time = BeamNoise.w;
+	const float3 Drift = HadesFlashlightBeam_Drift(BeamNoise.xyz, Time);
+	const float3 DetailDrift = -0.6 * Drift + float3(0.0, 0.0, 2.0) * Time;
+
+	float Haze = 0.0;
 
 	[loop]
 	for (int SampleIndex = 0; SampleIndex < HADES_FLASHLIGHT_BEAM_SAMPLES; ++SampleIndex)
@@ -233,32 +456,38 @@ float3 HadesFlashlightBeam(
 		const float T = ClosestT + H * tan(Theta);
 		const float3 FromLight = T * Dir - CamRelLightPos;
 		const float DistanceSq = dot(FromLight, FromLight);
-		const float Distance = sqrt(DistanceSq);
-		const float3 LightToSample = FromLight / max(Distance, 1e-3);
 
-		// The same cone and radius falloff Unreal uses for the light itself.
-		const float Cone = saturate((dot(LightToSample, Axis) - CosOuter) * InvCosConeDifference);
-		const float Range = saturate(1.0 - DistanceSq * DistanceSq * InvRadiusSq * InvRadiusSq);
-		float Weight = Cone * Cone * Range * Range;
-
-		// Fade in away from the lens, so the beam doesn't wash over the screen or start in front of the flashlight model.
-		Weight *= smoothstep(0.0, FadeInDistance, Distance);
+		float Weight = HadesFlashlightBeam_LightShape(Light, FromLight, DistanceSq);
 
 		// Henyey-Greenstein phase: how much light turns toward the camera here.
-		const float PhaseDenominator = max(1.0 + G * G + 2.0 * G * dot(LightToSample, Dir), 1e-4);
+		const float CosToCamera = -dot(FromLight, Dir) * rsqrt(max(DistanceSq, 1e-6));
+		const float PhaseDenominator = max(1.0 + G * G - 2.0 * G * CosToCamera, 1e-4);
 		Weight *= PhaseScale / (PhaseDenominator * sqrt(PhaseDenominator));
 
-		// Uneven haze, fixed in the world and drifting slowly.
+		// Uneven haze, fixed in the world and slowly drifting and changing shape.
 		if (bNoise)
 		{
-			const float Noise = HadesFlashlightBeam_ValueNoise((CamPos + T * Dir - BeamNoise.xyz) * BeamNoise.w);
+			const float3 P = CamPos + T * Dir;
+			const float Noise = 0.65 * HadesFlashlightBeam_ValueNoise((P - Drift) * (1.0 / HADES_FLASHLIGHT_HAZE_SIZE_CM))
+				+ 0.35 * HadesFlashlightBeam_ValueNoise((P - DetailDrift) * (1.0 / HADES_FLASHLIGHT_HAZE_DETAIL_CM));
 			Weight *= max(1.0 + NoiseAmount * (2.0 * Noise - 1.0), 0.0);
 		}
 
-		Sum += Weight;
+		Haze += Weight;
+	}
+	Haze *= ThetaStep / H;
+
+	// Dust specks near the camera.
+	float Dust = 0.0;
+	const float DustBrightness = max(BeamLook.y, 0.0);
+	const float DustStart = max(T0, 15.0);
+	const float DustEnd = min(T1, HADES_FLASHLIGHT_DUST_RANGE_CM);
+	if (DustBrightness > 0.0 && DustEnd > DustStart)
+	{
+		Dust = DustBrightness * HadesFlashlightBeam_Dust(Light, Dir, CamPos, Drift, Time, DustStart, DustEnd);
 	}
 
-	return BeamColor * (Sum * ThetaStep / H);
+	return BeamColor * (Haze + Dust);
 }
 
 #endif // HADES_FLASHLIGHT_BEAM_USH

@@ -64,17 +64,30 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Flashlight")
 	bool bStartOn = true;
 
-	/** Where the hand holds the light, from the eye: X forward, Y right, Z up. Off to the side so shadows fall where you can see them. */
+	/**
+	 * Where the hand holds the light, from the eye: X forward, Y right, Z up. The default is the left hand at chest height,
+	 * so the beam rises into view from the bottom corner and shadows fall where you can see them. Use a positive Y for the right hand.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flashlight|Placement", meta = (Units = "cm"))
-	FVector HandOffset = FVector(10.0, 18.0, -18.0);
+	FVector HandOffset = FVector(20.0, -22.0, -40.0);
+
+	/**
+	 * Keeps the light at least this far in front of the eye, measured level with the floor. Looking down, Hand Offset turns
+	 * with the view and would otherwise swing back into the body, which still casts shadows while hidden. 0 turns this off.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flashlight|Placement", meta = (ClampMin = "0", Units = "cm"))
+	float BodyClearance = 25.0f;
 
 	/** How long the light takes to catch up when you turn. 0 locks it to the view. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flashlight|Placement", meta = (ClampMin = "0", Units = "s"))
-	float LagSmoothingTime = 0.06f;
+	float LagSmoothingTime = 0.1f;
 
-	/** The furthest the light can fall behind the view during a fast turn. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flashlight|Placement", meta = (ClampMin = "0", ClampMax = "45", Units = "deg"))
-	float MaxLagAngle = 12.0f;
+	/**
+	 * Roughly the furthest the light falls behind on very fast turns. It trails freely up to 70% of this, then eases toward it
+	 * rather than stopping dead, so quick looks stay smooth.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flashlight|Placement", meta = (ClampMin = "0", ClampMax = "60", Units = "deg"))
+	float MaxLagAngle = 35.0f;
 
 	/** Aims the light at what the crosshair is on, so the hotspot lands there despite Hand Offset. Otherwise it points the way you look. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flashlight|Placement")
@@ -103,31 +116,38 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Flashlight|Beam")
 	TObjectPtr<UMaterialInterface> BeamMaterial;
 
-	/** How much of the light the air scatters, per metre. Around 0.003 is faintly dusty, 0.01 a dusty room, 0.05 and up is fog. */
+	/** How much of the light the air scatters, per metre. Around 0.01 is faint, 0.03 a dusty room, 0.05 and up is smoke or fog. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flashlight|Beam", meta = (ClampMin = "0", UIMax = "0.1"))
-	float HazeDensity = 0.01f;
+	float HazeDensity = 0.03f;
 
-	/** Scales the beam's brightness on top of Haze Density. */
+	/** Scales the beam's brightness, haze and dust together. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flashlight|Beam", meta = (ClampMin = "0"))
 	float BeamIntensity = 1.0f;
 
-	/** Above 0, light keeps going the way it was headed, so a beam looks brighter pointed at you than away from you. 0 scatters it evenly. Dust and haze are around 0.2. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flashlight|Beam", meta = (ClampMin = "-0.9", ClampMax = "0.9"))
-	float HazeAnisotropy = 0.2f;
+	/**
+	 * Half-angle of the bright core in the middle of the beam, which fades into the spill by 2.5 times this angle.
+	 * The light's Outer Cone Angle is the beam's outer edge. FlashlightLED.ies gives the light the same core; change both together.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flashlight|Beam", meta = (ClampMin = "0.5", ClampMax = "30", Units = "deg"))
+	float HotspotAngle = 6.0f;
 
-	/** The beam fades in over this distance from the lens, so it doesn't wash over the screen. */
+	/** How bright the rest of the beam is next to its core. 1 is even all the way out to the edge. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flashlight|Beam", meta = (ClampMin = "0", ClampMax = "1"))
+	float SpillBrightness = 0.3f;
+
+	/** How brightly the dust specks within a few metres catch the light. 0 turns them off. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flashlight|Beam", meta = (ClampMin = "0", UIMax = "4"))
+	float DustAmount = 1.0f;
+
+	/** The beam fades in over this distance from the lens. Short, since the lens is below the bottom of the screen. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flashlight|Beam", meta = (ClampMin = "1", Units = "cm"))
-	float BeamFadeInDistance = 60.0f;
+	float BeamFadeInDistance = 20.0f;
 
 	/** How patchy the haze is. 0 is even. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flashlight|Beam", meta = (ClampMin = "0", ClampMax = "1"))
-	float HazeNoiseAmount = 0.8f;
+	float HazeNoiseAmount = 0.5f;
 
-	/** Size of the patches. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flashlight|Beam", meta = (ClampMin = "1", Units = "cm"))
-	float HazeNoiseSize = 100.0f;
-
-	/** How fast the patches drift. */
+	/** The air's average drift, which carries the haze and dust. Its direction wanders over time. 0 is still air, where specks just float in place. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flashlight|Beam", meta = (Units = "cm/s"))
 	FVector HazeWind = FVector(5.0, 2.0, 1.0);
 
@@ -141,7 +161,7 @@ private:
 	void ApplyOnState();
 	void CreateBeam();
 	void DestroyBeam();
-	void UpdateBeam(float DeltaTime);
+	void UpdateBeam();
 
 	UPROPERTY(Transient)
 	TObjectPtr<USpotLightComponent> Light;
@@ -160,8 +180,6 @@ private:
 	FVector AimDirectionRate = FVector::ZeroVector;
 	float AimDistance = 0.0f;
 	float AimDistanceRate = 0.0f;
-
-	FVector HazeOffset = FVector::ZeroVector;
 
 	// What the beam was last set up with, so unchanged values aren't sent again.
 	float BeamProxyRadius = -1.0f;
