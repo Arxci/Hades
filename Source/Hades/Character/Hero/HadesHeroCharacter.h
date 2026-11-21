@@ -12,8 +12,11 @@
 class USceneComponent;
 class UCameraComponent;
 class USkeletalMeshComponent;
+class USpotLightComponent;
 class UInputComponent;
 
+class UHadesFlashlightComponent;
+class UHadesCameraLagComponent;
 class UHadesInteractorComponent;
 class UHadesInputConfig;
 class UHadesInventoryComponent;
@@ -48,8 +51,10 @@ public:
 	UHadesInventoryComponent* GetInventoryComponent() const { return InventoryComponent; }
 	UInventoryEquipmentComponent* GetEquipmentComponent() const { return EquipmentComponent; }
 	UHadesQuickSlotComponent* GetQuickSlotComponent() const { return QuickSlotComponent; }
+	UHadesCameraLagComponent* GetCameraLag() const { return CameraLag; }
 	UCameraComponent* GetFirstPersonCamera() const { return FirstPersonCamera; }
 	USkeletalMeshComponent* GetArmsMesh() const { return ArmsMesh; }
+	UHadesFlashlightComponent* GetFlashlight() const { return Flashlight; }
 
 	/** Which input action each input tag is, such as for widgets that show the key bound to one. */
 	const UHadesInputConfig* GetInputConfig() const { return InputConfig; }
@@ -61,10 +66,19 @@ public:
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character|Camera")
 	TObjectPtr<USceneComponent> ViewRoot;
+	/** Eases the view after the eye and the aim. The camera hangs off it, so the arms and anything else on the camera lag with the view. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character|Camera")
+	TObjectPtr<UHadesCameraLagComponent> CameraLag;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character|Camera")
 	TObjectPtr<UCameraComponent> FirstPersonCamera;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character|Viewmodel")
 	TObjectPtr<USkeletalMeshComponent> ArmsMesh;
+	
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character|Flashlight")
+	TObjectPtr<UHadesFlashlightComponent> Flashlight;
+	/** Brightness, cone, colour, IES profile and light function go here. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character|Flashlight")
+	TObjectPtr<USpotLightComponent> FlashlightLight;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Character|Interaction")
 	TObjectPtr<UHadesInteractorComponent> InteractorComponent;

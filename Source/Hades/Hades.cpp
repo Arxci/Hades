@@ -6,5 +6,7 @@ DEFINE_LOG_CATEGORY(LogHadesInput);
 DEFINE_LOG_CATEGORY(LogHadesInteraction);
 DEFINE_LOG_CATEGORY(LogHadesUI);
 DEFINE_LOG_CATEGORY(LogHadesInventory);
+DEFINE_LOG_CATEGORY(LogHadesFlashlight);
+DEFINE_LOG_CATEGORY(LogHadesCamera);
 
 IMPLEMENT_PRIMARY_GAME_MODULE(FDefaultGameModuleImpl, Hades, "Hades");

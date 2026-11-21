@@ -3,6 +3,7 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/SpotLightComponent.h"
 #include "Camera/CameraComponent.h"
 
 #include "InputActionValue.h"
@@ -12,6 +13,8 @@
 #include "Hades/Hades.h"
 #include "Hades/HadesGameplayTags.h"
 #include "Hades/AbilitySystem/HadesAbilitySystemComponent.h"
+#include "Hades/Flashlight/HadesFlashlightComponent.h"
+#include "Hades/Camera/HadesCameraLagComponent.h"
 #include "Hades/Input/HadesInputComponent.h"
 #include "Hades/Interaction/HadesInteractorComponent.h"
 #include "Hades/Inventory/HadesInventoryComponent.h"
@@ -32,9 +35,12 @@ AHadesHeroCharacter::AHadesHeroCharacter(const FObjectInitializer& ObjectInitial
 	ViewRoot->SetupAttachment(GetCapsuleComponent());
 	ViewRoot->SetRelativeLocation(FVector(0.0f, 0.0f, BaseEyeHeight));
 
+	// Turns the view to the control rotation itself, with lag, so the camera doesn't use pawn control rotation.
+	CameraLag = CreateDefaultSubobject<UHadesCameraLagComponent>(TEXT("CameraLag"));
+	CameraLag->SetupAttachment(ViewRoot);
+
 	FirstPersonCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FirstPersonCamera"));
-	FirstPersonCamera->SetupAttachment(ViewRoot);
-	FirstPersonCamera->bUsePawnControlRotation = true;
+	FirstPersonCamera->SetupAttachment(CameraLag);
 	FirstPersonCamera->bEnableFirstPersonFieldOfView = true;
 	FirstPersonCamera->bEnableFirstPersonScale = true;
 	FirstPersonCamera->FirstPersonFieldOfView = 70.0f;
@@ -47,6 +53,25 @@ AHadesHeroCharacter::AHadesHeroCharacter(const FObjectInitializer& ObjectInitial
 	ArmsMesh->SetCollisionProfileName(FName("NoCollision"));
 	ArmsMesh->SetCastShadow(false);
 	ArmsMesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+
+	Flashlight = CreateDefaultSubobject<UHadesFlashlightComponent>(TEXT("Flashlight"));
+	Flashlight->SetupAttachment(ViewRoot);
+	// A small LED flashlight.
+	FlashlightLight = CreateDefaultSubobject<USpotLightComponent>(TEXT("FlashlightLight"));
+	FlashlightLight->SetupAttachment(Flashlight);
+	FlashlightLight->SetMobility(EComponentMobility::Movable);
+	FlashlightLight->IntensityUnits = ELightUnits::Candelas;
+	FlashlightLight->Intensity = 1000.0f;
+	FlashlightLight->AttenuationRadius = 2000.0f;
+	FlashlightLight->InnerConeAngle = 12.0f;
+	FlashlightLight->OuterConeAngle = 30.0f;
+	FlashlightLight->SourceRadius = 2.0f;
+	FlashlightLight->bUseTemperature = true;
+	FlashlightLight->Temperature = 5000.0f;
+	FlashlightLight->ContactShadowLength = 0.02f;
+	// The flashlight component draws the beam; volumetric fog's version smears as the view turns.
+	FlashlightLight->VolumetricScatteringIntensity = 0.0f;
+	
 
 	InteractorComponent = CreateDefaultSubobject<UHadesInteractorComponent>(TEXT("InteractorComponent"));
 	InventoryComponent = CreateDefaultSubobject<UHadesInventoryComponent>(TEXT("InventoryComponent"));

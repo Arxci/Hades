@@ -1,0 +1,264 @@
+﻿// Visible beam for UHadesFlashlightComponent.
+//
+// Volumetric fog blends each frame with the frames before it, so a beam that turns with the camera smears.
+// This draws the beam instead: for each pixel it finds the part of the view ray inside the light's cone,
+// stops it at the first opaque surface, and adds up the light scattered back toward the camera along it.
+// Nothing carries over between frames, so there's no lag.
+//
+// Unreal maps <Project>/Shaders to /Project, so a material includes this file as /Project/FlashlightBeam.ush.
+//
+// Material, assigned to Beam Material on the flashlight component:
+//   Blend Mode: Additive, Shading Model: Unlit, Two Sided: on
+//   Translucency > Disable Depth Test: on (the shader clips against scene depth itself)
+//   Translucency > Apply Fogging: off
+//   One Custom node into Emissive Color:
+//     Output Type: CMOT Float 3
+//     Include File Paths: /Project/FlashlightBeam.ush
+//     Code: return HadesFlashlightBeam(CamRelPos, CamRelLightPos, LightAxis, CamPos, OpaqueDepth, FragDepth, FaceSign, BeamShape, BeamColor, BeamNoise, BeamLook);
+//     Inputs:
+//       CamRelPos       Absolute World Position - Camera Position
+//       CamRelLightPos  Object Position - Camera Position
+//       LightAxis       Object Orientation
+//       CamPos          Camera Position
+//       OpaqueDepth     Scene Depth
+//       FragDepth       Pixel Depth
+//       FaceSign        TwoSidedSign
+//       BeamShape       Vector Parameter named BeamShape, RGBA pin
+//       BeamColor       Vector Parameter named BeamColor, RGB pin
+//       BeamNoise       Vector Parameter named BeamNoise, RGBA pin
+//       BeamLook        Vector Parameter named BeamLook, RGBA pin
+//   If a Vector Parameter has no RGBA pin in your engine version, Append its RGB and A pins.
+//   The component fills in the four parameters from the light and its own settings.
+//
+// After editing this file, run "recompileshaders changed" in the editor console to see the change.
+
+#pragma once
+
+#ifndef HADES_FLASHLIGHT_BEAM_USH
+#define HADES_FLASHLIGHT_BEAM_USH
+
+// Samples along the part of each ray that's inside the beam. They're spaced by angle as seen from the light,
+// which cancels the inverse-square falloff, so a handful is enough for a clean result.
+#ifndef HADES_FLASHLIGHT_BEAM_SAMPLES
+#define HADES_FLASHLIGHT_BEAM_SAMPLES 10
+#endif
+
+// Treats the light as a few centimetres wide rather than a point, so rays that pass right by the lens stay finite.
+#define HADES_FLASHLIGHT_BEAM_SOFTENING_CM 10.0
+
+// 0..1 for an integer lattice cell.
+float HadesFlashlightBeam_Hash(int3 Cell)
+{
+	uint H = (uint(Cell.x) * 73856093u) ^ (uint(Cell.y) * 19349663u) ^ (uint(Cell.z) * 83492791u);
+	H ^= H >> 16;
+	H *= 0x7feb352du;
+	H ^= H >> 15;
+	H *= 0x846ca68bu;
+	H ^= H >> 16;
+	return float(H >> 8) * (1.0 / 16777216.0);
+}
+
+// Smooth 0..1 value noise with one feature per unit.
+float HadesFlashlightBeam_ValueNoise(float3 P)
+{
+	const float3 Floor = floor(P);
+	const float3 F = P - Floor;
+	const float3 U = F * F * (3.0 - 2.0 * F);
+	const int3 C = int3(Floor);
+
+	const float N000 = HadesFlashlightBeam_Hash(C);
+	const float N100 = HadesFlashlightBeam_Hash(C + int3(1, 0, 0));
+	const float N010 = HadesFlashlightBeam_Hash(C + int3(0, 1, 0));
+	const float N110 = HadesFlashlightBeam_Hash(C + int3(1, 1, 0));
+	const float N001 = HadesFlashlightBeam_Hash(C + int3(0, 0, 1));
+	const float N101 = HadesFlashlightBeam_Hash(C + int3(1, 0, 1));
+	const float N011 = HadesFlashlightBeam_Hash(C + int3(0, 1, 1));
+	const float N111 = HadesFlashlightBeam_Hash(C + int3(1, 1, 1));
+
+	return lerp(
+		lerp(lerp(N000, N100, U.x), lerp(N010, N110, U.x), U.y),
+		lerp(lerp(N001, N101, U.x), lerp(N011, N111, U.x), U.y),
+		U.z);
+}
+
+// The stretch of a ray (from the origin, along unit Dir) inside the forward half of a cone with its tip at Apex,
+// unit Axis and half-angle cosine CosAngle. Returns false when the ray misses it. The ends can be negative or huge;
+// the caller clips them.
+bool HadesFlashlightBeam_RayCone(float3 Dir, float3 Apex, float3 Axis, float CosAngle, out float TEnter, out float TExit)
+{
+	TEnter = 0.0;
+	TExit = 0.0;
+
+	const float3 Origin = -Apex;
+	const float DirAxis = dot(Dir, Axis);
+	const float OriginAxis = dot(Origin, Axis);
+	const float CosSq = CosAngle * CosAngle;
+
+	// Points on the ray are inside the double cone where A*t^2 + B*t + C >= 0.
+	float A = DirAxis * DirAxis - CosSq;
+	const float B = 2.0 * (DirAxis * OriginAxis - dot(Dir, Origin) * CosSq);
+	const float C = OriginAxis * OriginAxis - dot(Origin, Origin) * CosSq;
+
+	// A ray parallel to the cone's surface: nudge it so the roots stay defined.
+	if (abs(A) < 1e-5)
+	{
+		A = A < 0.0 ? -1e-5 : 1e-5;
+	}
+
+	float Disc = B * B - 4.0 * A * C;
+	if (Disc < 0.0)
+	{
+		if (A < 0.0)
+		{
+			return false;
+		}
+		// Grazes the tip.
+		Disc = 0.0;
+	}
+
+	const float SqrtDisc = sqrt(Disc);
+	const float Q = -0.5 * (B + (B >= 0.0 ? SqrtDisc : -SqrtDisc));
+	const float Root0 = Q / A;
+	const float Root1 = abs(Q) > 1e-20 ? C / Q : Root0;
+	const float Near = min(Root0, Root1);
+	const float Far = max(Root0, Root1);
+
+	if (A > 0.0)
+	{
+		// The ray points within the cone's angle: it's in one half of the double cone before Near and the other after Far.
+		if (DirAxis > 0.0)
+		{
+			TEnter = Far;
+			TExit = 1e20;
+		}
+		else
+		{
+			TEnter = -1e20;
+			TExit = Near;
+		}
+		return true;
+	}
+
+	// The ray points outside the cone's angle: it's inside only between the roots, which may be the backward half.
+	TEnter = Near;
+	TExit = Far;
+	return OriginAxis + 0.5 * (Near + Far) * DirAxis >= 0.0;
+}
+
+// Light scattered toward the camera along this pixel's ray, in the same units as lit surfaces.
+//   BeamShape: x attenuation radius (cm), y cos(outer cone), z 1 / (cos(inner cone) - cos(outer cone)), w fade-in distance from the lens (cm)
+//   BeamColor: light colour * brightness (Unreal's internal units) * scattering per cm * artistic scale
+//   BeamNoise: xyz how far the haze has drifted (cm), w haze features per cm
+//   BeamLook:  x anisotropy (-0.9..0.9, positive scatters forward), y haze noise amount (0..1)
+float3 HadesFlashlightBeam(
+	float3 CamRelPos,
+	float3 CamRelLightPos,
+	float3 LightAxis,
+	float3 CamPos,
+	float OpaqueDepth,
+	float FragDepth,
+	float FaceSign,
+	float4 BeamShape,
+	float3 BeamColor,
+	float4 BeamNoise,
+	float4 BeamLook)
+{
+	// The proxy mesh is two sided. Only its far faces shade, so each covered pixel is counted once,
+	// whether the camera is inside the mesh or not.
+	if (FaceSign > 0.0)
+	{
+		return 0;
+	}
+
+	const float RayLength = length(CamRelPos);
+	if (RayLength < 1e-3 || FragDepth < 1e-3)
+	{
+		return 0;
+	}
+	const float3 Dir = CamRelPos / RayLength;
+
+	// Scene Depth and Pixel Depth are both measured along the view axis, so their ratio scales distance along the ray.
+	const float SceneDistance = RayLength * max(OpaqueDepth, 0.0) / FragDepth;
+
+	const float Radius = max(BeamShape.x, 1.0);
+	const float CosOuter = BeamShape.y;
+	const float InvCosConeDifference = BeamShape.z;
+	const float FadeInDistance = max(BeamShape.w, 1.0);
+	const float3 Axis = LightAxis * rsqrt(max(dot(LightAxis, LightAxis), 1e-8));
+
+	// Inside the attenuation radius.
+	const float ClosestT = dot(CamRelLightPos, Dir);
+	const float LineDistanceSq = max(dot(CamRelLightPos, CamRelLightPos) - ClosestT * ClosestT, 0.0);
+	const float SphereDisc = Radius * Radius - LineDistanceSq;
+	if (SphereDisc <= 0.0)
+	{
+		return 0;
+	}
+	const float SphereHalfLength = sqrt(SphereDisc);
+
+	// Inside the cone.
+	float ConeEnter;
+	float ConeExit;
+	if (!HadesFlashlightBeam_RayCone(Dir, CamRelLightPos, Axis, CosOuter, ConeEnter, ConeExit))
+	{
+		return 0;
+	}
+
+	const float T0 = max(max(ClosestT - SphereHalfLength, ConeEnter), 0.0);
+	const float T1 = min(min(ClosestT + SphereHalfLength, ConeExit), SceneDistance);
+	if (T1 <= T0)
+	{
+		return 0;
+	}
+
+	// Sample evenly in the angle the ray sweeps as seen from the light. With t = ClosestT + H * tan(Theta),
+	// dt / (distance^2 + softening^2) becomes dTheta / H, so the falloff is exact and every sample counts equally.
+	const float H = sqrt(LineDistanceSq + HADES_FLASHLIGHT_BEAM_SOFTENING_CM * HADES_FLASHLIGHT_BEAM_SOFTENING_CM);
+	const float Theta0 = atan((T0 - ClosestT) / H);
+	const float Theta1 = atan((T1 - ClosestT) / H);
+	const float ThetaStep = (Theta1 - Theta0) / HADES_FLASHLIGHT_BEAM_SAMPLES;
+
+	const float InvRadiusSq = 1.0 / (Radius * Radius);
+	const float G = clamp(BeamLook.x, -0.95, 0.95);
+	const float PhaseScale = (1.0 - G * G) * 0.0795774715; // (1 - g^2) / (4 * pi)
+	const float NoiseAmount = saturate(BeamLook.y);
+	const bool bNoise = NoiseAmount > 0.0;
+
+	float Sum = 0.0;
+
+	[loop]
+	for (int SampleIndex = 0; SampleIndex < HADES_FLASHLIGHT_BEAM_SAMPLES; ++SampleIndex)
+	{
+		const float Theta = Theta0 + (float(SampleIndex) + 0.5) * ThetaStep;
+		const float T = ClosestT + H * tan(Theta);
+		const float3 FromLight = T * Dir - CamRelLightPos;
+		const float DistanceSq = dot(FromLight, FromLight);
+		const float Distance = sqrt(DistanceSq);
+		const float3 LightToSample = FromLight / max(Distance, 1e-3);
+
+		// The same cone and radius falloff Unreal uses for the light itself.
+		const float Cone = saturate((dot(LightToSample, Axis) - CosOuter) * InvCosConeDifference);
+		const float Range = saturate(1.0 - DistanceSq * DistanceSq * InvRadiusSq * InvRadiusSq);
+		float Weight = Cone * Cone * Range * Range;
+
+		// Fade in away from the lens, so the beam doesn't wash over the screen or start in front of the flashlight model.
+		Weight *= smoothstep(0.0, FadeInDistance, Distance);
+
+		// Henyey-Greenstein phase: how much light turns toward the camera here.
+		const float PhaseDenominator = max(1.0 + G * G + 2.0 * G * dot(LightToSample, Dir), 1e-4);
+		Weight *= PhaseScale / (PhaseDenominator * sqrt(PhaseDenominator));
+
+		// Uneven haze, fixed in the world and drifting slowly.
+		if (bNoise)
+		{
+			const float Noise = HadesFlashlightBeam_ValueNoise((CamPos + T * Dir - BeamNoise.xyz) * BeamNoise.w);
+			Weight *= max(1.0 + NoiseAmount * (2.0 * Noise - 1.0), 0.0);
+		}
+
+		Sum += Weight;
+	}
+
+	return BeamColor * (Sum * ThetaStep / H);
+}
+
+#endif // HADES_FLASHLIGHT_BEAM_USH
