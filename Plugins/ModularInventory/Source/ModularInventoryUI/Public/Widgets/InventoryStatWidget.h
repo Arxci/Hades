@@ -31,7 +31,7 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Stat", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> LabelText;
 
-	/** The value, or the value out of its maximum in Max Format. */
+	/** The value in the stat's Format, or else the value, or the value out of its maximum in Max Format. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Stat", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> ValueText;
 
@@ -43,7 +43,7 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Stat", meta = (BindWidgetOptional))
 	TObjectPtr<UProgressBar> Bar;
 
-	/** Value Text for stats with a maximum. {Value} and {Max} are the numbers. */
+	/** Value Text for stats with a maximum and no Format of their own. {Value} and {Max} are the numbers. */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Stat")
 	FText MaxFormat = NSLOCTEXT("InventoryStatWidget", "MaxFormat", "{Value} / {Max}");
 

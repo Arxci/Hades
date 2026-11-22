@@ -15,6 +15,7 @@
 #include "Details/InventoryLootTableCustomization.h"
 #include "InventoryEditorMenus.h"
 #include "Loot/InventoryLootTable.h"
+#include "Markdown/SMarkdownReviewer.h"
 #include "ModularInventoryEditor.h"
 
 #define LOCTEXT_NAMESPACE "ModularInventoryEditor"
@@ -43,6 +44,7 @@ public:
 		MessageLog.RegisterLogListing(InventoryEditor::MessageLogName, LOCTEXT("MessageLogLabel", "Modular Inventory"));
 
 		UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FModularInventoryEditorModule::RegisterMenus));
+		SMarkdownReviewer::RegisterTab();
 
 		InventoryAssetManagerSetup::CheckOnceLoaded();
 		InventoryAssetRenaming::Register();
@@ -53,6 +55,7 @@ public:
 		InventoryAssetRenaming::Unregister();
 		InventoryAssetManagerSetup::StopChecking();
 
+		SMarkdownReviewer::UnregisterTab();
 		UToolMenus::UnRegisterStartupCallback(this);
 		UToolMenus::UnregisterOwner(this);
 

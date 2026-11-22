@@ -198,10 +198,42 @@ public:
 
 	/**
 	 * Another layout of the same type, such as a bigger grid for an upgraded backpack. Items keep their places; fails if one no longer fits.
-	 * Cells unlocked with Set Usable Cell Count go back to following the new layout's Usable Cells.
+	 * A capacity set with Set Capacity goes back to following the new layout.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
 	bool SetContainerLayout(FInventoryContainerHandle Container, const UInventoryContainerLayout* Layout, EInventoryError& OutError);
+
+	/**
+	 * How much the container can hold now: usable cells for a grid, usable slots for slots, the most items for a list, or -1 for a list
+	 * without a limit. Set Capacity and Add Capacity change it for one container; otherwise it's its layout's.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Containers")
+	int32 GetCapacity(FInventoryContainerHandle Container) const { return Registry.GetCapacity(Container); }
+
+	/**
+	 * Whether the placement is in the part of the container that can hold items now: a usable cell of a grid, a usable slot, or a position
+	 * in a list below its capacity. Locked cells and slots are the rest.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Containers")
+	bool IsPlacementUsable(FInventoryContainerHandle Container, const FInventoryPlacement& Placement) const { return Registry.IsPlacementUsable(Container, Placement); }
+
+	/**
+	 * Unlocks or locks part of a container, for this container only, overriding its layout: storage drawn at its full size that unlocks as
+	 * upgrades are found, slots earned during play, a satchel that holds more. Grids: Count cells can hold items, counted row by row from
+	 * the top left. Slots: the first Count slots can. Lists: at most Count items. A negative Count follows the layout again. Fails, changing
+	 * nothing, while an item sits where it would lock, or a list holds more than Count.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
+	bool SetCapacity(FInventoryContainerHandle Container, int32 Count, EInventoryError& OutError);
+
+	/**
+	 * Unlocks Count more of what the container can hold, such as 2 cells for a storage upgrade, one slot for a newly earned ring, or 5 more
+	 * items for a bigger satchel, or locks them again with a negative Count. Fails, changing nothing, when there's nothing left to unlock or
+	 * lock, for a list without a limit, or while an item sits where it would lock. So an upgrade can be refused once the container is at its
+	 * biggest.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
+	bool AddCapacity(FInventoryContainerHandle Container, int32 Count, EInventoryError& OutError);
 
 	/** Whether a grid cell can hold items now: inside the grid and not locked. */
 	UFUNCTION(BlueprintPure, Category = "Inventory|Containers")
@@ -211,18 +243,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory|Containers")
 	int32 GetUsableCellCount(FInventoryContainerHandle Container) const { return Registry.GetUsableCellCount(Container); }
 
-	/**
-	 * Unlocks or locks a grid's cells, row by row from the top left, so Count of them can hold items, such as pockets drawn at their full
-	 * size that unlock as pouches are found. It overrides the layout's Usable Cells for this container only. 0 locks every cell, and a
-	 * negative Count follows the layout's Usable Cells again. Fails, changing nothing, while an item sits on a cell it would lock.
-	 */
+	/** Set Capacity for grids only: Count cells can hold items, counted row by row from the top left. Anything but a grid is Rejected. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
 	bool SetUsableCellCount(FInventoryContainerHandle Container, int32 Count, EInventoryError& OutError);
 
-	/**
-	 * Unlocks Count more of a grid's cells, row by row, such as 2 for a pouch, or locks them again with a negative Count. Fails, changing
-	 * nothing, when every cell is already unlocked, or while an item sits on a cell it would lock.
-	 */
+	/** Add Capacity for grids only: unlocks Count more cells, row by row, or locks them with a negative Count. Anything but a grid is Rejected. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
 	bool AddUsableCells(FInventoryContainerHandle Container, int32 Count, EInventoryError& OutError);
 

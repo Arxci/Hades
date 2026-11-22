@@ -58,6 +58,15 @@ public:
 	/** How many of the grid's cells can hold items. */
 	int32 GetUsableCellCount() const;
 
+	/** How many of the slots can hold items, counted from the first. */
+	int32 GetUsableSlotCount() const;
+
+	/**
+	 * What each container built from it can hold to start with: usable cells for a grid, usable slots for slots, and Capacity for a list,
+	 * INDEX_NONE for a list without a limit. The Inventory Subsystem's Set Capacity changes it for one container at runtime.
+	 */
+	int32 GetStartingCapacity() const;
+
 #if WITH_EDITOR
 	virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;
 #endif
@@ -71,9 +80,9 @@ public:
 
 	/**
 	 * How many cells can hold items, counted row by row from the top left. The rest are locked: nothing can go in them, and grid
-	 * widgets draw them disabled. 0 makes every cell usable. For pockets that grow a few cells at a time: a 4 x 3 grid with 10 usable
-	 * cells has its last two cells locked. This is where each container starts: the Inventory Subsystem's Set Usable Cell Count and Add
-	 * Usable Cells unlock more of one container's cells at runtime, so one layout with the biggest grid serves every size of pockets.
+	 * widgets draw them disabled. 0 makes every cell usable. For storage that grows a few cells at a time: a 4 x 3 grid with 10 usable
+	 * cells has its last two cells locked. This is where each container starts: the Inventory Subsystem's Set Capacity and Add Capacity
+	 * unlock more of one container's cells at runtime, so one layout at the biggest size serves every stage of an upgrade path.
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Layout", meta = (ClampMin = "0", EditCondition = "Type == EInventoryContainerType::Grid", EditConditionHides))
 	int32 UsableCells = 0;
@@ -81,7 +90,18 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Layout", meta = (TitleProperty = "Tag", EditCondition = "Type == EInventoryContainerType::Slots", EditConditionHides))
 	TArray<FInventorySlotDefinition> Slots;
 
-	/** 0 for no limit. */
+	/**
+	 * How many slots can hold items, counted from the first. The rest are locked: nothing can go in them, and slot widgets draw them
+	 * disabled. 0 makes every slot usable. For slots earned during play, such as a second ring or a fourth quick slot. This is where each
+	 * container starts: the Inventory Subsystem's Set Capacity and Add Capacity unlock more of one container's slots at runtime.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Layout", meta = (ClampMin = "0", EditCondition = "Type == EInventoryContainerType::Slots", EditConditionHides))
+	int32 UsableSlots = 0;
+
+	/**
+	 * The most items it holds. 0 for no limit. This is where each container starts: the Inventory Subsystem's Set Capacity and Add Capacity
+	 * change it for one container at runtime, such as a satchel that holds more once upgraded.
+	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Layout", meta = (ClampMin = "0", EditCondition = "Type == EInventoryContainerType::List", EditConditionHides))
 	int32 Capacity = 0;
 
@@ -96,7 +116,7 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Rules")
 	FInventoryItemQuery Filter;
 
-	/** The inventory UI shows these items but can't pick them up or put anything here. Code still can, as with key items that come and go by themselves. */
+	/** The inventory UI shows these items but can't pick them up or put anything here. Code still can, as with quest items that come and go by themselves. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Rules", meta = (DisplayName = "Read Only In UI"))
 	bool bReadOnlyInUI = false;
 

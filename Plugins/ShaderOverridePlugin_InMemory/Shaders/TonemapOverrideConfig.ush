@@ -1,0 +1,7 @@
+﻿// GENERATED FILE - edit via Project Settings > Plugins > Tonemap Override.
+// Manual edits are overwritten when those settings change or the editor starts.
+
+#define CUSTOM_TONEMAP_MODE 1
+#define AGX_LOOK 2
+#define SPLIT_TONE_PRESET 0
+#define HUE_PRESERVE_PERCENT 0

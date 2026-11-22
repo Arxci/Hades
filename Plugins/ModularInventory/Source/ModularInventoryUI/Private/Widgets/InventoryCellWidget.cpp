@@ -45,6 +45,16 @@ void UInventoryCellWidget::SetLocked(bool bInLocked)
 	{
 		bLocked = bInLocked;
 		SetIsEnabled(!bLocked);
+		RefreshLockedMarker();
+		OnCellLockedChanged(bLocked);
+	}
+}
+
+void UInventoryCellWidget::RefreshLockedMarker()
+{
+	if (LockedMarker)
+	{
+		LockedMarker->SetVisibility(bLocked ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
 }
 
@@ -67,6 +77,9 @@ void UInventoryCellWidget::NativeOnInitialized()
 	OnUnhovered().AddUObject(this, &ThisClass::StopAiming);
 	OnClicked().AddUObject(this, &ThisClass::HandleClicked);
 	IdleStyle = GetStyle() ? GetStyle()->GetClass() : nullptr;
+
+	// Hidden until the cell is locked, however the designer left it.
+	RefreshLockedMarker();
 }
 
 void UInventoryCellWidget::NativeConstruct()

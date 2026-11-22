@@ -70,7 +70,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	void RotateHeld();
 
-	/** Whether the held item can turn, and could still fit the grid it's over turned: the targeted one, or else the one it's in. */
+	/**
+	 * Whether the held item can turn, and could still fit the grid it's over turned: the targeted one, or else the one it's in, counting
+	 * only its rows with usable cells.
+	 */
 	UFUNCTION(BlueprintPure, Category = "Inventory UI")
 	bool CanRotateHeld() const;
 
@@ -156,13 +159,16 @@ public:
 	EInventoryDropAction GetTargetAction() const { return TargetAction; }
 
 	/**
-	 * Why the held item can't go where it's aimed, such as Occupied for another item in the way, Out Of Bounds for locked cells, or
-	 * Rejected for a container that won't take it. None unless Get Target Action is Invalid.
+	 * Why the held item can't go where it's aimed, such as Occupied for another item in the way, Out Of Bounds for locked cells or slots,
+	 * or Rejected for a container that won't take it. None unless Get Target Action is Invalid.
 	 */
 	UFUNCTION(BlueprintPure, Category = "Inventory UI")
 	EInventoryError GetTargetError() const { return TargetError; }
 
-	/** Where the held item would land at the target. In a grid: exactly on an item of its size there, or moved in from the edge so it fits. */
+	/**
+	 * Where the held item would land at the target. In a grid: exactly on an item of its size there, or moved in from the edge so it fits,
+	 * rows that are wholly locked counting as past the edge.
+	 */
 	UFUNCTION(BlueprintPure, Category = "Inventory UI")
 	FInventoryPlacement GetLandingPlacement() const { return FitInGrid(TargetContainer, TargetPlacement); }
 

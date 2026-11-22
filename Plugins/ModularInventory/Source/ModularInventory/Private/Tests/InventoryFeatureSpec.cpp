@@ -239,6 +239,64 @@ void FInventoryFeatureSpec::Define()
 			TestTrue(*DescribeErrors(TEXT("Unlocking cells in slots"), Error, EInventoryError::Rejected), Error == EInventoryError::Rejected);
 		});
 
+		It("lock slots past Usable Slots, and unlock them at runtime", [this]()
+		{
+			// Two plain slots, only the first usable to start with.
+			UInventoryContainerLayout* Belt = Data->Make<UInventoryContainerLayout>();
+			Belt->Type = EInventoryContainerType::Slots;
+			for (const FGameplayTag& SlotTag : { FGameplayTag(Slot_MainHand), FGameplayTag(Slot_OffHand) })
+			{
+				Belt->Slots.AddDefaulted_GetRef().Tag = SlotTag;
+			}
+			Belt->UsableSlots = 1;
+			const FInventoryContainerHandle Slots = Registry->CreateContainer(Belt, FGameplayTag(), nullptr);
+			TestEqual(TEXT("Usable slots from the layout"), Registry->GetCapacity(Slots), 1);
+			TestFalse(TEXT("Second slot locked"), Registry->IsPlacementUsable(Slots, FInventoryPlacement::AtIndex(1)));
+
+			TestTrue(TEXT("First stone in the first slot"), AddTestItem(*Registry, Data->Stone, Slots).IsSet());
+			TestFalse(TEXT("No room for a second stone"), AddTestItem(*Registry, Data->Stone, Slots).IsSet());
+			const FInventoryItemHandle Loose = AddTestItem(*Registry, Data->Stone, Grid);
+			const EInventoryError IntoLocked = Registry->CanPlace(Loose, Slots, FInventoryPlacement::AtIndex(1));
+			TestTrue(*DescribeErrors(TEXT("Stone into a locked slot"), IntoLocked, EInventoryError::OutOfBounds), IntoLocked == EInventoryError::OutOfBounds);
+
+			TestTrue(TEXT("Second slot unlocked"), Registry->SetCapacity(Slots, 2) == EInventoryError::None);
+			TestTrue(TEXT("Second stone in the second slot"), Registry->MoveItem(Loose, Slots, FInventoryPlacement::AtIndex(1)) == EInventoryError::None);
+
+			const EInventoryError Relock = Registry->SetCapacity(Slots, 1);
+			TestTrue(*DescribeErrors(TEXT("Locking the second stone's slot"), Relock, EInventoryError::OutOfBounds), Relock == EInventoryError::OutOfBounds);
+			TestEqual(TEXT("Still two usable slots"), Registry->GetCapacity(Slots), 2);
+		});
+
+		It("grow and shrink a list's capacity at runtime", [this]()
+		{
+			const FInventoryContainerHandle List = Registry->CreateContainer(Data->SmallList, FGameplayTag(), nullptr);
+			TestEqual(TEXT("The layout's capacity"), Registry->GetCapacity(List), 2);
+			AddTestItem(*Registry, Data->Stone, List);
+			AddTestItem(*Registry, Data->Stone, List);
+			TestFalse(TEXT("No room for a third stone"), AddTestItem(*Registry, Data->Stone, List).IsSet());
+
+			TestTrue(TEXT("Grown"), Registry->SetCapacity(List, 3) == EInventoryError::None);
+			const FInventoryItemHandle Third = AddTestItem(*Registry, Data->Stone, List);
+			TestTrue(TEXT("Third stone added"), Third.IsSet());
+
+			const EInventoryError Shrink = Registry->SetCapacity(List, 2);
+			TestTrue(*DescribeErrors(TEXT("Shrinking under three stones"), Shrink, EInventoryError::NoSpace), Shrink == EInventoryError::NoSpace);
+			TestEqual(TEXT("Still three"), Registry->GetCapacity(List), 3);
+
+			Registry->RemoveItem(Third);
+			TestTrue(TEXT("Back to the layout's"), Registry->SetCapacity(List, -1) == EInventoryError::None);
+			TestEqual(TEXT("The layout's capacity again"), Registry->GetCapacity(List), 2);
+		});
+
+		It("report a list without a limit", [this]()
+		{
+			UInventoryContainerLayout* Open = Data->Make<UInventoryContainerLayout>();
+			Open->Type = EInventoryContainerType::List;
+			const FInventoryContainerHandle List = Registry->CreateContainer(Open, FGameplayTag(), nullptr);
+			TestEqual(TEXT("No limit"), Registry->GetCapacity(List), static_cast<int32>(INDEX_NONE));
+			TestTrue(TEXT("Any position usable"), Registry->IsPlacementUsable(List, FInventoryPlacement::AtIndex(50)));
+		});
+
 		It("sort biggest first and merge partial stacks", [this]()
 		{
 			const FInventoryItemHandle Knife = AddTestItem(*Registry, Data->Knife, Grid, 1, FInventoryPlacement::AtCell(FIntPoint(3, 2)));

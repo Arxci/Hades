@@ -35,6 +35,17 @@ namespace
 	{
 		return (Record.Definition->GetSize(Record.Placement.bRotated) - FIntPoint(1, 1)) / 2;
 	}
+
+	/**
+	 * The part of a grid anything can go in: all its columns, and its rows down to the last with a usable cell. Cells unlock row by row,
+	 * so the rows below that are wholly locked, and held items keep out of them as they keep inside the grid's edges.
+	 */
+	FIntPoint GetUsableGridSize(const FInventoryRegistry& Registry, FInventoryContainerHandle Container, const UInventoryContainerLayout& Layout)
+	{
+		const int32 UsableCells = FMath::Max(0, Registry.GetUsableCellCount(Container));
+		const int32 UsableRows = Layout.GridSize.X > 0 ? FMath::DivideAndRoundUp(UsableCells, Layout.GridSize.X) : 0;
+		return FIntPoint(Layout.GridSize.X, FMath::Min(Layout.GridSize.Y, UsableRows));
+	}
 }
 
 UInventoryUISubsystem* UInventoryUISubsystem::Get(const ULocalPlayer* LocalPlayer)
@@ -155,11 +166,17 @@ bool UInventoryUISubsystem::CanRotateHeld() const
 		return false;
 	}
 
-	// Never into a shape the grid it's over can't hold at all, such as a long gun stood upright in short pockets.
-	const FInventoryContainerRecord* Grid = Registry->FindContainer(TargetContainer.IsSet() ? TargetContainer : Record->Container);
+	// Never into a shape the grid it's over can't hold at all, such as a long item stood upright in a short grid, counting only the rows
+	// with usable cells.
+	const FInventoryContainerHandle GridHandle = TargetContainer.IsSet() ? TargetContainer : Record->Container;
+	const FInventoryContainerRecord* Grid = Registry->FindContainer(GridHandle);
 	const FIntPoint TurnedSize = Record->Definition->GetSize(!bHeldRotated);
-	const bool bOverGrid = Grid && Grid->Layout->Type == EInventoryContainerType::Grid;
-	return !bOverGrid || (TurnedSize.X <= Grid->Layout->GridSize.X && TurnedSize.Y <= Grid->Layout->GridSize.Y);
+	if (!Grid || Grid->Layout->Type != EInventoryContainerType::Grid)
+	{
+		return true;
+	}
+	const FIntPoint UsableSize = GetUsableGridSize(*Registry, GridHandle, *Grid->Layout);
+	return TurnedSize.X <= UsableSize.X && TurnedSize.Y <= UsableSize.Y;
 }
 
 void UInventoryUISubsystem::SplitHeld()
@@ -430,9 +447,9 @@ FInventoryPlacement UInventoryUISubsystem::FitInGrid(FInventoryContainerHandle C
 		return Placement;
 	}
 
-	// The cell it's held by goes on the cell aimed at, moved in from the edges so it fits.
+	// The cell it's held by goes on the cell aimed at, moved in from the edges so it fits, rows wholly locked counting as past the edge.
 	const FIntPoint HeldSize = GetHeldSize();
-	const FIntPoint LastCell = (Record->Layout->GridSize - HeldSize).ComponentMax(FIntPoint::ZeroValue);
+	const FIntPoint LastCell = (GetUsableGridSize(*Registry, Container, *Record->Layout) - HeldSize).ComponentMax(FIntPoint::ZeroValue);
 	FInventoryPlacement Fitted = Placement;
 	Fitted.Cell = (Placement.Cell - HeldGrabCell).ComponentMax(FIntPoint::ZeroValue).ComponentMin(LastCell);
 

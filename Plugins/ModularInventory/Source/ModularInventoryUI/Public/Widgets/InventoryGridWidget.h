@@ -28,9 +28,9 @@ struct FInventoryChangeSet;
  * around it, so the held item moves on as the cursor crosses the middle of a gap.
  * With the Inventory UI Subsystem's Snap Held Item on, it also draws the held item on those cells, using Item Class.
  * The highlighted item is drawn above the others, so a glow around it can spill over its neighbours.
- * Locked cells, past the container's usable cells, are disabled: they draw with the cell style's Disabled brush and take no focus. They
- * unlock as the container's usable cells grow, by Set Usable Cell Count or a layout with more Usable Cells. With Hide Locked Rows, rows
- * that are wholly locked aren't drawn at all, so the grid grows a row at a time.
+ * Locked cells, past the container's usable cells, are disabled: they draw with the cell style's Disabled brush and the cell's Locked
+ * Marker, and take no focus. They unlock as the container's capacity grows, by Set Capacity or a layout with more Usable Cells. With Hide
+ * Locked Rows, rows that are wholly locked aren't drawn at all, so the grid grows a row at a time.
  */
 UCLASS(Abstract)
 class MODULARINVENTORYUI_API UInventoryGridWidget : public UUserWidget
@@ -106,9 +106,9 @@ protected:
 	float PreviewGlideSpeed = 0.0f;
 
 	/**
-	 * Rows with no usable cell aren't drawn, so the grid grows a row at a time as its cells unlock, as pockets do in RE2. A row that's only
-	 * partly usable still draws its locked cells, disabled. Off, every cell of the grid is drawn, the locked ones disabled, so the player
-	 * sees all the room there is to unlock.
+	 * Rows with no usable cell aren't drawn, so the grid grows a row at a time as its cells unlock, showing only room the player has or is
+	 * partway to. A row that's only partly usable still draws its locked cells, disabled. Off, every cell of the grid is drawn, the locked
+	 * ones disabled, so the player sees all the room there is to unlock.
 	 */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Grid")
 	bool bHideLockedRows = false;

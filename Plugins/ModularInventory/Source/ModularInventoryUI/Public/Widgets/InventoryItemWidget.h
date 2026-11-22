@@ -26,7 +26,8 @@ class UTextBlock;
  * A left click and a right-click on it do what the Inventory UI Subsystem's style says, such as pick it up or open its item menu, or put the
  * held item down on it. A click is a press and a release on the item, so the release that ends a drag never counts as one.
  * In a grid, an item picked up with the mouse is held by the cell under the cursor, which then follows the cursor from cell to cell.
- * While hovered, focused or selected it's highlighted: Highlight shows and On Highlight Changed fires.
+ * While hovered, focused or selected it's highlighted, as Highlight When Hovered and Highlight When Selected say: Highlight shows and On
+ * Highlight Changed fires.
  */
 UCLASS(Abstract)
 class MODULARINVENTORYUI_API UInventoryItemWidget : public UUserWidget
@@ -106,7 +107,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory|Item")
 	bool IsSelected() const { return bSelected; }
 
-	/** Hovered, focused or selected. Never on the stand-in for a held item. */
+	/** Hovered, focused or selected, as Highlight When Hovered and Highlight When Selected say. Never on the stand-in for a held item. */
 	UFUNCTION(BlueprintPure, Category = "Inventory|Item")
 	bool IsHighlighted() const { return bHighlighted; }
 
@@ -139,6 +140,25 @@ protected:
 
 	/** After On Held Changed, On Hovered Changed, On Selected Changed or On Highlight Changed, for C++ subclasses. */
 	virtual void NativeOnInteractionChanged() {}
+
+	/** Before On Value Display Changed, for C++ subclasses. */
+	virtual void NativeOnValueDisplayChanged(int32 Index, const FInventoryValueDisplay& Display, bool bShown, float Value, float Max, float Fraction) {}
+
+	/**
+	 * Works out a Value Display whose Source is Custom: its number, and what's full, Max 0 for none. Return false to hide it. Display's Tag
+	 * says which number, so one function serves several, such as spare ammo for a weapon from the rest of the inventory, or a value from a
+	 * fragment. The item is Get Item, or only Get Definition on a designer preview. False by default.
+	 */
+	UFUNCTION(BlueprintNativeEvent, Category = "Inventory|Item")
+	bool ResolveCustomValue(const FInventoryValueDisplay& Display, float& OutValue, float& OutMax) const;
+
+	/**
+	 * A Value Display started or stopped showing, or its number or what's full changed, including as the widget first shows an item. For
+	 * what its named widgets can't do, such as a radial meter's material, or a pulse when ammo runs low. Index is its place in Value
+	 * Displays, and Fraction how full it is, from 0 to 1, or 0 without a maximum.
+	 */
+	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Item")
+	void OnValueDisplayChanged(int32 Index, const FInventoryValueDisplay& Display, bool bShown, float Value, float Max, float Fraction);
 
 	/** The item or its state changed. Update what the base doesn't, like a mark for an item that's in hand. */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Item")
@@ -174,7 +194,10 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Item")
 	void OnSelectedChanged(bool bIsSelected);
 
-	/** It became, or stopped being, hovered, focused or selected. For whatever Highlight alone can't show, such as an animation. */
+	/**
+	 * It became, or stopped being, highlighted: hovered, focused or selected, as Highlight When Hovered and Highlight When Selected say. For
+	 * whatever Highlight alone can't show, such as an animation.
+	 */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Item")
 	void OnHighlightChanged(bool bIsHighlighted);
 
@@ -190,11 +213,21 @@ protected:
 	TObjectPtr<UWidget> Background;
 
 	/**
-	 * Shown while the item is highlighted, and hidden otherwise. Put whatever your game shows for that inside it, such as a lit tile, an
-	 * outline, or a glow given a negative padding so it reaches past the item.
+	 * Shown while the item is highlighted, the item the player points at or acts on, and hidden otherwise. It's only a switch, and how it
+	 * looks is up to you: put whatever your game shows for that inside it, such as a lit tile, an outline, a cursor frame, or a glow given a
+	 * negative padding so it reaches past the item, and animate it from On Highlight Changed. To show hover and selection differently, turn
+	 * one of Highlight When Hovered and Highlight When Selected off and use On Hovered Changed or On Selected Changed for it.
 	 */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> Highlight;
+
+	/** Hovered by the mouse, or focused with a gamepad, highlights the item. */
+	UPROPERTY(EditAnywhere, Category = "Inventory|Item")
+	bool bHighlightWhenHovered = true;
+
+	/** Being the selected item highlights it, such as while its item menu is open or it's chosen to use on another. */
+	UPROPERTY(EditAnywhere, Category = "Inventory|Item")
+	bool bHighlightWhenSelected = true;
 
 	/** The item's name, such as for an item widget laid out as a row of a list: icon, name, then count. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
@@ -205,12 +238,13 @@ protected:
 	TObjectPtr<UTextBlock> CountText;
 
 	/**
-	 * Numbers shown on the item, such as a gun's rounds, a stack's count or a tool's durability, each in Text Blocks and a Progress Bar you
-	 * name in the designer, so any number can be added without code. For a corner number that's a gun's rounds or else a stack's count,
-	 * add a Tag Value entry and then a Stack Count entry, both naming the same Text Block: the first that applies to the item shows there.
-	 * A named widget none applies to is collapsed. Widget names that don't exist are reported when the widget compiles.
+	 * Numbers shown on the item, such as ammo, charges, durability or a stack's count, each in Text Blocks and a Progress Bar you name in
+	 * the designer, so any number can be added without code. Each shows only for items it applies to. For one spot that shows whichever
+	 * number an item has, give the displays the same Group: the first in the list that applies shows, each in its own widgets if you like,
+	 * such as ammo colored by how full the weapon is, else a stack's count. A named widget none shows in is collapsed. Widget names that
+	 * don't exist are reported when the widget compiles.
 	 */
-	UPROPERTY(EditAnywhere, Category = "Inventory|Item|Values", meta = (TitleProperty = "{Source} {Tag} in {TextWidget}"))
+	UPROPERTY(EditAnywhere, Category = "Inventory|Item|Values", meta = (TitleProperty = "{Group} {Source} {Tag} in {TextWidget}"))
 	TArray<FInventoryValueDisplay> ValueDisplays;
 
 	/** Collapses Count Text for a stack of one too, so only real stacks show a number. */
@@ -266,6 +300,9 @@ private:
 	void FindValueDisplayWidgets();
 	void RefreshValueDisplays();
 
+	/** Fires On Value Display Changed for a display, if what it shows changed since it last did for the item shown. */
+	void ReportValueDisplay(int32 Index, bool bShown, float Value, float Max);
+
 	/** The display's number and what's full, for the item or the preview shown. False when it doesn't apply to it, or is hidden as it is. */
 	bool ResolveValueDisplay(const FInventoryValueDisplay& Display, float& OutValue, float& OutMax) const;
 
@@ -314,7 +351,7 @@ private:
 	TWeakObjectPtr<const UInventoryItemDefinition> ShownDefinition;
 	TSharedPtr<FStreamableHandle> IconHandle;
 
-	/** The widgets each of Value Displays names, found once, with their designer colors to go back to. */
+	/** The widgets each of Value Displays names, found once, with their designer colors to go back to, and what it last reported. */
 	struct FValueDisplayWidgets
 	{
 		TWeakObjectPtr<UTextBlock> Text;
@@ -322,8 +359,21 @@ private:
 		TWeakObjectPtr<UWidget> Frame;
 		FSlateColor DefaultTextColor;
 		FLinearColor DefaultMeterColor = FLinearColor::White;
+
+		/** What On Value Display Changed last said for the item shown, so it only fires again once that changes. */
+		bool bReported = false;
+		bool bReportedShown = false;
+		float ReportedValue = 0.0f;
+		float ReportedMax = 0.0f;
 	};
 	TArray<FValueDisplayWidgets> ValueDisplayWidgets;
+
+	/** What the reports were about. Pooled widgets show other items, which report afresh. */
+	FInventoryItemHandle ReportedItem;
+	TWeakObjectPtr<const UInventoryItemDefinition> ReportedDefinition;
+
+	/** On Value Display Changed is implemented in Blueprint, so it's worth calling. */
+	bool bReportsValueDisplays = false;
 
 	/** A Value Display names Count Text, so the displays decide what it shows. */
 	bool bValueDisplaysShowCount = false;

@@ -14,8 +14,18 @@ void UInventoryStatWidget::SetStat(const FInventoryStatDisplay& Display, float V
 	}
 	if (ValueText)
 	{
+		// The stat's own Format, such as {Value}%, or else this widget's: the value, or Max Format with a maximum.
 		const FText ValueAsText = FText::AsNumber(Value, &NumberFormat);
-		ValueText->SetText(Max > 0.0f ? FText::FormatNamed(MaxFormat, TEXT("Value"), ValueAsText, TEXT("Max"), FText::AsNumber(Max, &NumberFormat)) : ValueAsText);
+		const FText MaxAsText = FText::AsNumber(Max, &NumberFormat);
+		if (!Display.Format.IsEmpty())
+		{
+			const int32 Percent = Max > 0.0f ? FMath::RoundToInt(FMath::Clamp(Value / Max, 0.0f, 1.0f) * 100.0f) : 0;
+			ValueText->SetText(FText::FormatNamed(Display.Format, TEXT("Value"), ValueAsText, TEXT("Max"), MaxAsText, TEXT("Percent"), FText::AsNumber(Percent)));
+		}
+		else
+		{
+			ValueText->SetText(Max > 0.0f ? FText::FormatNamed(MaxFormat, TEXT("Value"), ValueAsText, TEXT("Max"), MaxAsText) : ValueAsText);
+		}
 	}
 	if (Bar)
 	{

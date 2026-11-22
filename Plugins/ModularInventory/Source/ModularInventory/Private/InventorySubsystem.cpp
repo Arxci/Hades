@@ -215,6 +215,39 @@ bool UInventorySubsystem::SetContainerLayout(FInventoryContainerHandle Container
 	return Succeeded(Registry.SetContainerLayout(Container, Layout), OutError);
 }
 
+bool UInventorySubsystem::SetCapacity(FInventoryContainerHandle Container, int32 Count, EInventoryError& OutError)
+{
+	return Succeeded(Registry.SetCapacity(Container, Count), OutError);
+}
+
+bool UInventorySubsystem::AddCapacity(FInventoryContainerHandle Container, int32 Count, EInventoryError& OutError)
+{
+	const UInventoryContainerLayout* Layout = GetContainerLayout(Container);
+	if (!Layout)
+	{
+		return Succeeded(EInventoryError::InvalidContainer, OutError);
+	}
+
+	// Nothing left to unlock, or to lock, counts as failing, so callers such as an upgrade pickup can tell the container is at its
+	// biggest. A list without a limit has nothing to unlock.
+	const int32 Current = Registry.GetCapacity(Container);
+	if (Current == INDEX_NONE)
+	{
+		return Succeeded(Count != 0 ? EInventoryError::OutOfBounds : EInventoryError::None, OutError);
+	}
+
+	// Grids and slots stop at all they have; lists only at what an int holds.
+	const int64 Most = Layout->Type == EInventoryContainerType::Grid ? Layout->GetCellCount()
+		: Layout->Type == EInventoryContainerType::Slots ? Layout->GetSlotCount()
+		: MAX_int32;
+	const int32 Wanted = static_cast<int32>(FMath::Clamp(static_cast<int64>(Current) + Count, int64(0), Most));
+	if (Wanted == Current)
+	{
+		return Succeeded(Count != 0 ? EInventoryError::OutOfBounds : EInventoryError::None, OutError);
+	}
+	return Succeeded(Registry.SetCapacity(Container, Wanted), OutError);
+}
+
 bool UInventorySubsystem::SetUsableCellCount(FInventoryContainerHandle Container, int32 Count, EInventoryError& OutError)
 {
 	return Succeeded(Registry.SetUsableCellCount(Container, Count), OutError);
@@ -231,15 +264,7 @@ bool UInventorySubsystem::AddUsableCells(FInventoryContainerHandle Container, in
 	{
 		return Succeeded(EInventoryError::Rejected, OutError);
 	}
-
-	// Nothing left to unlock, or to lock, counts as failing, so callers such as a pouch pickup can tell the pockets are at their biggest.
-	const int32 Current = Registry.GetUsableCellCount(Container);
-	const int32 Wanted = FMath::Clamp(Current + Count, 0, Layout->GetCellCount());
-	if (Wanted == Current)
-	{
-		return Succeeded(Count != 0 ? EInventoryError::OutOfBounds : EInventoryError::None, OutError);
-	}
-	return Succeeded(Registry.SetUsableCellCount(Container, Wanted), OutError);
+	return AddCapacity(Container, Count, OutError);
 }
 
 bool UInventorySubsystem::SortContainer(FInventoryContainerHandle Container, EInventoryError& OutError)

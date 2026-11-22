@@ -21,8 +21,9 @@ struct FInventoryChangeSet;
 
 
 /**
- * An item's name, description and stats: a tooltip, or a panel that follows whatever the player hovers or focuses.
- * Stats are tag values listed as rows in Stat Panel, and can show how the item compares with what's equipped.
+ * An item's name, description, traits and stats: a tooltip, or a panel that follows whatever the player hovers or focuses.
+ * Stats are tag values listed as rows in Stat Panel, and can show how the item compares with what's equipped. Traits are tags named in
+ * words, such as Two-Handed or Quest Item, listed in Traits Text.
  */
 UCLASS(Abstract)
 class MODULARINVENTORYUI_API UInventoryItemDetailsWidget : public UUserWidget
@@ -78,9 +79,20 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Inventory|Details|Stats")
 	TSubclassOf<UInventoryStatWidget> StatClass;
 
-	/** Each stat also shows how much better or worse the item is than the one equipped where it would go, such as the gun in hand. */
+	/** Each stat also shows how much better or worse the item is than the one equipped where it would go, such as the weapon in hand. */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Details|Stats")
 	bool bCompareWithEquipped = false;
+
+	/**
+	 * Tags listed by name in Traits Text, in this order, such as Two-Handed, Quest Item or Silenced. Each item lists those among its
+	 * effective tags, so traits its attachments and neighbouring sockets grant are listed too.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Inventory|Details|Traits", meta = (TitleProperty = "Label"))
+	TArray<FInventoryTagLabel> Traits;
+
+	/** Goes between the traits in Traits Text, such as a comma, or a line break (Shift+Enter) to list one per line. */
+	UPROPERTY(EditAnywhere, Category = "Inventory|Details|Traits", meta = (MultiLine = "true"))
+	FText TraitSeparator = INVTEXT(", ");
 
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Details", meta = (BindWidgetOptional))
 	TObjectPtr<UImage> Icon;
@@ -88,12 +100,16 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Details", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> NameText;
 
-	/** The item definition's Category, such as Handgun. Collapsed for items without one. */
+	/** The item definition's Category, such as Weapon or Potion. Collapsed for items without one. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Details", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> CategoryText;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Details", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> DescriptionText;
+
+	/** The item's Traits, by name, with Trait Separator between them. Collapsed for items with none. */
+	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Details", meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> TraitsText;
 
 	/** Collapsed for single items. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Details", meta = (BindWidgetOptional))

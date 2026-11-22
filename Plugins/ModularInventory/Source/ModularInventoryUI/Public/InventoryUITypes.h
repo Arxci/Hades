@@ -196,15 +196,20 @@ struct MODULARINVENTORYUI_API FInventoryInteractionStyle
 };
 
 
-/** Colors for a value by how full it is, such as rounds left or durability. */
+/** Colors for a value by how full it is, such as a durability bar going from green to red, or a count that's green only while full. */
 USTRUCT(BlueprintType)
 struct MODULARINVENTORYUI_API FInventoryMeterColors
 {
 	GENERATED_BODY()
 
+	/** Low at Low Fraction or emptier, Full at Full Fraction or fuller, and Partly between them, or a blend of the three with Blend. */
+	FLinearColor Pick(float Fraction) const;
+
+	/** At Full Fraction or fuller. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
 	FLinearColor Full = FLinearColor(FColor(140, 193, 82));
 
+	/** Between Low Fraction and Full Fraction. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
 	FLinearColor Partly = FLinearColor(FColor(232, 226, 212));
 
@@ -216,7 +221,13 @@ struct MODULARINVENTORYUI_API FInventoryMeterColors
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (ClampMin = "0", ClampMax = "1"))
 	float LowFraction = 0.0f;
 
-	const FLinearColor& Pick(float Fraction) const { return Fraction <= LowFraction ? Low : Fraction >= 1.0f ? Full : Partly; }
+	/** How full counts as full, such as 0.5 for a bar that stays Full down to half. 1 is only when completely full. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (ClampMin = "0", ClampMax = "1"))
+	float FullFraction = 1.0f;
+
+	/** Fades smoothly from Low through Partly to Full between Low Fraction and Full Fraction, instead of changing in steps. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	bool bBlend = false;
 };
 
 
@@ -224,44 +235,71 @@ struct MODULARINVENTORYUI_API FInventoryMeterColors
 UENUM(BlueprintType)
 enum class EInventoryValueSource : uint8
 {
-	/** A tag value, such as the rounds in a gun or a tool's durability. Shown only for items that have it, their definition's included. */
+	/** A tag value, such as ammo, charges or durability. Shown only for items that have it, their definition's included. */
 	TagValue,
 	/** How many are in the stack. Shown only for items that stack. */
-	StackCount
+	StackCount,
+	/**
+	 * A number the item widget works out itself, in Resolve Custom Value, such as from a fragment, or from other items like the spare ammo
+	 * held for a weapon. Tag says which number it is, so one function can serve several displays.
+	 */
+	Custom
 };
 
 
 /**
- * A number an item widget shows, such as a gun's rounds or a stack's count, in Text Blocks and a Progress Bar you name in its designer.
- * Several can name the same Text Block, such as a corner number that's a gun's rounds or else a stack's count: the first that applies to
- * the item shows there, and a widget none applies to is collapsed.
+ * A number an item widget shows, such as ammo, charges, durability or a stack's count, in Text Blocks and a Progress Bar you name in its
+ * designer. Each is shown only for the items it applies to. Displays in the same Group take turns, so one spot can show whichever number an
+ * item has, each in its own widgets. Displays naming the same widget share it: the first that applies shows there. A named widget no shown
+ * display claims is collapsed.
  */
 USTRUCT(BlueprintType)
 struct MODULARINVENTORYUI_API FInventoryValueDisplay
 {
 	GENERATED_BODY()
 
+	/**
+	 * Whether it applies to a real item, and if so, its number and what's full, Max 0 for no maximum. False for an item it doesn't apply
+	 * to, or while it's hidden by Hide Single or Hide When Full. Count is the stack count to show, such as part of a stack being moved.
+	 * Custom numbers need the item widget, so they're always false here.
+	 */
+	bool Resolve(const UInventorySubsystem& Inventory, FInventoryItemHandle Item, int32 Count, float& OutValue, float& OutMax) const;
+
+	/** Whether Hide When Full hides it at this number. */
+	bool IsHiddenAt(float Value, float Max) const { return bHideWhenFull && Max > 0.0f && Value >= Max; }
+
+	/** What its Text Block says for a number: Format with {Value}, {Max} and {Percent} filled in. */
+	FText FormatText(float Value, float Max) const;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
 	EInventoryValueSource Source = EInventoryValueSource::TagValue;
 
-	/** The tag value shown, such as Item.Stat.Rounds. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (EditCondition = "Source == EInventoryValueSource::TagValue", EditConditionHides))
+	/** The tag value shown, such as Item.Stat.Durability. With a Custom source, it names the number for Resolve Custom Value. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (EditCondition = "Source != EInventoryValueSource::StackCount", EditConditionHides))
 	FGameplayTag Tag;
 
 	/**
-	 * The tag value that's full, such as Item.Stat.Capacity, for the meter, the tint and {Max}, with the bonuses of attachments and sockets,
-	 * such as an extended magazine's. Without it, or for items without it, the value the definition starts Tag at is full.
+	 * The tag value that's full, such as Item.Stat.Capacity, for the meter, the tint, {Max} and {Percent}, with the bonuses of attachments and
+	 * sockets, such as an extended magazine's. Without it, or for items without it, the value the definition starts Tag at is full.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (EditCondition = "Source == EInventoryValueSource::TagValue", EditConditionHides))
 	FGameplayTag MaxTag;
 
-	/** Adds attachments' and sockets' bonuses to the value, as for a stat such as damage. Off, it's the item's own, as for rounds or durability. */
+	/** Adds attachments' and sockets' bonuses to the value, as for a stat such as damage. Off, it's the item's own, as for ammo or durability. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (EditCondition = "Source == EInventoryValueSource::TagValue", EditConditionHides))
 	bool bIncludeBonuses = false;
 
-	/** Only items that match show it, such as only guns. Empty shows it for every item with the value. */
+	/** Only items that match show it, such as only weapons, by their tags. Empty shows it for every item with the value. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
 	FInventoryItemQuery ItemFilter;
+
+	/**
+	 * Displays with the same Group take turns: only the first in the list that applies to the item shows, and every other in the group
+	 * hides all its widgets. For one spot that shows whichever number an item has, each in its own widgets, such as a corner showing a
+	 * weapon's ammo in one Text Block, else a tool's charge as a bar, else a stack's count in another Text Block. None never takes turns.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	FName Group;
 
 	/** The name of a Text Block in the item widget's designer that shows the number, such as CountText. None shows no number. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
@@ -270,6 +308,10 @@ struct MODULARINVENTORYUI_API FInventoryValueDisplay
 	/** What the Text Block says. {Value} is the number, {Max} what's full, and {Percent} how full it is, out of 100. Such as x{Value}, or {Value}/{Max}. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
 	FText Format = INVTEXT("{Value}");
+
+	/** Decimal places {Value} and {Max} show at most, such as 1 for a weight of 2.5. 0 rounds them to whole numbers. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (ClampMin = "0", ClampMax = "3"))
+	int32 FractionalDigits = 0;
 
 	/** The name of a Progress Bar in the designer, filled to how full the value is, such as a durability bar. None shows no bar. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
@@ -324,6 +366,14 @@ struct MODULARINVENTORYUI_API FInventoryStatDisplay
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
 	FText Label;
 
+	/** Only items that match list it, such as Fire Rate only for weapons, by their tags. Empty lists it for every item with the value. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	FInventoryItemQuery ItemFilter;
+
+	/** Left out while the value is 0, such as a resistance the item doesn't give. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	bool bHideWhenZero = false;
+
 	/** Shows the value out of its maximum, such as durability: Max Tag's value, or else the value the definition starts Tag at. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
 	bool bShowMax = false;
@@ -337,6 +387,45 @@ struct MODULARINVENTORYUI_API FInventoryStatDisplay
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI", meta = (ClampMin = "0", ClampMax = "3"))
 	int32 FractionalDigits = 0;
+
+	/**
+	 * What the stat's Value Text says, such as {Value}% or {Value} kg. {Value} is the value, and with Show Max, {Max} is its maximum and
+	 * {Percent} how full it is, out of 100. Empty leaves it to the stat widget: the value, or its Max Format with a maximum.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	FText Format;
+};
+
+
+/** A tag named in words, such as Two-Handed for Item.Trait.TwoHanded, for an item's details to list. */
+USTRUCT(BlueprintType)
+struct MODULARINVENTORYUI_API FInventoryTagLabel
+{
+	GENERATED_BODY()
+
+	/** Items with a child tag of it have it too. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	FGameplayTag Tag;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
+	FText Label;
+};
+
+
+/** How a list widget orders its entries. Only how they're shown: the container keeps its own order. */
+UENUM(BlueprintType)
+enum class EInventoryListSort : uint8
+{
+	/** As the container holds them. */
+	ContainerOrder,
+	/** By the items' names. */
+	Name,
+	/** By their definitions' Category, then by name, so items of a kind sit together. */
+	Category,
+	/** By a tag value with its bonuses, such as weight, price or damage, then by name. */
+	TagValue,
+	/** By how many are in each stack, then by name. */
+	Count
 };
 
 

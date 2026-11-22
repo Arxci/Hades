@@ -99,6 +99,12 @@ EInventoryError FInventoryRegistry::CanOccupy(int32 ItemIndex, const FInventoryI
 			return EInventoryError::OutOfBounds;
 		}
 
+		// Locked slots, past the container's usable slots, are outside the part that can be used.
+		if (Placement.Index >= GetRecordCapacity(*ContainerRecord))
+		{
+			return EInventoryError::OutOfBounds;
+		}
+
 		const int32 Occupant = ContainerRecord->Cells[Placement.Index];
 		if (Occupant != INDEX_NONE && Occupant != ItemIndex)
 		{
@@ -112,8 +118,9 @@ EInventoryError FInventoryRegistry::CanOccupy(int32 ItemIndex, const FInventoryI
 	}
 	case EInventoryContainerType::List:
 	{
+		const int32 Capacity = GetRecordCapacity(*ContainerRecord);
 		const bool bAlreadyInside = Item.Container == Container;
-		const bool bFull = Layout.Capacity > 0 && ContainerRecord->Items.Num() >= Layout.Capacity;
+		const bool bFull = Capacity != INDEX_NONE && ContainerRecord->Items.Num() >= Capacity;
 		return bFull && !bAlreadyInside ? EInventoryError::NoSpace : EInventoryError::None;
 	}
 	}
@@ -132,16 +139,42 @@ int32 FInventoryRegistry::GetUsableCellCount(FInventoryContainerHandle Container
 	return Record ? GetRecordUsableCellCount(*Record) : 0;
 }
 
-int32 FInventoryRegistry::GetRecordUsableCellCount(const FInventoryContainerRecord& Container)
+bool FInventoryRegistry::IsPlacementUsable(FInventoryContainerHandle Container, const FInventoryPlacement& Placement) const
 {
+	const FInventoryContainerRecord* Record = FindContainer(Container);
+	return Record && IsRecordPlacementUsable(*Record, Placement);
+}
+
+int32 FInventoryRegistry::GetCapacity(FInventoryContainerHandle Container) const
+{
+	const FInventoryContainerRecord* Record = FindContainer(Container);
+	return Record ? GetRecordCapacity(*Record) : 0;
+}
+
+int32 FInventoryRegistry::GetRecordCapacity(const FInventoryContainerRecord& Container)
+{
+	// The container's own capacity, set at runtime, or else its layout's. Grids and slots can't hold more than they have.
 	const UInventoryContainerLayout& Layout = *Container.Layout;
-	if (Layout.Type != EInventoryContainerType::Grid)
+	if (Container.CapacityOverride < 0)
 	{
-		return 0;
+		return Layout.GetStartingCapacity();
 	}
 
-	// The container's own count, set at runtime, or else the layout's Usable Cells.
-	return Container.UnlockedCells >= 0 ? FMath::Min(Container.UnlockedCells, Layout.GetCellCount()) : Layout.GetUsableCellCount();
+	switch (Layout.Type)
+	{
+	case EInventoryContainerType::Grid:
+		return FMath::Min(Container.CapacityOverride, Layout.GetCellCount());
+	case EInventoryContainerType::Slots:
+		return FMath::Min(Container.CapacityOverride, Layout.GetSlotCount());
+	case EInventoryContainerType::List:
+		break;
+	}
+	return Container.CapacityOverride;
+}
+
+int32 FInventoryRegistry::GetRecordUsableCellCount(const FInventoryContainerRecord& Container)
+{
+	return Container.Layout->Type == EInventoryContainerType::Grid ? GetRecordCapacity(Container) : 0;
 }
 
 bool FInventoryRegistry::IsRecordCellUsable(const FInventoryContainerRecord& Container, const FIntPoint& Cell)
@@ -149,6 +182,24 @@ bool FInventoryRegistry::IsRecordCellUsable(const FInventoryContainerRecord& Con
 	const UInventoryContainerLayout& Layout = *Container.Layout;
 	const bool bInside = Layout.Type == EInventoryContainerType::Grid && Cell.X >= 0 && Cell.Y >= 0 && Cell.X < Layout.GridSize.X && Cell.Y < Layout.GridSize.Y;
 	return bInside && Cell.Y * Layout.GridSize.X + Cell.X < GetRecordUsableCellCount(Container);
+}
+
+bool FInventoryRegistry::IsRecordPlacementUsable(const FInventoryContainerRecord& Container, const FInventoryPlacement& Placement)
+{
+	const UInventoryContainerLayout& Layout = *Container.Layout;
+	switch (Layout.Type)
+	{
+	case EInventoryContainerType::Grid:
+		return IsRecordCellUsable(Container, Placement.Cell);
+	case EInventoryContainerType::Slots:
+		return Layout.Slots.IsValidIndex(Placement.Index) && Placement.Index < GetRecordCapacity(Container);
+	case EInventoryContainerType::List:
+	{
+		const int32 Capacity = GetRecordCapacity(Container);
+		return Placement.Index >= 0 && (Capacity == INDEX_NONE || Placement.Index < Capacity);
+	}
+	}
+	return false;
 }
 
 EInventoryError FInventoryRegistry::CanEquipInSlot(int32 ItemIndex, const FInventoryItemRecord& Item, const FInventoryContainerRecord& Container, int32 SlotIndex) const
@@ -885,10 +936,10 @@ EInventoryError FInventoryRegistry::SetContainerLayout(FInventoryContainerHandle
 
 	return RunTransaction([&]() -> EInventoryError
 	{
-		// A new shape comes with its own Usable Cells, so cells unlocked on the old one don't carry over.
+		// A new shape comes with its own capacity, so what was unlocked on the old one doesn't carry over.
 		FInventoryContainerRecord& Edited = EditContainer(Container.Index);
 		Edited.Layout = Layout;
-		Edited.UnlockedCells = INDEX_NONE;
+		Edited.CapacityOverride = INDEX_NONE;
 		Edited.Cells.Init(INDEX_NONE, Layout->Type == EInventoryContainerType::Grid ? Layout->GetCellCount() : Layout->GetSlotCount());
 		if (Layout->Type == EInventoryContainerType::List && Layout->Capacity > 0 && Edited.Items.Num() > Layout->Capacity)
 		{
@@ -914,32 +965,46 @@ EInventoryError FInventoryRegistry::SetContainerLayout(FInventoryContainerHandle
 	});
 }
 
-EInventoryError FInventoryRegistry::SetUsableCellCount(FInventoryContainerHandle Container, int32 Count)
+EInventoryError FInventoryRegistry::SetCapacity(FInventoryContainerHandle Container, int32 Count)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(Inventory_SetUsableCellCount);
+	TRACE_CPUPROFILER_EVENT_SCOPE(Inventory_SetCapacity);
 
 	const FInventoryContainerRecord* Record = FindContainer(Container);
 	if (!Record)
 	{
 		return EInventoryError::InvalidContainer;
 	}
-	if (Record->Layout->Type != EInventoryContainerType::Grid)
-	{
-		return EInventoryError::Rejected;
-	}
 
-	const int32 Unlocked = Count < 0 ? INDEX_NONE : FMath::Min(Count, Record->Layout->GetCellCount());
-	if (Unlocked == Record->UnlockedCells)
+	// Grids and slots can't unlock more than they have, so asking for more unlocks them all.
+	const UInventoryContainerLayout& Layout = *Record->Layout;
+	int32 Override = Count < 0 ? INDEX_NONE : Count;
+	if (Override != INDEX_NONE && Layout.Type == EInventoryContainerType::Grid)
+	{
+		Override = FMath::Min(Override, Layout.GetCellCount());
+	}
+	else if (Override != INDEX_NONE && Layout.Type == EInventoryContainerType::Slots)
+	{
+		Override = FMath::Min(Override, Layout.GetSlotCount());
+	}
+	if (Override == Record->CapacityOverride)
 	{
 		return EInventoryError::None;
 	}
 
 	return RunTransaction([&]() -> EInventoryError
 	{
-		EditContainer(Container.Index).UnlockedCells = Unlocked;
+		EditContainer(Container.Index).CapacityOverride = Override;
 
-		// An item on a cell this would lock keeps it unlocked: nothing changes.
-		for (const FInventoryItemHandle& Item : Containers[Container.Index].Items)
+		// A list already holding more than that keeps its capacity: nothing changes.
+		const FInventoryContainerRecord& Edited = Containers[Container.Index];
+		const int32 Capacity = GetRecordCapacity(Edited);
+		if (Layout.Type == EInventoryContainerType::List && Capacity != INDEX_NONE && Edited.Items.Num() > Capacity)
+		{
+			return EInventoryError::NoSpace;
+		}
+
+		// An item on a cell or in a slot this would lock keeps it unlocked: nothing changes.
+		for (const FInventoryItemHandle& Item : Edited.Items)
 		{
 			const EInventoryError Error = CanOccupy(Item.Index, Items[Item.Index], Container, Items[Item.Index].Placement);
 			if (Error != EInventoryError::None)
@@ -949,6 +1014,20 @@ EInventoryError FInventoryRegistry::SetUsableCellCount(FInventoryContainerHandle
 		}
 		return EInventoryError::None;
 	});
+}
+
+EInventoryError FInventoryRegistry::SetUsableCellCount(FInventoryContainerHandle Container, int32 Count)
+{
+	const FInventoryContainerRecord* Record = FindContainer(Container);
+	if (!Record)
+	{
+		return EInventoryError::InvalidContainer;
+	}
+	if (Record->Layout->Type != EInventoryContainerType::Grid)
+	{
+		return EInventoryError::Rejected;
+	}
+	return SetCapacity(Container, Count);
 }
 
 EInventoryError FInventoryRegistry::SortContainer(FInventoryContainerHandle Container)

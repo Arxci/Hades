@@ -21,6 +21,26 @@ int32 UInventoryContainerLayout::GetUsableCellCount() const
 	return UsableCells > 0 ? FMath::Min(UsableCells, CellCount) : CellCount;
 }
 
+int32 UInventoryContainerLayout::GetUsableSlotCount() const
+{
+	const int32 SlotCount = GetSlotCount();
+	return UsableSlots > 0 ? FMath::Min(UsableSlots, SlotCount) : SlotCount;
+}
+
+int32 UInventoryContainerLayout::GetStartingCapacity() const
+{
+	switch (Type)
+	{
+	case EInventoryContainerType::Grid:
+		return GetUsableCellCount();
+	case EInventoryContainerType::Slots:
+		return GetUsableSlotCount();
+	case EInventoryContainerType::List:
+		return Capacity > 0 ? Capacity : INDEX_NONE;
+	}
+	return 0;
+}
+
 #if WITH_EDITOR
 #include "InventoryValidation.h"
 
@@ -49,6 +69,13 @@ EDataValidationResult UInventoryContainerLayout::IsDataValid(FDataValidationCont
 		{
 			Context.AddError(LOCTEXT("NoSlots", "A slot layout needs at least one slot."));
 			Result = EDataValidationResult::Invalid;
+		}
+
+		// As with Usable Cells: harmless, but probably means a slot is missing.
+		if (UsableSlots > Slots.Num())
+		{
+			Context.AddWarning(FText::Format(LOCTEXT("TooManyUsableSlots", "Usable Slots is {0}, but the layout only has {1} slots, so none are locked."),
+				FText::AsNumber(UsableSlots), FText::AsNumber(Slots.Num())));
 		}
 
 		// Slots are found by tag, so each tag may appear once.

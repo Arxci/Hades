@@ -115,11 +115,23 @@ void FGameplayDebuggerCategory_Inventory::AddContainerLines(const FInventoryRegi
 		return;
 	}
 
+	// The grid's size, and how much of it, or of the slots or list, can hold items now.
 	const UInventoryContainerLayout& Layout = *Record->Layout;
-	const int32 UsableCells = Registry.GetUsableCellCount(Container);
-	const bool bHasLockedCells = UsableCells < Layout.GetCellCount();
-	const FString Locked = bHasLockedCells ? FString::Printf(TEXT(" (%d usable)"), UsableCells) : FString();
-	const FString Size = Layout.Type == EInventoryContainerType::Grid ? FString::Printf(TEXT(" %dx%d%s"), Layout.GridSize.X, Layout.GridSize.Y, *Locked) : FString();
+	const int32 Capacity = Registry.GetCapacity(Container);
+	FString Size;
+	switch (Layout.Type)
+	{
+	case EInventoryContainerType::Grid:
+		Size = FString::Printf(TEXT(" %dx%d"), Layout.GridSize.X, Layout.GridSize.Y);
+		Size += Capacity < Layout.GetCellCount() ? FString::Printf(TEXT(" (%d usable)"), Capacity) : FString();
+		break;
+	case EInventoryContainerType::Slots:
+		Size = Capacity < Layout.GetSlotCount() ? FString::Printf(TEXT(" (%d of %d usable)"), Capacity, Layout.GetSlotCount()) : FString();
+		break;
+	case EInventoryContainerType::List:
+		Size = Capacity != INDEX_NONE ? FString::Printf(TEXT(" (holds %d)"), Capacity) : FString();
+		break;
+	}
 	AddLine(FString::Printf(TEXT("%s{green}%s{white} %s%s%s  %d items"), *Indent(Depth), *Record->Tag.ToString(), DescribeType(Layout.Type), *Size,
 		Layout.bEquipment ? TEXT(" equipment") : TEXT(""), Record->Items.Num()));
 

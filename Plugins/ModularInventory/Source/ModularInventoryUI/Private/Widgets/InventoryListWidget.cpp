@@ -4,6 +4,7 @@
 #include "GameFramework/PlayerController.h"
 
 #include "Data/InventoryContainerLayout.h"
+#include "Data/InventoryItemDefinition.h"
 #include "InventorySubsystem.h"
 #include "InventoryUISubsystem.h"
 #include "InventoryWidgetHelpers.h"
@@ -73,35 +74,120 @@ void UInventoryListWidget::HandleRegistryChanged(const FInventoryChangeSet& Chan
 	}
 }
 
+void UInventoryListWidget::SetDisplayFilter(const FInventoryItemQuery& InDisplayFilter)
+{
+	DisplayFilter = InDisplayFilter;
+	Refresh();
+}
+
+void UInventoryListWidget::SetSort(EInventoryListSort InSortBy, FGameplayTag InSortTag, bool bInSortDescending)
+{
+	SortBy = InSortBy;
+	SortTag = InSortTag;
+	bSortDescending = bInSortDescending;
+	Refresh();
+}
+
 void UInventoryListWidget::Refresh()
 {
 	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
 	const FInventoryContainerRecord* Record = Inventory ? Inventory->GetRegistry().FindContainer(Container) : nullptr;
 
-	int32 NumEntries = 0;
+	// The positions in the container of the items shown, in the order shown, then the end of the list for the empty entry. Worked out
+	// before any entry is filled in, as entries run Blueprint events, which could change the inventory.
+	TArray<int32> Positions;
+	int32 EndPosition = 0;
 	if (Record && Record->Layout->Type == EInventoryContainerType::List && EntryClass && EntryPanel)
 	{
-		const int32 Capacity = Record->Layout->Capacity;
-		const bool bHasRoom = Capacity == 0 || Record->Items.Num() < Capacity;
-		const bool bEmptyEntry = bShowEmptyEntry && bHasRoom && !Record->Layout->bReadOnlyInUI;
-		NumEntries = Record->Items.Num() + (bEmptyEntry ? 1 : 0);
+		const TArray<FInventoryItemHandle> Items = Record->Items;
+		for (int32 Position = 0; Position < Items.Num(); ++Position)
+		{
+			if (Inventory->MatchesQuery(Items[Position], DisplayFilter))
+			{
+				Positions.Add(Position);
+			}
+		}
+		SortPositions(*Inventory, Items, Positions);
+
+		// A list without a limit always has room. The empty entry is where an item put on it goes: the end.
+		const int32 Capacity = Inventory->GetCapacity(Container);
+		const bool bHasRoom = Capacity == INDEX_NONE || Items.Num() < Capacity;
+		EndPosition = Items.Num();
+		if (bShowEmptyEntry && bHasRoom && !Record->Layout->bReadOnlyInUI)
+		{
+			Positions.Add(EndPosition);
+		}
 	}
 
-	while (Entries.Num() < NumEntries)
+	while (Entries.Num() < Positions.Num())
 	{
 		UInventorySlotWidget* Entry = CreateWidget<UInventorySlotWidget>(this, EntryClass);
 		EntryPanel->AddChild(Entry);
 		Entries.Add(Entry);
 	}
-	while (Entries.Num() > NumEntries)
+	while (Entries.Num() > Positions.Num())
 	{
 		Entries.Pop()->RemoveFromParent();
 	}
 
 	for (int32 Index = 0; Index < Entries.Num(); ++Index)
 	{
-		Entries[Index]->SetContainerPlacement(Container, FInventoryPlacement::AtIndex(Index));
+		Entries[Index]->SetContainerPlacement(Container, FInventoryPlacement::AtIndex(Positions[Index]));
 	}
+}
+
+void UInventoryListWidget::SortPositions(const UInventorySubsystem& Inventory, const TArray<FInventoryItemHandle>& Items, TArray<int32>& InOutPositions) const
+{
+	if (SortBy == EInventoryListSort::ContainerOrder)
+	{
+		return;
+	}
+
+	// Ties go by name, so the order never jumps about, and then by where they are in the container.
+	InOutPositions.StableSort([this, &Inventory, &Items](int32 A, int32 B)
+	{
+		const FInventoryItemHandle ItemA = Items[A];
+		const FInventoryItemHandle ItemB = Items[B];
+		const UInventoryItemDefinition* DefinitionA = Inventory.GetItemDefinition(ItemA);
+		const UInventoryItemDefinition* DefinitionB = Inventory.GetItemDefinition(ItemB);
+
+		int32 Order = 0;
+		switch (SortBy)
+		{
+		case EInventoryListSort::Category:
+		{
+			const FText CategoryA = DefinitionA ? DefinitionA->Category : FText::GetEmpty();
+			const FText CategoryB = DefinitionB ? DefinitionB->Category : FText::GetEmpty();
+			Order = CategoryA.CompareTo(CategoryB);
+			break;
+		}
+		case EInventoryListSort::TagValue:
+		{
+			const float ValueA = Inventory.GetEffectiveTagValue(ItemA, SortTag);
+			const float ValueB = Inventory.GetEffectiveTagValue(ItemB, SortTag);
+			Order = ValueA < ValueB ? -1 : ValueA > ValueB ? 1 : 0;
+			break;
+		}
+		case EInventoryListSort::Count:
+		{
+			const int32 CountA = Inventory.GetItemCount(ItemA);
+			const int32 CountB = Inventory.GetItemCount(ItemB);
+			Order = CountA < CountB ? -1 : CountA > CountB ? 1 : 0;
+			break;
+		}
+		case EInventoryListSort::Name:
+		case EInventoryListSort::ContainerOrder:
+			break;
+		}
+
+		if (Order == 0)
+		{
+			const FText NameA = DefinitionA ? DefinitionA->DisplayName : FText::GetEmpty();
+			const FText NameB = DefinitionB ? DefinitionB->DisplayName : FText::GetEmpty();
+			Order = NameA.CompareTo(NameB);
+		}
+		return bSortDescending ? Order > 0 : Order < 0;
+	});
 }
 
 // Mouse drops between and after the entries, which take drops on themselves

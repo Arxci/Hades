@@ -3,6 +3,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "ContentBrowserMenuContexts.h"
 #include "Framework/Commands/UIAction.h"
+#include "Misc/Paths.h"
 #include "ToolMenus.h"
 
 #include "Assets/InventoryItemCreation.h"
@@ -10,6 +11,8 @@
 #include "Icons/InventoryIconGenerator.h"
 #include "Icons/SInventoryIconStudio.h"
 #include "InventoryEditorSettings.h"
+#include "Interfaces/IPluginManager.h"
+#include "Markdown/SMarkdownReviewer.h"
 
 #define LOCTEXT_NAMESPACE "InventoryEditorMenus"
 
@@ -33,6 +36,15 @@ namespace
 		TArray<FAssetData> Assets;
 		IAssetRegistry::GetChecked().GetAssetsByClass(UInventoryItemDefinition::StaticClass()->GetClassPathName(), Assets, true);
 		InventoryIcons::GenerateIcons(LoadItems(Assets));
+	}
+
+	void OpenPluginGuide()
+	{
+		const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("ModularInventory"));
+		if (Plugin.IsValid())
+		{
+			SMarkdownReviewer::Open(FPaths::ConvertRelativePathToFull(Plugin->GetBaseDir() / TEXT("README.md")));
+		}
 	}
 
 	void AddAssetActions(FToolMenuSection& Section)
@@ -107,6 +119,16 @@ void InventoryEditorMenus::Register()
 		LOCTEXT("SettingsTooltip", "Naming conventions and icon lighting, in Project Settings > Plugins > Modular Inventory."),
 		FSlateIcon(),
 		FUIAction(FExecuteAction::CreateStatic(&UInventoryEditorSettings::Open)));
+	ToolsSection.AddMenuEntry("InventoryDocumentation",
+		LOCTEXT("Documentation", "Documentation"),
+		LOCTEXT("DocumentationTooltip", "Opens this plugin's guide in the Markdown Reviewer."),
+		FSlateIcon(),
+		FUIAction(FExecuteAction::CreateStatic(&OpenPluginGuide)));
+	ToolsSection.AddMenuEntry("MarkdownReviewer",
+		LOCTEXT("MarkdownReviewer", "Markdown Reviewer"),
+		LOCTEXT("MarkdownReviewerTooltip", "Shows any Markdown file in the project as GitHub would, with its broken links, missing images, open code blocks and broken tables listed. It follows the file as it's saved."),
+		FSlateIcon(),
+		FUIAction(FExecuteAction::CreateLambda([]() { SMarkdownReviewer::Open(); })));
 
 	UToolMenu* AssetMenu = UToolMenus::Get()->ExtendMenu("ContentBrowser.AssetContextMenu");
 	AssetMenu->FindOrAddSection("GetAssetActions").AddDynamicEntry("ModularInventory", FNewToolMenuSectionDelegate::CreateStatic(&AddAssetActions));

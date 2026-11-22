@@ -126,6 +126,21 @@ void UInventoryItemDetailsWidget::Refresh()
 	{
 		DescriptionText->SetText(Definition ? Definition->Description : FText::GetEmpty());
 	}
+	if (TraitsText)
+	{
+		// Effective tags, so a trait an attachment or a neighbour's socket grants is listed too.
+		const FGameplayTagContainer ItemTags = Inventory ? Inventory->GetEffectiveItemTags(Item) : FGameplayTagContainer();
+		TArray<FText> ShownTraits;
+		for (const FInventoryTagLabel& Trait : Traits)
+		{
+			if (Trait.Tag.IsValid() && ItemTags.HasTag(Trait.Tag))
+			{
+				ShownTraits.Add(Trait.Label);
+			}
+		}
+		TraitsText->SetText(FText::Join(TraitSeparator, ShownTraits));
+		TraitsText->SetVisibility(ShownTraits.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
+	}
 	if (CountText)
 	{
 		CountText->SetText(FText::FormatNamed(CountFormat, TEXT("Count"), FText::AsNumber(Count)));
@@ -153,7 +168,12 @@ void UInventoryItemDetailsWidget::RefreshStats(const UInventorySubsystem* Invent
 	int32 NumShown = 0;
 	for (const FInventoryStatDisplay& Stat : Stats)
 	{
-		if (!Inventory || !Inventory->HasTagValue(Item, Stat.Tag))
+		if (!Inventory || !Inventory->HasTagValue(Item, Stat.Tag) || !Inventory->MatchesQuery(Item, Stat.ItemFilter))
+		{
+			continue;
+		}
+		const float Value = Inventory->GetEffectiveTagValue(Item, Stat.Tag);
+		if (Stat.bHideWhenZero && FMath::IsNearlyZero(Value))
 		{
 			continue;
 		}
@@ -172,7 +192,7 @@ void UInventoryItemDetailsWidget::RefreshStats(const UInventorySubsystem* Invent
 		const float ComparedValue = ComparedItem.IsSet() ? Inventory->GetEffectiveTagValue(ComparedItem, Stat.Tag) : 0.0f;
 		UInventoryStatWidget* Row = StatRows[NumShown++];
 		Row->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-		Row->SetStat(Stat, Inventory->GetEffectiveTagValue(Item, Stat.Tag), Max, ComparedItem.IsSet(), ComparedValue);
+		Row->SetStat(Stat, Value, Max, ComparedItem.IsSet(), ComparedValue);
 	}
 	for (int32 Index = NumShown; Index < StatRows.Num(); ++Index)
 	{

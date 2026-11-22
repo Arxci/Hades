@@ -61,6 +61,7 @@ void UInventoryItemWidget::FindValueDisplayWidgets()
 	// Each display's widgets are found once, with the colors the designer gave them, which a display that doesn't tint goes back to.
 	ValueDisplayWidgets.Reset();
 	bValueDisplaysShowCount = false;
+	bReportsValueDisplays = GetClass()->IsFunctionImplementedInScript(GET_FUNCTION_NAME_CHECKED(UInventoryItemWidget, OnValueDisplayChanged));
 	for (const FInventoryValueDisplay& Display : ValueDisplays)
 	{
 		FValueDisplayWidgets& Widgets = ValueDisplayWidgets.AddDefaulted_GetRef();
@@ -258,9 +259,31 @@ void UInventoryItemWidget::RefreshValueDisplays()
 		return;
 	}
 
-	// Each named widget shows the first display that applies to the item. One that none applies to is collapsed.
+	// A pooled widget may now show another item, whose displays report afresh.
+	const UInventoryItemDefinition* ShownDefinitionNow = GetDefinition();
+	if (Item != ReportedItem || ShownDefinitionNow != ReportedDefinition.Get())
+	{
+		ReportedItem = Item;
+		ReportedDefinition = ShownDefinitionNow;
+		for (FValueDisplayWidgets& Widgets : ValueDisplayWidgets)
+		{
+			Widgets.bReported = false;
+		}
+	}
+
+	// Each named widget shows the first display that applies to the item, and each group only its first display that applies. A widget
+	// no shown display claims is collapsed.
+	struct FValueReport
+	{
+		int32 Index;
+		bool bShown;
+		float Value;
+		float Max;
+	};
+	TArray<FValueReport, TInlineAllocator<8>> Reports;
 	TSet<const UWidget*> Claimed;
 	TSet<UWidget*> Named;
+	TSet<FName> ShownGroups;
 	for (int32 Index = 0; Index < ValueDisplays.Num() && ValueDisplayWidgets.IsValidIndex(Index); ++Index)
 	{
 		const FInventoryValueDisplay& Display = ValueDisplays[Index];
@@ -278,9 +301,16 @@ void UInventoryItemWidget::RefreshValueDisplays()
 
 		float Value = 0.0f;
 		float Max = 0.0f;
-		if (!ResolveValueDisplay(Display, Value, Max))
+		const bool bGroupTaken = !Display.Group.IsNone() && ShownGroups.Contains(Display.Group);
+		const bool bShown = !bGroupTaken && ResolveValueDisplay(Display, Value, Max);
+		Reports.Add({ Index, bShown, bShown ? Value : 0.0f, bShown ? Max : 0.0f });
+		if (!bShown)
 		{
 			continue;
+		}
+		if (!Display.Group.IsNone())
+		{
+			ShownGroups.Add(Display.Group);
 		}
 
 		// Without a maximum, nothing says how full it is, so it's neither tinted nor filled.
@@ -290,10 +320,7 @@ void UInventoryItemWidget::RefreshValueDisplays()
 		if (Text && !Claimed.Contains(Text))
 		{
 			Claimed.Add(Text);
-			Text->SetText(FText::FormatNamed(Display.Format,
-				TEXT("Value"), FText::AsNumber(FMath::RoundToInt(Value)),
-				TEXT("Max"), FText::AsNumber(FMath::RoundToInt(Max)),
-				TEXT("Percent"), FText::AsNumber(FMath::RoundToInt(Fraction * 100.0f))));
+			Text->SetText(Display.FormatText(Value, Max));
 			Text->SetColorAndOpacity(bTint ? FSlateColor(Display.Colors.Pick(Fraction)) : Widgets.DefaultTextColor);
 			Text->SetVisibility(ESlateVisibility::HitTestInvisible);
 		}
@@ -318,6 +345,38 @@ void UInventoryItemWidget::RefreshValueDisplays()
 			Widget->SetVisibility(ESlateVisibility::Collapsed);
 		}
 	}
+
+	// Once every widget shows what it will, so what the event does goes on top.
+	for (const FValueReport& Report : Reports)
+	{
+		ReportValueDisplay(Report.Index, Report.bShown, Report.Value, Report.Max);
+	}
+}
+
+void UInventoryItemWidget::ReportValueDisplay(int32 Index, bool bShown, float Value, float Max)
+{
+	if (!ValueDisplays.IsValidIndex(Index) || !ValueDisplayWidgets.IsValidIndex(Index))
+	{
+		return;
+	}
+
+	FValueDisplayWidgets& Widgets = ValueDisplayWidgets[Index];
+	const bool bChanged = !Widgets.bReported || Widgets.bReportedShown != bShown || Widgets.ReportedValue != Value || Widgets.ReportedMax != Max;
+	if (!bChanged)
+	{
+		return;
+	}
+	Widgets.bReported = true;
+	Widgets.bReportedShown = bShown;
+	Widgets.ReportedValue = Value;
+	Widgets.ReportedMax = Max;
+
+	const float Fraction = Max > 0.0f ? FMath::Clamp(Value / Max, 0.0f, 1.0f) : 0.0f;
+	NativeOnValueDisplayChanged(Index, ValueDisplays[Index], bShown, Value, Max, Fraction);
+	if (bReportsValueDisplays)
+	{
+		OnValueDisplayChanged(Index, ValueDisplays[Index], bShown, Value, Max, Fraction);
+	}
 }
 
 bool UInventoryItemWidget::ResolveValueDisplay(const FInventoryValueDisplay& Display, float& OutValue, float& OutMax) const
@@ -325,15 +384,34 @@ bool UInventoryItemWidget::ResolveValueDisplay(const FInventoryValueDisplay& Dis
 	OutValue = 0.0f;
 	OutMax = 0.0f;
 	const UInventoryItemDefinition* Definition = GetDefinition();
-	if (!Definition || !MatchesShownItem(Display.ItemFilter))
+	if (!Definition)
+	{
+		return false;
+	}
+
+	// A real item's numbers come from the inventory, the same way as anywhere else they're shown.
+	const FInventoryItemPreview* Shown = GetPreview();
+	if (!Shown && Display.Source != EInventoryValueSource::Custom)
+	{
+		const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
+		return Inventory && Display.Resolve(*Inventory, Item, GetCount(), OutValue, OutMax);
+	}
+	if (!MatchesShownItem(Display.ItemFilter))
 	{
 		return false;
 	}
 
 	switch (Display.Source)
 	{
+	case EInventoryValueSource::Custom:
+		if (!ResolveCustomValue(Display, OutValue, OutMax))
+		{
+			return false;
+		}
+		break;
 	case EInventoryValueSource::StackCount:
 	{
+		// A preview has no item, so its numbers come from the preview and its definition, filled the way the registry fills an item's.
 		const int32 Count = GetCount();
 		const int32 MaxStackSize = Definition->GetMaxStackSize();
 		if (MaxStackSize <= 1 || (Display.bHideSingle && Count <= 1))
@@ -345,39 +423,26 @@ bool UInventoryItemWidget::ResolveValueDisplay(const FInventoryValueDisplay& Dis
 		break;
 	}
 	case EInventoryValueSource::TagValue:
-	{
-		if (!Display.Tag.IsValid())
+		if (!Shown || !Display.Tag.IsValid() || !Shown->FindTagValue(Display.Tag, OutValue))
 		{
 			return false;
 		}
-
-		// A preview has no item, so its values come from the preview and its definition, filled the way the registry fills an item's.
-		if (const FInventoryItemPreview* Shown = GetPreview())
+		if (!Display.MaxTag.IsValid() || !Shown->FindTagValue(Display.MaxTag, OutMax))
 		{
-			if (!Shown->FindTagValue(Display.Tag, OutValue))
-			{
-				return false;
-			}
-			if (!Display.MaxTag.IsValid() || !Shown->FindTagValue(Display.MaxTag, OutMax))
-			{
-				const FInventoryTagValue* Starting = Definition->FindTagValue(Display.Tag);
-				OutMax = Starting ? Starting->Value : 0.0f;
-			}
-			break;
+			const FInventoryTagValue* Starting = Definition->FindTagValue(Display.Tag);
+			OutMax = Starting ? Starting->Value : 0.0f;
 		}
-
-		const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
-		if (!Inventory || !Inventory->HasTagValue(Item, Display.Tag))
-		{
-			return false;
-		}
-		OutValue = Display.bIncludeBonuses ? Inventory->GetEffectiveTagValue(Item, Display.Tag) : Inventory->GetTagValue(Item, Display.Tag);
-		OutMax = Inventory->GetTagValueMax(Item, Display.Tag, Display.MaxTag);
 		break;
 	}
-	}
 
-	return !(Display.bHideWhenFull && OutMax > 0.0f && OutValue >= OutMax);
+	return !Display.IsHiddenAt(OutValue, OutMax);
+}
+
+bool UInventoryItemWidget::ResolveCustomValue_Implementation(const FInventoryValueDisplay& Display, float& OutValue, float& OutMax) const
+{
+	OutValue = 0.0f;
+	OutMax = 0.0f;
+	return false;
 }
 
 bool UInventoryItemWidget::MatchesShownItem(const FInventoryItemQuery& Filter) const
@@ -588,7 +653,10 @@ void UInventoryItemWidget::RefreshHighlight()
 		Background->SetVisibility(bDragVisual ? ESlateVisibility::Hidden : ESlateVisibility::HitTestInvisible);
 	}
 
-	const bool bNowHighlighted = !bDragVisual && (bHovered || bSelected);
+	// A preview drawn lit is hovered, and shows the highlight whatever lights it in game.
+	const bool bLitByHover = bHovered && (bHighlightWhenHovered || bPreview);
+	const bool bLitBySelection = bSelected && bHighlightWhenSelected;
+	const bool bNowHighlighted = !bDragVisual && (bLitByHover || bLitBySelection);
 	if (Highlight)
 	{
 		Highlight->SetVisibility(bNowHighlighted ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);

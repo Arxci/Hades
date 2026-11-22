@@ -83,6 +83,10 @@ void UInventorySlotWidget::HandlePawnChanged(APawn* OldPawn, APawn* NewPawn)
 
 void UInventorySlotWidget::Refresh()
 {
+	// A slot past the container's usable slots is locked, until Set Capacity unlocks it.
+	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
+	SetLocked(Inventory && GetContainer().IsSet() && !Inventory->IsPlacementUsable(GetContainer(), GetPlacement()));
+
 	const FInventoryItemHandle Item = GetItem();
 	if (ItemWidget)
 	{
@@ -92,7 +96,6 @@ void UInventorySlotWidget::Refresh()
 	}
 	if (NameText)
 	{
-		const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
 		const UInventoryItemDefinition* Definition = Inventory ? Inventory->GetItemDefinition(Item) : nullptr;
 		NameText->SetText(Definition ? Definition->DisplayName : FText::GetEmpty());
 	}

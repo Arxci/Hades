@@ -40,8 +40,9 @@ public:
 	FInventoryItemHandle GetItem() const;
 
 	/**
-	 * Locks or unlocks the cell. A locked cell, such as one past its grid layout's Usable Cells, is disabled: it draws with its style's
-	 * Disabled brush, can't be clicked and takes no gamepad focus. Grids lock their cells for you.
+	 * Locks or unlocks the cell. A locked cell, such as one past its container's usable cells or slots, is disabled: it draws with its
+	 * style's Disabled brush, can't be clicked and takes no gamepad focus. Locked Marker shows, and On Cell Locked Changed fires. Grids and
+	 * slot widgets lock their cells as their container's capacity says.
 	 */
 	void SetLocked(bool bInLocked);
 
@@ -65,6 +66,17 @@ protected:
 	UInventoryUISubsystem* GetInteraction() const;
 	bool IsTargeted() const;
 
+	/**
+	 * The cell was locked or unlocked by Set Locked, such as to play an animation as an upgrade unlocks it. Cells start unlocked, so this
+	 * also fires as a cell that starts locked is first locked.
+	 */
+	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Cell")
+	void OnCellLockedChanged(bool bIsLocked);
+
+	/** Shown only while the cell is locked, such as a padlock or a hatched tile, on top of the style's Disabled brush. */
+	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Cell", meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> LockedMarker;
+
 	/** Used instead of Style while an item is held, such as one without a hover outline, as the held item shows where it goes. */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Cell")
 	TSubclassOf<UCommonButtonStyle> HoldingStyle;
@@ -85,6 +97,8 @@ private:
 
 	/** Holding Style while an item is held, Mouse Style while the mouse is in use, and Style otherwise, each when it's set. */
 	void ApplyCellStyle();
+
+	void RefreshLockedMarker();
 
 	void HandleHovered();
 

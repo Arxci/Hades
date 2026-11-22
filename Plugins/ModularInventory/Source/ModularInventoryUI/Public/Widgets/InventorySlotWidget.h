@@ -17,7 +17,8 @@ struct FInventoryChangeSet;
 
 /**
  * One slot of a slot container, such as the main hand in the equipment slots. Place these by hand to lay out an equipment screen.
- * List widgets use it for their entries too.
+ * List widgets use it for their entries too. A slot past its container's usable slots is locked, as a grid's locked cells are: disabled,
+ * with Locked Marker shown, until the container's capacity grows.
  */
 UCLASS(Abstract)
 class MODULARINVENTORYUI_API UInventorySlotWidget : public UInventoryCellWidget

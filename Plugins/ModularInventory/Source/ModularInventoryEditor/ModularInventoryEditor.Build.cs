@@ -10,7 +10,7 @@ public class ModularInventoryEditor : ModuleRules
 		{
 			"Core", "CoreUObject", "Engine", "InputCore", "Slate", "SlateCore", "GameplayTags", "DeveloperSettings",
 			"UnrealEd", "PropertyEditor", "AssetTools", "AssetRegistry", "ContentBrowser", "ContentBrowserData", "ToolMenus",
-			"MessageLog", "Settings", "DataValidation",
+			"MessageLog", "Settings", "DataValidation", "DesktopPlatform", "Projects", "ImageCore",
 			"ModularInventory"
 		});
 	}
