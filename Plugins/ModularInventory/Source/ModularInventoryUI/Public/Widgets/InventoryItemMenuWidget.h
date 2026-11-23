@@ -52,7 +52,7 @@ enum class EInventoryMenuPlacement : uint8
 };
 
 
-/** What a press outside an open item menu does. Either way, the menu closes. */
+/** What a press outside an open item menu does: close it, close it and reach the item under it, or nothing at all. */
 UENUM(BlueprintType)
 enum class EInventoryMenuOutsidePress : uint8
 {
@@ -63,7 +63,12 @@ enum class EInventoryMenuOutsidePress : uint8
 	 * and a drag picks the item up. A press that would open a menu for this menu's own item only closes it, as pressing what opened a menu
 	 * again does. Presses only pass through to items on the screen the menu's item is on.
 	 */
-	PassThrough
+	PassThrough,
+	/**
+	 * Does nothing: the menu stays open and nothing behind it is pressed, so the player has to pick an action or go Back, as in a menu that
+	 * must be answered. Leave the player a way out with the mouse too, such as Close On Right Press, a press set to Close, or a Cancel action.
+	 */
+	Block
 };
 
 
@@ -92,8 +97,8 @@ enum class EInventoryMenuActionTiming : uint8
  * its first entry is highlighted and takes focus; the mouse and focus move the highlight, and Description Text and the screen's action
  * hint say what the highlighted one does.
  * Running an action closes the menu, unless the action keeps it open. Back closes it, and so can a right press on it. A press outside
- * Menu Panel closes it too, and goes on to the item under it as Left Press Outside and Right Press Outside say. It also closes by itself
- * when its item leaves the inventory, such as when it's used up, and when its screen closes.
+ * Menu Panel closes it, closes it and goes on to the item under it, or does nothing, as Left Press Outside and Right Press Outside say.
+ * It also closes by itself when its item leaves the inventory, such as when it's used up, and when its screen closes.
  * It comes in with Open Transition and goes with Close Transition, such as a fade and a slide out from the item and back, and plays
  * animations named OpenAnimation and CloseAnimation too.
  * Give the root a full-screen border that is hit-testable, so those presses reach the menu and nothing behind it can be hovered while it's open.
@@ -246,14 +251,17 @@ protected:
 
 	/**
 	 * What a left press outside Menu Panel does. Close suits a menu that has the player's attention, so a stray click only closes it.
-	 * Pass Through lets the player carry on as if it weren't open, such as dragging another item straight away.
+	 * Pass Through lets the player carry on as if it weren't open, such as dragging another item straight away. Block keeps the menu open
+	 * until the player picks an action or goes Back.
+	 * The other mouse buttons, such as the middle one, do as this says, except that they never pass through: with Pass Through, they
+	 * only close the menu.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu")
 	EInventoryMenuOutsidePress LeftPressOutside = EInventoryMenuOutsidePress::Close;
 
 	/**
 	 * What a right press outside Menu Panel does. With Pass Through, while right-clicks open item menus, a right-click on another item opens
-	 * that item's menu in place of this one, as desktop context menus do.
+	 * that item's menu in place of this one, as desktop context menus do. Block keeps the menu open.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu")
 	EInventoryMenuOutsidePress RightPressOutside = EInventoryMenuOutsidePress::PassThrough;

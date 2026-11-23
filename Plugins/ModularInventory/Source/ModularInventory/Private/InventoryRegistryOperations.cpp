@@ -6,6 +6,34 @@
 #include "Data/InventoryEquipRules.h"
 #include "Data/InventoryItemDefinition.h"
 
+namespace
+{
+	/**
+	 * Why containers turned an item away, for operations that try several. When none would take it at all, the reason is what's
+	 * reported, preferring a rule such as a carry limit over a filter; when one took it but had no room, it's the fallback, No Space.
+	 */
+	struct FEntryRefusals
+	{
+		bool bAnyEntered = false;
+		EInventoryError First = EInventoryError::None;
+
+		bool Note(EInventoryError Error)
+		{
+			bAnyEntered |= Error == EInventoryError::None;
+			if (Error != EInventoryError::None && (First == EInventoryError::None || (First == EInventoryError::Rejected && Error != EInventoryError::Rejected)))
+			{
+				First = Error;
+			}
+			return Error == EInventoryError::None;
+		}
+
+		EInventoryError Reason(EInventoryError Fallback) const
+		{
+			return !bAnyEntered && First != EInventoryError::None ? First : Fallback;
+		}
+	};
+}
+
 // Placement checks
 EInventoryError FInventoryRegistry::CanPlace(FInventoryItemHandle Item, FInventoryContainerHandle Container, const FInventoryPlacement& Placement) const
 {
@@ -65,10 +93,14 @@ EInventoryError FInventoryRegistry::CanOccupy(int32 ItemIndex, const FInventoryI
 			return EInventoryError::CannotRotate;
 		}
 
+		// Every cell it covers must be usable: inside the grid's columns, within its Max Rows, and unlocked. Rows a grid that grows to fit
+		// doesn't have yet are free, as it adds them for the item.
+		// A layout whose columns changed since the container was built, such as an asset edited while playing, would read its cells
+		// wrongly, so nothing more is placed until it's given its layout again.
 		const FIntPoint Size = Item.Definition->GetSize(Placement.bRotated);
 		const FIntPoint& Cell = Placement.Cell;
-		const bool bLayoutChanged = ContainerRecord->Cells.Num() != Layout.GetCellCount();
-		if (bLayoutChanged || Cell.X < 0 || Cell.Y < 0 || Cell.X + Size.X > Layout.GridSize.X || Cell.Y + Size.Y > Layout.GridSize.Y)
+		const bool bLayoutChanged = ContainerRecord->CellColumns != Layout.GridSize.X;
+		if (bLayoutChanged || Cell.X < 0 || Cell.Y < 0 || Cell.X + Size.X > Layout.GridSize.X)
 		{
 			return EInventoryError::OutOfBounds;
 		}
@@ -77,13 +109,13 @@ EInventoryError FInventoryRegistry::CanOccupy(int32 ItemIndex, const FInventoryI
 		{
 			for (int32 X = Cell.X; X < Cell.X + Size.X; ++X)
 			{
-				// Locked cells, past the container's usable cells, are outside the part of the grid that can be used.
 				if (!IsRecordCellUsable(*ContainerRecord, FIntPoint(X, Y)))
 				{
 					return EInventoryError::OutOfBounds;
 				}
 
-				const int32 Occupant = ContainerRecord->Cells[Y * Layout.GridSize.X + X];
+				const int32 CellIndex = GetCellIndex(Layout, FIntPoint(X, Y));
+				const int32 Occupant = ContainerRecord->Cells.IsValidIndex(CellIndex) ? ContainerRecord->Cells[CellIndex] : INDEX_NONE;
 				if (Occupant != INDEX_NONE && Occupant != ItemIndex)
 				{
 					return EInventoryError::Occupied;
@@ -127,18 +159,6 @@ EInventoryError FInventoryRegistry::CanOccupy(int32 ItemIndex, const FInventoryI
 	return EInventoryError::None;
 }
 
-bool FInventoryRegistry::IsCellUsable(FInventoryContainerHandle Container, const FIntPoint& Cell) const
-{
-	const FInventoryContainerRecord* Record = FindContainer(Container);
-	return Record && IsRecordCellUsable(*Record, Cell);
-}
-
-int32 FInventoryRegistry::GetUsableCellCount(FInventoryContainerHandle Container) const
-{
-	const FInventoryContainerRecord* Record = FindContainer(Container);
-	return Record ? GetRecordUsableCellCount(*Record) : 0;
-}
-
 bool FInventoryRegistry::IsPlacementUsable(FInventoryContainerHandle Container, const FInventoryPlacement& Placement) const
 {
 	const FInventoryContainerRecord* Record = FindContainer(Container);
@@ -151,37 +171,76 @@ int32 FInventoryRegistry::GetCapacity(FInventoryContainerHandle Container) const
 	return Record ? GetRecordCapacity(*Record) : 0;
 }
 
-int32 FInventoryRegistry::GetRecordCapacity(const FInventoryContainerRecord& Container)
+int32 FInventoryRegistry::GetMaxCapacity(FInventoryContainerHandle Container) const
 {
-	// The container's own capacity, set at runtime, or else its layout's. Grids and slots can't hold more than they have.
-	const UInventoryContainerLayout& Layout = *Container.Layout;
-	if (Container.CapacityOverride < 0)
-	{
-		return Layout.GetStartingCapacity();
-	}
-
-	switch (Layout.Type)
-	{
-	case EInventoryContainerType::Grid:
-		return FMath::Min(Container.CapacityOverride, Layout.GetCellCount());
-	case EInventoryContainerType::Slots:
-		return FMath::Min(Container.CapacityOverride, Layout.GetSlotCount());
-	case EInventoryContainerType::List:
-		break;
-	}
-	return Container.CapacityOverride;
+	const FInventoryContainerRecord* Record = FindContainer(Container);
+	return Record ? Record->Layout->GetMaxCapacity() : 0;
 }
 
-int32 FInventoryRegistry::GetRecordUsableCellCount(const FInventoryContainerRecord& Container)
+int32 FInventoryRegistry::GetGridRows(FInventoryContainerHandle Container) const
 {
-	return Container.Layout->Type == EInventoryContainerType::Grid ? GetRecordCapacity(Container) : 0;
+	const FInventoryContainerRecord* Record = FindContainer(Container);
+	return Record ? GetRecordGridRows(*Record) : 0;
+}
+
+int32 FInventoryRegistry::GetRecordGridRows(const FInventoryContainerRecord& Container)
+{
+	const UInventoryContainerLayout& Layout = *Container.Layout;
+	const int32 Columns = Layout.GridSize.X;
+	if (Layout.Type != EInventoryContainerType::Grid || Columns < 1)
+	{
+		return 0;
+	}
+	if (Layout.GridGrowth != EInventoryGridGrowth::ToFitItems)
+	{
+		return Layout.GetGridRowsAtCapacity(GetRecordCapacity(Container));
+	}
+
+	// Grown to fit: down to the last row anything is on, and never fewer than Grid Size's rows.
+	int32 RowsUsed = 0;
+	for (int32 Index = Container.Cells.Num() - 1; Index >= 0; --Index)
+	{
+		if (Container.Cells[Index] != INDEX_NONE)
+		{
+			RowsUsed = Index / Columns + 1;
+			break;
+		}
+	}
+	return FMath::Max(FMath::Max(0, Layout.GridSize.Y), RowsUsed);
+}
+
+int32 FInventoryRegistry::GetCellIndex(const UInventoryContainerLayout& Layout, const FIntPoint& Cell)
+{
+	const int32 Columns = Layout.GridSize.X;
+	if (Layout.Type != EInventoryContainerType::Grid || Cell.X < 0 || Cell.Y < 0 || Cell.X >= Columns)
+	{
+		return INDEX_NONE;
+	}
+	const int64 Index = int64(Cell.Y) * Columns + Cell.X;
+	return Index <= MAX_int32 ? static_cast<int32>(Index) : INDEX_NONE;
+}
+
+int32 FInventoryRegistry::GetRecordCapacity(const FInventoryContainerRecord& Container)
+{
+	// The container's own capacity, or else its layout's. Grids and slots can't hold more than they have, even with a layout swapped in.
+	const UInventoryContainerLayout& Layout = *Container.Layout;
+	return Container.CapacityOverride < 0 ? Layout.GetStartingCapacity() : Layout.ClampCapacity(Container.CapacityOverride);
 }
 
 bool FInventoryRegistry::IsRecordCellUsable(const FInventoryContainerRecord& Container, const FIntPoint& Cell)
 {
+	// Inside the grid's columns and within its Max Rows, if it has any.
 	const UInventoryContainerLayout& Layout = *Container.Layout;
-	const bool bInside = Layout.Type == EInventoryContainerType::Grid && Cell.X >= 0 && Cell.Y >= 0 && Cell.X < Layout.GridSize.X && Cell.Y < Layout.GridSize.Y;
-	return bInside && Cell.Y * Layout.GridSize.X + Cell.X < GetRecordUsableCellCount(Container);
+	const int32 CellIndex = GetCellIndex(Layout, Cell);
+	const int32 MaxRows = Layout.GetMaxRows();
+	if (CellIndex == INDEX_NONE || (MaxRows != INDEX_NONE && Cell.Y >= MaxRows))
+	{
+		return false;
+	}
+
+	// Cells unlock row by row from the top left, so a cell is usable while its index is within the capacity, and any is without a limit.
+	const int32 Capacity = GetRecordCapacity(Container);
+	return Capacity == INDEX_NONE || CellIndex < Capacity;
 }
 
 bool FInventoryRegistry::IsRecordPlacementUsable(const FInventoryContainerRecord& Container, const FInventoryPlacement& Placement)
@@ -255,24 +314,38 @@ bool FInventoryRegistry::FindPlacementFor(int32 ItemIndex, const FInventoryItemR
 	{
 	case EInventoryContainerType::Grid:
 	{
+		// Row by row from the top left, in either orientation, within the rows the grid has. A grid that grows to fit then also tries spots
+		// reaching into rows below its last, which are always free until Max Rows.
 		const bool bPreferRotated = Item.Placement.bRotated;
-		for (const bool bRotated : { bPreferRotated, !bPreferRotated })
+		const int32 Rows = GetRecordGridRows(*ContainerRecord);
+		const bool bCanAddRows = Layout.GridGrowth == EInventoryGridGrowth::ToFitItems;
+		for (const bool bIntoNewRows : { false, true })
 		{
-			if (bRotated && !Item.Definition->bCanRotate)
+			if (bIntoNewRows && !bCanAddRows)
 			{
-				continue;
+				break;
 			}
 
-			const FIntPoint Size = Item.Definition->GetSize(bRotated);
-			for (int32 Y = 0; Y + Size.Y <= Layout.GridSize.Y; ++Y)
+			for (const bool bRotated : { bPreferRotated, !bPreferRotated })
 			{
-				for (int32 X = 0; X + Size.X <= Layout.GridSize.X; ++X)
+				if (bRotated && !Item.Definition->bCanRotate)
 				{
-					const FInventoryPlacement Candidate = FInventoryPlacement::AtCell(FIntPoint(X, Y), bRotated);
-					if (CanOccupy(ItemIndex, Item, Container, Candidate) == EInventoryError::None)
+					continue;
+				}
+
+				const FIntPoint Size = Item.Definition->GetSize(bRotated);
+				const int32 FirstRow = bIntoNewRows ? FMath::Max(0, Rows - Size.Y + 1) : 0;
+				const int32 LastRow = bIntoNewRows ? Rows : Rows - Size.Y;
+				for (int32 Y = FirstRow; Y <= LastRow; ++Y)
+				{
+					for (int32 X = 0; X + Size.X <= Layout.GridSize.X; ++X)
 					{
-						OutPlacement = Candidate;
-						return true;
+						const FInventoryPlacement Candidate = FInventoryPlacement::AtCell(FIntPoint(X, Y), bRotated);
+						if (CanOccupy(ItemIndex, Item, Container, Candidate) == EInventoryError::None)
+						{
+							OutPlacement = Candidate;
+							return true;
+						}
 					}
 				}
 			}
@@ -313,18 +386,22 @@ EInventoryError FInventoryRegistry::AddItem(const FInventoryItemSpec& Spec, FInv
 	{
 		return EInventoryError::InvalidDefinition;
 	}
-	if (Spec.Count < 1 || Spec.Count > Spec.Definition->GetMaxStackSize())
-	{
-		return EInventoryError::InvalidCount;
-	}
 	if (!IsValid(Container))
 	{
 		return EInventoryError::InvalidContainer;
 	}
 
+	// One stack, as big as the container lets it be, its stack bonuses counted.
+	const FInventoryItemRecord Prototype = MakeItemRecord(Spec);
+	const int32 MaxStack = GetRecordMaxStackSize(Prototype, Container);
+	if (Spec.Count < 1 || Spec.Count > MaxStack)
+	{
+		return EInventoryError::InvalidCount;
+	}
+
 	return RunTransaction([&]() -> EInventoryError
 	{
-		FInventoryItemRecord Record = MakeItemRecord(Spec);
+		FInventoryItemRecord Record = Prototype;
 		EInventoryError Error = CanEnter(INDEX_NONE, Record, Container);
 		if (Error != EInventoryError::None)
 		{
@@ -334,7 +411,7 @@ EInventoryError FInventoryRegistry::AddItem(const FInventoryItemSpec& Spec, FInv
 		const int32 Occupant = FindOccupant(Containers[Container.Index], *Placement);
 		if (Occupant != INDEX_NONE && RecordsCanStack(Record, Items[Occupant]))
 		{
-			if (Items[Occupant].Count + Spec.Count > Spec.Definition->GetMaxStackSize())
+			if (Items[Occupant].Count + Spec.Count > MaxStack)
 			{
 				return EInventoryError::CannotStack;
 			}
@@ -378,14 +455,16 @@ int32 FInventoryRegistry::AddItemToContainers(const FInventoryItemSpec& Spec, TC
 			return EInventoryError::InvalidCount;
 		}
 
-		const int32 MaxStack = Spec.Definition->GetMaxStackSize();
 		const FInventoryItemRecord Prototype = MakeItemRecord(Spec);
 		int32 Remaining = Spec.Count;
+		FEntryRefusals Refusals;
+		auto Enters = [&](FInventoryContainerHandle Container) { return Refusals.Note(CanEnter(INDEX_NONE, Prototype, Container)); };
 
-		// Top up existing stacks before taking new space.
+		// Top up existing stacks before taking new space, each as high as its container lets it stack.
 		for (const FInventoryContainerHandle& Container : TargetContainers)
 		{
-			if (MaxStack <= 1 || Remaining == 0 || CanEnter(INDEX_NONE, Prototype, Container) != EInventoryError::None)
+			const int32 MaxStack = GetRecordMaxStackSize(Prototype, Container);
+			if (MaxStack <= 1 || Remaining == 0 || !Enters(Container))
 			{
 				continue;
 			}
@@ -414,7 +493,7 @@ int32 FInventoryRegistry::AddItemToContainers(const FInventoryItemSpec& Spec, TC
 			FInventoryPlacement Placement;
 			for (const FInventoryContainerHandle& Container : TargetContainers)
 			{
-				if (CanEnter(INDEX_NONE, Prototype, Container) == EInventoryError::None && FindPlacementFor(INDEX_NONE, Prototype, Container, Placement))
+				if (Enters(Container) && FindPlacementFor(INDEX_NONE, Prototype, Container, Placement))
 				{
 					Target = Container;
 					break;
@@ -426,7 +505,7 @@ int32 FInventoryRegistry::AddItemToContainers(const FInventoryItemSpec& Spec, TC
 			}
 
 			FInventoryItemRecord Record = Prototype;
-			Record.Count = FMath::Min(Remaining, MaxStack);
+			Record.Count = FMath::Min(Remaining, GetRecordMaxStackSize(Prototype, Target));
 			Remaining -= Record.Count;
 
 			const int32 NewIndex = CreateItem(MoveTemp(Record));
@@ -439,7 +518,7 @@ int32 FInventoryRegistry::AddItemToContainers(const FInventoryItemSpec& Spec, TC
 
 		Added = Spec.Count - Remaining;
 		const bool bAcceptable = Remaining == 0 || (bAllowPartial && Added > 0);
-		return bAcceptable ? EInventoryError::None : EInventoryError::NoSpace;
+		return bAcceptable ? EInventoryError::None : Refusals.Reason(EInventoryError::NoSpace);
 	});
 
 	if (OutError)
@@ -628,10 +707,22 @@ EInventoryError FInventoryRegistry::MergeStacks(FInventoryItemHandle Source, FIn
 	}
 
 	const int32 Requested = Count <= 0 ? SourceRecord->Count : FMath::Min(Count, SourceRecord->Count);
-	const int32 Moved = FMath::Min(Requested, TargetRecord->Definition->GetMaxStackSize() - TargetRecord->Count);
+	const int32 Moved = FMath::Min(Requested, GetRecordMaxStackSize(*TargetRecord, TargetRecord->Container) - TargetRecord->Count);
 	if (Moved <= 0)
 	{
 		return EInventoryError::CannotStack;
+	}
+
+	// Count moving into another container goes through its entry check, as any other move would, such as a carry limit.
+	if (SourceRecord->Container != TargetRecord->Container)
+	{
+		FInventoryItemRecord Moving = *SourceRecord;
+		Moving.Count = Moved;
+		const EInventoryError EnterError = CanEnter(Source.Index, Moving, TargetRecord->Container);
+		if (EnterError != EInventoryError::None)
+		{
+			return EnterError;
+		}
 	}
 
 	const EInventoryError Error = RunTransaction([&]()
@@ -763,7 +854,8 @@ EInventoryError FInventoryRegistry::PlaceWholeStack(int32 ItemIndex, FInventoryC
 		return EnterError;
 	}
 
-	const int32 MaxStack = Items[ItemIndex].Definition->GetMaxStackSize();
+	// As high as the target container lets it stack. A stack already bigger than that still moves whole.
+	const int32 MaxStack = GetRecordMaxStackSize(Items[ItemIndex], Container);
 
 	if (Placement.IsSet())
 	{
@@ -807,7 +899,8 @@ EInventoryError FInventoryRegistry::PlaceWholeStack(int32 ItemIndex, FInventoryC
 
 bool FInventoryRegistry::TopUpStacks(int32 ItemIndex, FInventoryContainerHandle Container)
 {
-	const int32 MaxStack = Items[ItemIndex].Definition->GetMaxStackSize();
+	// The stacks already there are topped up as high as their container lets them stack.
+	const int32 MaxStack = GetRecordMaxStackSize(Items[ItemIndex], Container);
 	if (MaxStack <= 1)
 	{
 		return false;
@@ -879,9 +972,11 @@ EInventoryError FInventoryRegistry::MoveItemToContainers(FInventoryItemHandle It
 		}
 
 		const int32 MovingCount = Items[MovingIndex].Count;
+		FEntryRefusals Refusals;
+		auto Enters = [&](FInventoryContainerHandle Container) { return Refusals.Note(CanEnter(MovingIndex, Items[MovingIndex], Container)); };
 		for (const FInventoryContainerHandle& Container : TargetContainers)
 		{
-			if (CanEnter(MovingIndex, Items[MovingIndex], Container) == EInventoryError::None && TopUpStacks(MovingIndex, Container))
+			if (Enters(Container) && TopUpStacks(MovingIndex, Container))
 			{
 				return EInventoryError::None;
 			}
@@ -895,7 +990,7 @@ EInventoryError FInventoryRegistry::MoveItemToContainers(FInventoryItemHandle It
 		for (const FInventoryContainerHandle& Container : TargetContainers)
 		{
 			FInventoryPlacement FreeSpot;
-			if (CanEnter(MovingIndex, Items[MovingIndex], Container) == EInventoryError::None && FindPlacementFor(MovingIndex, Items[MovingIndex], Container, FreeSpot))
+			if (Enters(Container) && FindPlacementFor(MovingIndex, Items[MovingIndex], Container, FreeSpot))
 			{
 				DetachItem(MovingIndex);
 				AttachItem(MovingIndex, Container, FreeSpot);
@@ -906,7 +1001,7 @@ EInventoryError FInventoryRegistry::MoveItemToContainers(FInventoryItemHandle It
 		const bool bSomethingMoved = Items[MovingIndex].Count < MovingCount;
 		if (!bAllowPartial || !bSomethingMoved)
 		{
-			return TargetContainers.IsEmpty() ? EInventoryError::InvalidContainer : EInventoryError::NoSpace;
+			return TargetContainers.IsEmpty() ? EInventoryError::InvalidContainer : Refusals.Reason(EInventoryError::NoSpace);
 		}
 
 		// A split-off remainder has nowhere to be, so it goes back onto the stack it came from.
@@ -941,6 +1036,7 @@ EInventoryError FInventoryRegistry::SetContainerLayout(FInventoryContainerHandle
 		Edited.Layout = Layout;
 		Edited.CapacityOverride = INDEX_NONE;
 		Edited.Cells.Init(INDEX_NONE, Layout->Type == EInventoryContainerType::Grid ? Layout->GetCellCount() : Layout->GetSlotCount());
+		Edited.CellColumns = Layout->Type == EInventoryContainerType::Grid ? Layout->GridSize.X : 0;
 		if (Layout->Type == EInventoryContainerType::List && Layout->Capacity > 0 && Edited.Items.Num() > Layout->Capacity)
 		{
 			return EInventoryError::NoSpace;
@@ -977,15 +1073,7 @@ EInventoryError FInventoryRegistry::SetCapacity(FInventoryContainerHandle Contai
 
 	// Grids and slots can't unlock more than they have, so asking for more unlocks them all.
 	const UInventoryContainerLayout& Layout = *Record->Layout;
-	int32 Override = Count < 0 ? INDEX_NONE : Count;
-	if (Override != INDEX_NONE && Layout.Type == EInventoryContainerType::Grid)
-	{
-		Override = FMath::Min(Override, Layout.GetCellCount());
-	}
-	else if (Override != INDEX_NONE && Layout.Type == EInventoryContainerType::Slots)
-	{
-		Override = FMath::Min(Override, Layout.GetSlotCount());
-	}
+	const int32 Override = Layout.ClampCapacity(Count);
 	if (Override == Record->CapacityOverride)
 	{
 		return EInventoryError::None;
@@ -1016,18 +1104,59 @@ EInventoryError FInventoryRegistry::SetCapacity(FInventoryContainerHandle Contai
 	});
 }
 
-EInventoryError FInventoryRegistry::SetUsableCellCount(FInventoryContainerHandle Container, int32 Count)
+EInventoryError FInventoryRegistry::AddCapacity(FInventoryContainerHandle Container, int32 Amount)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(Inventory_AddCapacity);
+
 	const FInventoryContainerRecord* Record = FindContainer(Container);
 	if (!Record)
 	{
 		return EInventoryError::InvalidContainer;
 	}
-	if (Record->Layout->Type != EInventoryContainerType::Grid)
+	if (Amount == 0)
 	{
-		return EInventoryError::Rejected;
+		return EInventoryError::None;
 	}
-	return SetCapacity(Container, Count);
+
+	// A list without a limit has nothing left to unlock, and no count to lock from.
+	const int32 Current = GetRecordCapacity(*Record);
+	if (Current == INDEX_NONE)
+	{
+		return Amount > 0 ? EInventoryError::AtMaxCapacity : EInventoryError::InvalidCount;
+	}
+
+	// Grids and slots stop at all they have; lists only at what an int holds. Nothing left to unlock or lock counts as failing, so an
+	// upgrade can tell the container is already at its biggest.
+	const UInventoryContainerLayout& Layout = *Record->Layout;
+	const int64 Most = Layout.GetMaxCapacity() == INDEX_NONE ? int64(MAX_int32) : int64(Layout.GetMaxCapacity());
+	const int32 Wanted = static_cast<int32>(FMath::Clamp(int64(Current) + Amount, int64(0), Most));
+	if (Wanted == Current)
+	{
+		return Amount > 0 ? EInventoryError::AtMaxCapacity : EInventoryError::InvalidCount;
+	}
+	return SetCapacity(Container, Wanted);
+}
+
+EInventoryError FInventoryRegistry::AddStackBonus(FInventoryContainerHandle Container, const FInventoryItemQuery& ItemQuery, int32 Amount)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(Inventory_AddStackBonus);
+
+	if (!IsValid(Container))
+	{
+		return EInventoryError::InvalidContainer;
+	}
+	if (Amount < 1)
+	{
+		return EInventoryError::InvalidCount;
+	}
+
+	return RunTransaction([&]()
+	{
+		FInventoryStackBonus& Bonus = EditContainer(Container.Index).StackBonuses.AddDefaulted_GetRef();
+		Bonus.Items = ItemQuery;
+		Bonus.Amount = Amount;
+		return EInventoryError::None;
+	});
 }
 
 EInventoryError FInventoryRegistry::SortContainer(FInventoryContainerHandle Container)

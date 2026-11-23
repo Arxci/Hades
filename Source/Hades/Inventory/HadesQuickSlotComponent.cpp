@@ -28,7 +28,7 @@ void UHadesQuickSlotComponent::BeginPlay()
 	}
 	Inventory->OnInventoryChanged.AddDynamic(this, &ThisClass::HandleInventoryChanged);
 
-	// What's in hand changes without the inventory changing, since it stays in the pockets.
+	// What's in hand changes without the inventory changing, since it stays in the inventory.
 	Equipment = UInventoryEquipmentComponent::FindEquipmentComponent(GetOwner());
 	if (Equipment)
 	{

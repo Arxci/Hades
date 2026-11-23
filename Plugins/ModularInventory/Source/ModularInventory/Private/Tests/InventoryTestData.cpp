@@ -13,6 +13,7 @@ namespace InventoryTests
 	UE_DEFINE_GAMEPLAY_TAG(Slot_OffHand, "Inventory.Test.Slot.OffHand");
 	UE_DEFINE_GAMEPLAY_TAG(Stat_Durability, "Inventory.Test.Stat.Durability");
 	UE_DEFINE_GAMEPLAY_TAG(Stat_Fire, "Inventory.Test.Stat.Fire");
+	UE_DEFINE_GAMEPLAY_TAG(Stat_Weight, "Inventory.Test.Stat.Weight");
 	UE_DEFINE_GAMEPLAY_TAG(Type_Herb, "Inventory.Test.Type.Herb");
 	UE_DEFINE_GAMEPLAY_TAG(Container_Main, "Inventory.Test.Container.Main");
 

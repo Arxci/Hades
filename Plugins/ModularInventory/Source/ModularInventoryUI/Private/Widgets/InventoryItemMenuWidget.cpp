@@ -1251,7 +1251,7 @@ FVector2D UInventoryItemMenuWidget::MeasureMenuPanel()
 
 // Mouse: a right press on the menu closes it, as Back does, with Close On Right Press. A press outside Menu Panel closes it too, and with
 // Pass Through it goes on to the item under it, as if the menu weren't open. A left press then waits, as the item would, to see whether
-// it ends in a click or a drag.
+// it ends in a click or a drag. With Block, a press outside does nothing at all.
 // The screen may open another menu as the press reaches an item, perhaps this same one again, so nothing here is touched after that.
 FReply UInventoryItemMenuWidget::NativeOnPreviewMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
@@ -1284,10 +1284,16 @@ FReply UInventoryItemMenuWidget::NativeOnMouseButtonDown(const FGeometry& InGeom
 		return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
 	}
 
+	// The other buttons, such as the middle one, do as a left press does, but don't pass through.
 	const bool bLeft = Button == EKeys::LeftMouseButton;
 	const bool bRight = Button == EKeys::RightMouseButton;
-	const bool bPassThrough = (bLeft && LeftPressOutside == EInventoryMenuOutsidePress::PassThrough)
-		|| (bRight && RightPressOutside == EInventoryMenuOutsidePress::PassThrough);
+	const EInventoryMenuOutsidePress OutsidePress = bRight ? RightPressOutside : LeftPressOutside;
+	if (OutsidePress == EInventoryMenuOutsidePress::Block)
+	{
+		return FReply::Handled();
+	}
+
+	const bool bPassThrough = (bLeft || bRight) && OutsidePress == EInventoryMenuOutsidePress::PassThrough;
 	UInventoryItemWidget* ItemWidget = bPassThrough ? FindItemWidgetUnder(Position) : nullptr;
 	if (ItemWidget && bLeft)
 	{

@@ -224,7 +224,11 @@ enum class EInventoryError : uint8
 	WouldContainItself,
 	NoSpace,
 	MissingIngredients,
-	RequirementsNotMet
+	RequirementsNotMet,
+	/** The container can't grow any more: every cell or slot it can have is unlocked, or it has no limit to raise. */
+	AtMaxCapacity,
+	/** Taking it would carry more than the Inventory Component's carry limit allows. */
+	OverCarryLimit
 };
 
 

@@ -10,7 +10,6 @@
 #include "Hades/Hades.h"
 #include "Hades/HadesGameplayTags.h"
 #include "Hades/Interaction/HadesInteractableComponent.h"
-#include "Hades/Inventory/HadesInventoryComponent.h"
 #include "Hades/Inventory/HadesQuickSlotComponent.h"
 #include "Hades/Player/HadesPlayerController.h"
 
@@ -86,16 +85,10 @@ void AHadesItemPickup::HandleInteractionCompleted(AActor* Interactor)
 		return;
 	}
 
-	UHadesInventoryComponent* HadesTaker = Cast<UHadesInventoryComponent>(Taker);
+	// A pouch is a capacity upgrade the taker applies as it's taken: it grows the inventory and is used up, so it never needs room.
 	UHadesQuickSlotComponent* QuickSlots = Interactor->FindComponentByClass<UHadesQuickSlotComponent>();
 	for (const FInventoryItemHandle& Item : GetItems())
 	{
-		if (HadesTaker && HadesTaker->IsPouch(Item))
-		{
-			TakePouch(*HadesTaker, Item);
-			continue;
-		}
-
 		EInventoryError Error;
 		if (Taker->TakeItem(Item, 0, true, Error) && QuickSlots)
 		{
@@ -110,17 +103,6 @@ void AHadesItemPickup::HandleInteractionCompleted(AActor* Interactor)
 	else
 	{
 		AHadesPlayerController::ShowMessageTo(Interactor, LOCTEXT("NoRoomForRest", "Not enough space for the rest."));
-	}
-}
-
-void AHadesItemPickup::TakePouch(UHadesInventoryComponent& Taker, FInventoryItemHandle Pouch)
-{
-	// A pouch grows the pockets instead of going in them. One that can't, such as once they're at their biggest, is used up all the same,
-	// so the pickup still empties; the inventory component has logged why.
-	UInventorySubsystem* Subsystem = UInventorySubsystem::Get(this);
-	if (!Taker.UsePouch(Pouch) && Subsystem)
-	{
-		Subsystem->RemoveItem(Pouch);
 	}
 }
 
@@ -166,15 +148,15 @@ void AHadesItemPickup::RefreshRoom()
 
 bool AHadesItemPickup::HasRoomFor(const UInventoryComponent& Taker) const
 {
-	const UInventorySubsystem* Subsystem = UInventorySubsystem::Get(this);
-	if (!Subsystem)
+	if (!UInventorySubsystem::Get(this))
 	{
 		return true;
 	}
 
+	// A pouch counts as room while the inventory can still grow, as taking it applies it.
 	for (const FInventoryItemHandle& Item : GetItems())
 	{
-		if (Subsystem->HasItemTag(Item, HadesGameplayTags::Item_Type_Pouch) || Taker.CanTakeItem(Item, 0, true))
+		if (Taker.CanTakeItem(Item, 0, true))
 		{
 			return true;
 		}

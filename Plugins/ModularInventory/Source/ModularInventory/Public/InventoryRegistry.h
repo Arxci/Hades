@@ -57,6 +57,22 @@ struct MODULARINVENTORY_API FInventoryItemRecord
 };
 
 
+/** Lets matching items stack higher in one container, such as from a stack size upgrade. */
+USTRUCT(BlueprintType)
+struct MODULARINVENTORY_API FInventoryStackBonus
+{
+	GENERATED_BODY()
+
+	/** Which items stack higher. Empty matches every item that stacks; items that don't stack never do. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category = "Inventory")
+	FInventoryItemQuery Items;
+
+	/** How many more of each matching item one stack holds. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, SaveGame, Category = "Inventory", meta = (ClampMin = "1"))
+	int32 Amount = 0;
+};
+
+
 USTRUCT()
 struct MODULARINVENTORY_API FInventoryContainerRecord
 {
@@ -90,15 +106,27 @@ struct MODULARINVENTORY_API FInventoryContainerRecord
 	TArray<FInstancedStruct> Fragments;
 
 	/**
-	 * How much it can hold, as set at runtime with SetCapacity: usable cells for a grid, counted row by row from the top left; usable slots
+	 * How much it can hold, when it has its own capacity rather than its layout's: from a Starting Capacity, or set at runtime with
+	 * SetCapacity or AddCapacity, such as by a capacity upgrade. Usable cells for a grid, counted row by row from the top left; usable slots
 	 * for slots, counted from the first; the most items for a list. INDEX_NONE follows the layout.
 	 */
 	UPROPERTY(SaveGame)
 	int32 CapacityOverride = INDEX_NONE;
 
-	/** Grids: the item index on each cell. Slots: the item index in each slot. INDEX_NONE when empty. Rebuilt from the items' placements. */
+	/** How much higher items stack here than their definitions say, from stack size upgrades. They add up. */
+	UPROPERTY(SaveGame)
+	TArray<FInventoryStackBonus> StackBonuses;
+
+	/**
+	 * Grids: the item index on each cell, counted row by row from the top left. Slots: the item index in each slot. INDEX_NONE when empty.
+	 * Rebuilt from the items' placements. A grid's cells past the end are empty: they're added, a whole row at a time, as items go there.
+	 */
 	UPROPERTY()
 	TArray<int32> Cells;
+
+	/** Grids: the layout's columns when Cells was built, so cells are never read with another count, such as after the layout changed. */
+	UPROPERTY()
+	int32 CellColumns = 0;
 };
 
 
@@ -179,23 +207,69 @@ public:
 	int32 CountItems(TConstArrayView<FInventoryContainerHandle> SearchRoots, const FInventoryItemQuery& Query, bool bRecursive) const;
 	/** The sum of a tag value over the items, each times its count, such as the weight of everything carried. */
 	float GetTotalTagValue(TConstArrayView<FInventoryContainerHandle> SearchRoots, const FGameplayTag& Tag, bool bRecursive) const;
+	/**
+	 * What an item adds to such a sum, as a carry limit counts it: its value of Tag times its count, and the sum over everything inside it.
+	 * Takes a record so items that don't exist yet can be weighed.
+	 */
+	float GetCarriedValue(const FInventoryItemRecord& Item, const FGameplayTag& Tag) const;
+
+	// Stacks
+	/** How many of the item one stack holds where it is: its definition's Max Stack Size, and the stack bonuses of its container. */
+	int32 GetMaxStackSize(FInventoryItemHandle Item) const;
+	/**
+	 * Lets items matching Item Query stack Amount higher in the container, such as for a stack size upgrade. Bonuses add up, and stay with
+	 * the container. A stack bigger than a container allows, such as one moved from a container with a bonus, stays whole but takes no more.
+	 */
+	EInventoryError AddStackBonus(FInventoryContainerHandle Container, const FInventoryItemQuery& ItemQuery, int32 Amount);
 
 	// Placement
 	EInventoryError CanPlace(FInventoryItemHandle Item, FInventoryContainerHandle Container, const FInventoryPlacement& Placement) const;
 	/** The first free spot, trying the item's current rotation first. */
 	bool FindPlacement(FInventoryItemHandle Item, FInventoryContainerHandle Container, FInventoryPlacement& OutPlacement) const;
-	/** Whether a grid cell can hold items: inside the grid and not locked, by SetCapacity or else the layout's Usable Cells. */
-	bool IsCellUsable(FInventoryContainerHandle Container, const FIntPoint& Cell) const;
-	/** How many of a grid's cells can hold items now, counted row by row from the top left. 0 for slots and lists. */
-	int32 GetUsableCellCount(FInventoryContainerHandle Container) const;
 	/**
-	 * Whether a placement is in the part of the container that can hold items now: a usable cell of a grid (the placement's cell only), a
-	 * usable slot, or a position in a list below its capacity.
+	 * Whether a placement is in the part of the container that can hold items now: an unlocked cell of a grid (the placement's cell
+	 * only), an unlocked slot, or a position in a list below its capacity.
 	 */
 	bool IsPlacementUsable(FInventoryContainerHandle Container, const FInventoryPlacement& Placement) const;
 
+	// Capacity: how much a container can hold now, which can grow during play as far as its layout allows.
+	/**
+	 * How much the container can hold now: usable cells for a grid, unlocked slots for slots, the most items for a list. INDEX_NONE for no
+	 * limit, as for a grid that grows to fit without Max Rows. The container's own once it has one, from a Starting Capacity, SetCapacity
+	 * or AddCapacity; else its layout's.
+	 */
+	int32 GetCapacity(FInventoryContainerHandle Container) const;
+	/**
+	 * The most the container can be unlocked to: every cell of its grid at its layout's Max Rows, or every slot. INDEX_NONE for a grid that
+	 * grows without limit, or a list, which has no most.
+	 */
+	int32 GetMaxCapacity(FInventoryContainerHandle Container) const;
+	/**
+	 * How many rows a grid has now, as grid widgets draw them: its layout's Grid Size, and every row it has grown into, as its capacity
+	 * rose or to fit its items. 0 for other types.
+	 */
+	int32 GetGridRows(FInventoryContainerHandle Container) const;
+	/**
+	 * Gives the container its own capacity, overriding its layout's: storage that grows as upgrades are found, slots earned during play, a
+	 * satchel that holds more. Grids: Count cells can hold items, counted row by row from the top left; a grid growing With Upgrades gains
+	 * the rows they reach into, up to Max Rows, and one growing To Fit Items grows to fit up to Count cells. Slots: the first Count slots
+	 * can. Lists: at most Count items. Grids and slots stop at the most they can have. A negative Count follows the layout again. Fails
+	 * without changing anything when an item sits where it would lock, or a list holds more than Count.
+	 */
+	EInventoryError SetCapacity(FInventoryContainerHandle Container, int32 Count);
+	/**
+	 * Unlocks Amount more of the container, such as 2 cells for a pouch, or locks that many again with a negative Amount, as SetCapacity
+	 * does. Unlocking stops at the most the container can hold: when nothing is left to unlock, it fails with AtMaxCapacity, as it does for
+	 * a list without a limit. Locking fails with InvalidCount when nothing is left to lock.
+	 */
+	EInventoryError AddCapacity(FInventoryContainerHandle Container, int32 Amount);
+
 	// Containers
-	FInventoryContainerHandle CreateContainer(const UInventoryContainerLayout* Layout, const FGameplayTag& Tag, UObject* Owner);
+	/**
+	 * A root container, owned by whoever created it. Starting Capacity gives it its own capacity from the start instead of its layout's,
+	 * as SetCapacity would; INDEX_NONE follows the layout.
+	 */
+	FInventoryContainerHandle CreateContainer(const UInventoryContainerLayout* Layout, const FGameplayTag& Tag, UObject* Owner, int32 StartingCapacity = INDEX_NONE);
 	/** Root containers only, along with everything inside them. Item containers live and die with their item. */
 	EInventoryError DestroyContainer(FInventoryContainerHandle Container);
 	/**
@@ -204,21 +278,6 @@ public:
 	 * to following the new layout.
 	 */
 	EInventoryError SetContainerLayout(FInventoryContainerHandle Container, const UInventoryContainerLayout* Layout);
-	/**
-	 * How much the container can hold now: usable cells for a grid, usable slots for slots, the most items for a list, INDEX_NONE for a
-	 * list without a limit. SetCapacity sets it for one container; otherwise it's the layout's.
-	 */
-	int32 GetCapacity(FInventoryContainerHandle Container) const;
-	/**
-	 * Unlocks or locks part of a container at runtime, for this container only, overriding its layout: storage that grows as upgrades are
-	 * found while its widget shows the full size, slots earned during play, a satchel that holds more. Grids: Count cells can hold items,
-	 * counted row by row from the top left, 0 locking every cell. Slots: the first Count slots can. Lists: at most Count items. Grids and
-	 * slots stop at all they have. A negative Count follows the layout again. Fails without changing anything when an item sits where it
-	 * would lock, or a list holds more than Count.
-	 */
-	EInventoryError SetCapacity(FInventoryContainerHandle Container, int32 Count);
-	/** SetCapacity for grids: unlocks or locks cells, row by row from the top left. Anything but a grid is Rejected. */
-	EInventoryError SetUsableCellCount(FInventoryContainerHandle Container, int32 Count);
 	/**
 	 * Sorts a grid or list: merges partial stacks, then orders the items biggest first in a grid, then by name, so the same items sit
 	 * together. A grid puts each on the first spot that fits. All or nothing.
@@ -330,7 +389,7 @@ private:
 
 	FInventoryItemRecord MakeItemRecord(const FInventoryItemSpec& Spec) const;
 	int32 CreateItem(FInventoryItemRecord&& Record);
-	FInventoryContainerHandle CreateContainerRecord(const UInventoryContainerLayout* Layout, const FGameplayTag& Tag, UObject* Owner, FInventoryItemHandle OwnerItem);
+	FInventoryContainerHandle CreateContainerRecord(const UInventoryContainerLayout* Layout, const FGameplayTag& Tag, UObject* Owner, FInventoryItemHandle OwnerItem, int32 StartingCapacity);
 	void DestroyItemRecord(int32 Index);
 	void DestroyContainerRecord(int32 Index);
 
@@ -353,14 +412,22 @@ private:
 	TArray<int32> FindEquipConflicts(int32 ItemIndex, const FInventoryItemRecord& Item, const FInventoryContainerRecord& Container, int32 SlotIndex) const;
 	bool FindPlacementFor(int32 ItemIndex, const FInventoryItemRecord& Item, FInventoryContainerHandle Container, FInventoryPlacement& OutPlacement) const;
 	int32 FindOccupant(const FInventoryContainerRecord& Container, const FInventoryPlacement& Placement) const;
-	/** The container's own capacity, set at runtime, or else its layout's. INDEX_NONE for a list without a limit. */
+	/** The container's own capacity, set at runtime, or else its layout's. INDEX_NONE for no limit. */
 	static int32 GetRecordCapacity(const FInventoryContainerRecord& Container);
-	static int32 GetRecordUsableCellCount(const FInventoryContainerRecord& Container);
+	static int32 GetRecordGridRows(const FInventoryContainerRecord& Container);
+	/** A grid cell's index in a container's Cells, counted row by row from the top left. INDEX_NONE outside its columns or above it. */
+	static int32 GetCellIndex(const UInventoryContainerLayout& Layout, const FIntPoint& Cell);
+	/**
+	 * Whether an item may cover a grid cell: inside the grid's columns, within its Max Rows, and unlocked, its index below the capacity.
+	 * Rows a grid that grows to fit doesn't have yet count, as it adds them for the item.
+	 */
 	static bool IsRecordCellUsable(const FInventoryContainerRecord& Container, const FIntPoint& Cell);
 	static bool IsRecordPlacementUsable(const FInventoryContainerRecord& Container, const FInventoryPlacement& Placement);
 
 	bool RecordMatchesQuery(const FInventoryItemRecord& Item, const FInventoryItemQuery& Query) const;
 	bool RecordsCanStack(const FInventoryItemRecord& Item, const FInventoryItemRecord& Other) const;
+	/** How many of the item one stack holds in the container: its definition's Max Stack Size and the container's matching stack bonuses. */
+	int32 GetRecordMaxStackSize(const FInventoryItemRecord& Item, FInventoryContainerHandle Container) const;
 	FGameplayTagContainer GetRecordTags(const FInventoryItemRecord& Item) const;
 	float GetRecordTagValue(const FInventoryItemRecord& Item, const FGameplayTag& Tag) const;
 	void ForEachSocketAffecting(FInventoryItemHandle Item, TFunctionRef<void(FInventoryItemHandle Source, const FInventoryItemSocket& Socket)> Callback) const;

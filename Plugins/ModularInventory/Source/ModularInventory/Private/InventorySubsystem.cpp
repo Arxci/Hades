@@ -9,6 +9,7 @@
 #include "Data/InventoryContainerLayout.h"
 #include "Data/InventoryEquipRules.h"
 #include "Data/InventoryItemDefinition.h"
+#include "InventoryComponent.h"
 
 namespace
 {
@@ -32,7 +33,8 @@ void UInventorySubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	RegistryChangedHandle = Registry.OnChanged.AddUObject(this, &ThisClass::HandleRegistryChanged);
 	Registry.CanEnterHook = [this](const FInventoryRegistry& InRegistry, const FInventoryItemRecord& Item, FInventoryContainerHandle Container)
 	{
-		return CheckOwnerRequirements(InRegistry, Item, Container);
+		const EInventoryError Error = CheckOwnerRequirements(InRegistry, Item, Container);
+		return Error != EInventoryError::None ? Error : CheckCarryLimit(InRegistry, Item, Container);
 	};
 }
 
@@ -74,6 +76,13 @@ EInventoryError UInventorySubsystem::CheckOwnerRequirements(const FInventoryRegi
 	const UActorComponent* OwnerComponent = Cast<UActorComponent>(Owner);
 	const AActor* OwnerActor = OwnerComponent ? OwnerComponent->GetOwner() : Cast<AActor>(Owner);
 	return Rules->MeetsOwnerRequirements(OwnerActor) ? EInventoryError::None : EInventoryError::NotEquippable;
+}
+
+EInventoryError UInventorySubsystem::CheckCarryLimit(const FInventoryRegistry& InRegistry, const FInventoryItemRecord& Item, FInventoryContainerHandle Container) const
+{
+	// Every way in passes here, so pickups, chests, the inventory UI and code all keep to it.
+	const UInventoryComponent* Owner = Cast<UInventoryComponent>(InRegistry.GetOwner(Container));
+	return Owner ? Owner->CheckCarryLimit(InRegistry, Item) : EInventoryError::None;
 }
 
 // Items
@@ -200,9 +209,9 @@ TArray<FInventoryItemHandle> UInventorySubsystem::FindItems(const TArray<FInvent
 	return Found;
 }
 
-FInventoryContainerHandle UInventorySubsystem::CreateContainer(const UInventoryContainerLayout* Layout, FGameplayTag Tag, UObject* Owner)
+FInventoryContainerHandle UInventorySubsystem::CreateContainer(const UInventoryContainerLayout* Layout, FGameplayTag Tag, UObject* Owner, int32 StartingCapacity)
 {
-	return Registry.CreateContainer(Layout, Tag, Owner);
+	return Registry.CreateContainer(Layout, Tag, Owner, StartingCapacity < 0 ? INDEX_NONE : StartingCapacity);
 }
 
 bool UInventorySubsystem::DestroyContainer(FInventoryContainerHandle Container)
@@ -222,49 +231,12 @@ bool UInventorySubsystem::SetCapacity(FInventoryContainerHandle Container, int32
 
 bool UInventorySubsystem::AddCapacity(FInventoryContainerHandle Container, int32 Count, EInventoryError& OutError)
 {
-	const UInventoryContainerLayout* Layout = GetContainerLayout(Container);
-	if (!Layout)
-	{
-		return Succeeded(EInventoryError::InvalidContainer, OutError);
-	}
-
-	// Nothing left to unlock, or to lock, counts as failing, so callers such as an upgrade pickup can tell the container is at its
-	// biggest. A list without a limit has nothing to unlock.
-	const int32 Current = Registry.GetCapacity(Container);
-	if (Current == INDEX_NONE)
-	{
-		return Succeeded(Count != 0 ? EInventoryError::OutOfBounds : EInventoryError::None, OutError);
-	}
-
-	// Grids and slots stop at all they have; lists only at what an int holds.
-	const int64 Most = Layout->Type == EInventoryContainerType::Grid ? Layout->GetCellCount()
-		: Layout->Type == EInventoryContainerType::Slots ? Layout->GetSlotCount()
-		: MAX_int32;
-	const int32 Wanted = static_cast<int32>(FMath::Clamp(static_cast<int64>(Current) + Count, int64(0), Most));
-	if (Wanted == Current)
-	{
-		return Succeeded(Count != 0 ? EInventoryError::OutOfBounds : EInventoryError::None, OutError);
-	}
-	return Succeeded(Registry.SetCapacity(Container, Wanted), OutError);
+	return Succeeded(Registry.AddCapacity(Container, Count), OutError);
 }
 
-bool UInventorySubsystem::SetUsableCellCount(FInventoryContainerHandle Container, int32 Count, EInventoryError& OutError)
+bool UInventorySubsystem::AddStackBonus(FInventoryContainerHandle Container, const FInventoryItemQuery& ItemQuery, int32 Amount, EInventoryError& OutError)
 {
-	return Succeeded(Registry.SetUsableCellCount(Container, Count), OutError);
-}
-
-bool UInventorySubsystem::AddUsableCells(FInventoryContainerHandle Container, int32 Count, EInventoryError& OutError)
-{
-	const UInventoryContainerLayout* Layout = GetContainerLayout(Container);
-	if (!Layout)
-	{
-		return Succeeded(EInventoryError::InvalidContainer, OutError);
-	}
-	if (Layout->Type != EInventoryContainerType::Grid)
-	{
-		return Succeeded(EInventoryError::Rejected, OutError);
-	}
-	return AddCapacity(Container, Count, OutError);
+	return Succeeded(Registry.AddStackBonus(Container, ItemQuery, Amount), OutError);
 }
 
 bool UInventorySubsystem::SortContainer(FInventoryContainerHandle Container, EInventoryError& OutError)

@@ -4,9 +4,12 @@
 #include "Components/DirectionalLightComponent.h"
 #include "Components/SceneCaptureComponent2D.h"
 #include "Components/StaticMeshComponent.h"
+#include "ContentStreaming.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture2D.h"
 #include "Engine/TextureRenderTarget2D.h"
+#include "Engine/World.h"
+#include "RenderingThread.h"
 #include "TextureResource.h"
 #include "ThumbnailRendering/ThumbnailManager.h"
 
@@ -256,18 +259,58 @@ FInventoryIconRenderer::FInventoryIconRenderer()
 void FInventoryIconRenderer::SetMesh(UStaticMesh* Mesh)
 {
 	MeshComponent->SetStaticMesh(Mesh);
+	WaitUntilDrawable();
+	bFirstDraw = true;
+}
 
-	// Meshes and shaders build in the background, and textures nobody has looked at yet are streamed in at low resolution.
-	FAssetCompilingManager::Get().FinishAllCompilation();
+bool FInventoryIconRenderer::WaitUntilDrawable()
+{
+	// Meshes, textures and shaders build in the background. Some only start once the mesh's render state is built, such as the shaders for
+	// a use its materials haven't had before, like Nanite; that render state then shows the default material, so it's built again.
+	constexpr int32 MaxRebuilds = 3;
+	UWorld* World = PreviewScene.GetWorld();
+	bool bCompiled = false;
+	for (int32 Rebuild = 0; ; ++Rebuild)
+	{
+		MeshComponent->MarkRenderStateDirty();
+		World->SendAllEndOfFrameUpdates();
+		FlushRenderingCommands();
+
+		if (Rebuild == MaxRebuilds || FAssetCompilingManager::Get().GetNumRemainingAssets() == 0)
+		{
+			break;
+		}
+		FAssetCompilingManager::Get().FinishAllCompilation();
+		bCompiled = true;
+	}
+
+	StreamInTextures();
+	return bCompiled;
+}
+
+void FInventoryIconRenderer::StreamInTextures()
+{
 	TArray<UTexture*> Textures;
 	MeshComponent->GetUsedTextures(Textures, EMaterialQualityLevel::Num);
+
+	TArray<UTexture2D*> Streamed;
 	for (UTexture* Texture : Textures)
 	{
 		if (UTexture2D* Texture2D = Cast<UTexture2D>(Texture))
 		{
 			Texture2D->SetForceMipLevelsToBeResident(30.0f);
-			Texture2D->WaitForStreaming();
+			Streamed.Add(Texture2D);
 		}
+	}
+
+	// A texture loaded since the streamer last updated isn't known to it until it updates again, and nothing updates it while icons
+	// render, so waiting on the texture alone would leave it at the low resolution it loaded at. So the streamer updates now, taking in
+	// every texture, then each of these is waited for until it's fully in.
+	IStreamingManager::Get().UpdateResourceStreaming(0.0f, /*bProcessEverything*/ true);
+	IStreamingManager::Get().BlockTillAllRequestsFinished(5.0f);
+	for (UTexture2D* Texture : Streamed)
+	{
+		Texture->WaitForStreaming();
 	}
 }
 
@@ -301,7 +344,17 @@ TArray<FColor> FInventoryIconRenderer::Render(const FInventoryIconFraming& Frami
 	const double Distance = FMath::Max(Bounds.SphereRadius, 1.0) * FMath::Sqrt(1.0 + 1.0 / FMath::Square(NarrowTangent));
 	FVector2D Shift = FVector2D::ZeroVector;
 
-	const TArray<FLinearColor> FirstPass = Capture(RenderSize, Distance, Shift, Tangent);
+	TArray<FLinearColor> FirstPass = Capture(RenderSize, Distance, Shift, Tangent);
+	if (bFirstDraw && !FirstPass.IsEmpty())
+	{
+		// Drawing a mesh for the first time can ask for more still. If anything had to be compiled, the first draw may have shown the default
+		// material, whose outline differs from a masked material's, so it's drawn again.
+		bFirstDraw = false;
+		if (WaitUntilDrawable())
+		{
+			FirstPass = Capture(RenderSize, Distance, Shift, Tangent);
+		}
+	}
 	if (FirstPass.IsEmpty())
 	{
 		return {};

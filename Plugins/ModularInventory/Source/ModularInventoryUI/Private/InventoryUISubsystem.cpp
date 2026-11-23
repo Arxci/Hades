@@ -12,10 +12,21 @@
 
 namespace
 {
-	bool IsReadOnly(const FInventoryRegistry& Registry, FInventoryContainerHandle Container)
+	/** Whether the player may take items out of the container, or move them around inside it, as its layout's Player Access says. */
+	bool CanPlayerTakeOut(const FInventoryRegistry& Registry, FInventoryContainerHandle Container)
 	{
 		const FInventoryContainerRecord* Record = Registry.FindContainer(Container);
-		return Record && Record->Layout->bReadOnlyInUI;
+		return Record && Record->Layout->CanPlayerTakeOut();
+	}
+
+	/**
+	 * Whether the player may put an item from From into the container. Moving an item around inside the container it's in only needs
+	 * leave to take it out, so a take-only container can still be rearranged.
+	 */
+	bool CanPlayerPutIn(const FInventoryRegistry& Registry, FInventoryContainerHandle Container, FInventoryContainerHandle From)
+	{
+		const FInventoryContainerRecord* Record = Registry.FindContainer(Container);
+		return Record && (Record->Layout->CanPlayerPutIn() || (Container == From && Record->Layout->CanPlayerTakeOut()));
 	}
 
 	bool IsGrid(const FInventoryRegistry& Registry, FInventoryContainerHandle Container)
@@ -37,14 +48,36 @@ namespace
 	}
 
 	/**
-	 * The part of a grid anything can go in: all its columns, and its rows down to the last with a usable cell. Cells unlock row by row,
-	 * so the rows below that are wholly locked, and held items keep out of them as they keep inside the grid's edges.
+	 * The part of a grid a held item can go in: all its columns, and its rows down to the last with an unlocked cell. Cells unlock row by
+	 * row, so the rows below that are wholly locked, or not there yet, and held items keep out of them as they keep inside the grid's edges.
+	 * A grid that grows to fit also has free rows below its last, as many as Held Rows, the held item's height, for it to grow into.
 	 */
-	FIntPoint GetUsableGridSize(const FInventoryRegistry& Registry, FInventoryContainerHandle Container, const UInventoryContainerLayout& Layout)
+	FIntPoint GetUsableGridSize(const FInventoryRegistry& Registry, FInventoryContainerHandle Container, const UInventoryContainerLayout& Layout, int32 HeldRows)
 	{
-		const int32 UsableCells = FMath::Max(0, Registry.GetUsableCellCount(Container));
-		const int32 UsableRows = Layout.GridSize.X > 0 ? FMath::DivideAndRoundUp(UsableCells, Layout.GridSize.X) : 0;
-		return FIntPoint(Layout.GridSize.X, FMath::Min(Layout.GridSize.Y, UsableRows));
+		const int32 Columns = FMath::Max(0, Layout.GridSize.X);
+		if (Columns == 0)
+		{
+			return FIntPoint::ZeroValue;
+		}
+
+		int32 Rows = Registry.GetGridRows(Container);
+		if (Layout.GridGrowth == EInventoryGridGrowth::ToFitItems)
+		{
+			Rows += FMath::Max(1, HeldRows);
+		}
+
+		// Never past the last row with an unlocked cell, nor Max Rows.
+		const int32 Capacity = Registry.GetCapacity(Container);
+		if (Capacity != INDEX_NONE)
+		{
+			Rows = FMath::Min(Rows, FMath::DivideAndRoundUp(FMath::Max(0, Capacity), Columns));
+		}
+		const int32 MaxRows = Layout.GetMaxRows();
+		if (MaxRows != INDEX_NONE)
+		{
+			Rows = FMath::Min(Rows, MaxRows);
+		}
+		return FIntPoint(Columns, Rows);
 	}
 }
 
@@ -119,7 +152,7 @@ bool UInventoryUISubsystem::CanBeginHold(FInventoryItemHandle Item) const
 {
 	const FInventoryRegistry* Registry = GetRegistry();
 	const FInventoryItemRecord* Record = Registry ? Registry->FindItem(Item) : nullptr;
-	return Record && !bChoosingItem && !IsReadOnly(*Registry, Record->Container);
+	return Record && !bChoosingItem && CanPlayerTakeOut(*Registry, Record->Container);
 }
 
 void UInventoryUISubsystem::CancelHold()
@@ -167,7 +200,7 @@ bool UInventoryUISubsystem::CanRotateHeld() const
 	}
 
 	// Never into a shape the grid it's over can't hold at all, such as a long item stood upright in a short grid, counting only the rows
-	// with usable cells.
+	// with unlocked cells.
 	const FInventoryContainerHandle GridHandle = TargetContainer.IsSet() ? TargetContainer : Record->Container;
 	const FInventoryContainerRecord* Grid = Registry->FindContainer(GridHandle);
 	const FIntPoint TurnedSize = Record->Definition->GetSize(!bHeldRotated);
@@ -175,7 +208,7 @@ bool UInventoryUISubsystem::CanRotateHeld() const
 	{
 		return true;
 	}
-	const FIntPoint UsableSize = GetUsableGridSize(*Registry, GridHandle, *Grid->Layout);
+	const FIntPoint UsableSize = GetUsableGridSize(*Registry, GridHandle, *Grid->Layout, TurnedSize.Y);
 	return TurnedSize.X <= UsableSize.X && TurnedSize.Y <= UsableSize.Y;
 }
 
@@ -217,6 +250,38 @@ FIntPoint UInventoryUISubsystem::GetHeldSize() const
 	const FInventoryRegistry* Registry = GetRegistry();
 	const FInventoryItemRecord* Record = Registry ? Registry->FindItem(HeldItem) : nullptr;
 	return Record ? Record->Definition->GetSize(bHeldRotated) : FIntPoint::ZeroValue;
+}
+
+int32 UInventoryUISubsystem::GetGridRowsShown(FInventoryContainerHandle Container) const
+{
+	const FInventoryRegistry* Registry = GetRegistry();
+	const FInventoryContainerRecord* Record = Registry ? Registry->FindContainer(Container) : nullptr;
+	if (!Record || Record->Layout->Type != EInventoryContainerType::Grid)
+	{
+		return 0;
+	}
+
+	const UInventoryContainerLayout& Layout = *Record->Layout;
+	const int32 Rows = Registry->GetGridRows(Container);
+	if (Layout.GridGrowth != EInventoryGridGrowth::ToFitItems)
+	{
+		return Rows;
+	}
+
+	// Room below the last row to put the held item down, which the grid then grows to fit, but none past Max Rows or the capacity.
+	const int32 FreeRows = IsHolding() ? FMath::Max(1, GetHeldSize().Y) : 1;
+	int32 Shown = Rows + FreeRows;
+	const int32 MaxRows = Layout.GetMaxRows();
+	if (MaxRows != INDEX_NONE)
+	{
+		Shown = FMath::Min(Shown, MaxRows);
+	}
+	const int32 Capacity = Registry->GetCapacity(Container);
+	if (Capacity != INDEX_NONE && Layout.GridSize.X > 0)
+	{
+		Shown = FMath::Min(Shown, FMath::DivideAndRoundUp(FMath::Max(0, Capacity), Layout.GridSize.X));
+	}
+	return FMath::Max(Rows, Shown);
 }
 
 void UInventoryUISubsystem::SetHeld(FInventoryItemHandle Item, int32 Count, bool bRotated)
@@ -449,7 +514,7 @@ FInventoryPlacement UInventoryUISubsystem::FitInGrid(FInventoryContainerHandle C
 
 	// The cell it's held by goes on the cell aimed at, moved in from the edges so it fits, rows wholly locked counting as past the edge.
 	const FIntPoint HeldSize = GetHeldSize();
-	const FIntPoint LastCell = (GetUsableGridSize(*Registry, Container, *Record->Layout) - HeldSize).ComponentMax(FIntPoint::ZeroValue);
+	const FIntPoint LastCell = (GetUsableGridSize(*Registry, Container, *Record->Layout, HeldSize.Y) - HeldSize).ComponentMax(FIntPoint::ZeroValue);
 	FInventoryPlacement Fitted = Placement;
 	Fitted.Cell = (Placement.Cell - HeldGrabCell).ComponentMax(FIntPoint::ZeroValue).ComponentMin(LastCell);
 
@@ -494,7 +559,8 @@ EInventoryDropAction UInventoryUISubsystem::ResolvePlacement(FInventoryContainer
 	{
 		return EInventoryDropAction::None;
 	}
-	if (TargetRecord->Layout->bReadOnlyInUI)
+	// The target's Player Access may not let the player put anything there, such as key items, or a container to take loot from.
+	if (!CanPlayerPutIn(*Registry, Container, Held->Container))
 	{
 		OutError = EInventoryError::Rejected;
 		return EInventoryDropAction::Invalid;
@@ -513,7 +579,10 @@ EInventoryDropAction UInventoryUISubsystem::ResolvePlacement(FInventoryContainer
 	const FIntPoint OccupantSize = OccupantRecord ? OccupantRecord->Definition->GetSize(OccupantRecord->Placement.bRotated) : FIntPoint::ZeroValue;
 	const bool bFitsTarget = !IsGrid(*Registry, Container) || OccupantSize == GetHeldSize();
 	const bool bFitsSource = !IsGrid(*Registry, Held->Container) || OccupantSize == Held->Definition->GetSize(Held->Placement.bRotated);
-	const bool bCanSwap = Style.bSwapItems && bOccupiedByOther && !bMerge && MoveCount == 0 && bFitsTarget && bFitsSource;
+
+	// The other item leaves the target for where the held one was, so the player has to be let take it out and put it there.
+	const bool bOccupantMayMove = CanPlayerTakeOut(*Registry, Container) && CanPlayerPutIn(*Registry, Held->Container, Container);
+	const bool bCanSwap = Style.bSwapItems && bOccupiedByOther && !bMerge && MoveCount == 0 && bFitsTarget && bFitsSource && bOccupantMayMove;
 
 	// Equipment slots make way like the equipment component does: what's in the way goes to the owner's storage.
 	const UInventoryContainerLayout& TargetLayout = *TargetRecord->Layout;
@@ -649,26 +718,28 @@ UInventoryComponent* UInventoryUISubsystem::GetPlayerInventory() const
 	return Controller ? UInventoryComponent::FindInventoryComponent(Controller->GetPawn()) : nullptr;
 }
 
-TArray<FInventoryContainerHandle> UInventoryUISubsystem::GetTransferTargets(FInventoryItemHandle Item) const
+bool UInventoryUISubsystem::FindTransferDirection(FInventoryItemHandle Item, bool& bOutToPlayer) const
 {
+	bOutToPlayer = false;
 	const FInventoryRegistry* Registry = GetRegistry();
 	const FInventoryItemRecord* Record = Registry ? Registry->FindItem(Item) : nullptr;
-	const UInventoryComponent* PlayerInventory = GetPlayerInventory();
-	if (!Record || !PlayerInventory || bChoosingItem || !Registry->IsValid(TransferContainer)
-		|| IsReadOnly(*Registry, Record->Container) || IsReadOnly(*Registry, TransferContainer))
+	if (!Record || !GetPlayerInventory() || bChoosingItem || !Registry->IsValid(TransferContainer) || !CanPlayerTakeOut(*Registry, Record->Container))
 	{
-		return TArray<FInventoryContainerHandle>();
+		return false;
 	}
 
-	const bool bFromTransfer = Registry->GetRootContainer(Record->Container) == Registry->GetRootContainer(TransferContainer);
-	return bFromTransfer ? PlayerInventory->GetStorageContainers() : TArray<FInventoryContainerHandle>({ TransferContainer });
+	// Taken from the other side, it goes wherever the player's inventory puts what it takes, as a pickup's items do. Given to the other
+	// side, the player has to be let put it in there.
+	bOutToPlayer = Registry->GetRootContainer(Record->Container) == Registry->GetRootContainer(TransferContainer);
+	return bOutToPlayer || CanPlayerPutIn(*Registry, TransferContainer, Record->Container);
 }
 
 bool UInventoryUISubsystem::TransferItem(FInventoryItemHandle Item)
 {
 	FInventoryRegistry* Registry = GetRegistry();
-	const TArray<FInventoryContainerHandle> Targets = GetTransferTargets(Item);
-	if (!Registry || Targets.IsEmpty())
+	UInventoryComponent* PlayerInventory = GetPlayerInventory();
+	bool bToPlayer = false;
+	if (!Registry || !PlayerInventory || !FindTransferDirection(Item, bToPlayer))
 	{
 		return false;
 	}
@@ -678,7 +749,18 @@ bool UInventoryUISubsystem::TransferItem(FInventoryItemHandle Item)
 		EndHold();
 	}
 	const FInventoryContainerHandle HoveredIn = GetItemContainer(*Registry, HoveredItem);
-	if (Registry->MoveItemToContainers(Item, Targets, 0, true) != EInventoryError::None)
+
+	// Into the player's inventory as it takes items, so a capacity upgrade it applies as it's taken is used, not stored.
+	EInventoryError Error = EInventoryError::None;
+	if (bToPlayer)
+	{
+		PlayerInventory->TakeItem(Item, 0, true, Error);
+	}
+	else
+	{
+		Error = Registry->MoveItemToContainers(Item, MakeArrayView(&TransferContainer, 1), 0, true);
+	}
+	if (Error != EInventoryError::None)
 	{
 		return false;
 	}
@@ -694,8 +776,17 @@ bool UInventoryUISubsystem::TransferItem(FInventoryItemHandle Item)
 bool UInventoryUISubsystem::CanTransferItem(FInventoryItemHandle Item) const
 {
 	FInventoryRegistry* Registry = GetRegistry();
-	const TArray<FInventoryContainerHandle> Targets = GetTransferTargets(Item);
-	return Registry && !Targets.IsEmpty() && Registry->DryRun([&]() { return Registry->MoveItemToContainers(Item, Targets, 0, true); }) == EInventoryError::None;
+	const UInventoryComponent* PlayerInventory = GetPlayerInventory();
+	bool bToPlayer = false;
+	if (!Registry || !PlayerInventory || !FindTransferDirection(Item, bToPlayer))
+	{
+		return false;
+	}
+	if (bToPlayer)
+	{
+		return PlayerInventory->CanTakeItem(Item, 0, true);
+	}
+	return Registry->DryRun([&]() { return Registry->MoveItemToContainers(Item, MakeArrayView(&TransferContainer, 1), 0, true); }) == EInventoryError::None;
 }
 
 bool UInventoryUISubsystem::TakeAll()
@@ -721,7 +812,7 @@ bool UInventoryUISubsystem::CanTakeAll() const
 {
 	const FInventoryRegistry* Registry = GetRegistry();
 	const FInventoryContainerRecord* Record = Registry ? Registry->FindContainer(TransferContainer) : nullptr;
-	return Record && !Record->Items.IsEmpty() && !bChoosingItem && !IsReadOnly(*Registry, TransferContainer) && GetPlayerInventory();
+	return Record && !Record->Items.IsEmpty() && !bChoosingItem && CanPlayerTakeOut(*Registry, TransferContainer) && GetPlayerInventory();
 }
 
 void UInventoryUISubsystem::ClearInteraction()

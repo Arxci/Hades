@@ -138,105 +138,298 @@ void FInventoryFeatureSpec::Define()
 			TestTrue(TEXT("Old layout kept"), Registry->FindContainer(Grid)->Layout.Get() == Data->Grid4x4);
 		});
 
-		It("never put items on cells locked by Usable Cells", [this]()
+		It("never put items on locked cells", [this]()
 		{
-			// 4 x 2 with six usable cells: the last two cells of the bottom row are locked.
-			UInventoryContainerLayout* Partial = Data->Make<UInventoryContainerLayout>();
-			Partial->GridSize = FIntPoint(4, 2);
-			Partial->UsableCells = 6;
-			const FInventoryContainerHandle Pockets = Registry->CreateContainer(Partial, FGameplayTag(), nullptr);
-			TestEqual(TEXT("Usable cell count"), Partial->GetUsableCellCount(), 6);
-			TestTrue(TEXT("Last usable cell"), Partial->IsCellUsable(FIntPoint(1, 1)));
-			TestFalse(TEXT("First locked cell"), Partial->IsCellUsable(FIntPoint(2, 1)));
+			// 4 x 2 starting with six usable cells: the last two cells of the bottom row are locked.
+			const FInventoryContainerHandle Inventory = Registry->CreateContainer(Data->Grid4x2, FGameplayTag(), nullptr, 6);
+			TestEqual(TEXT("Starting capacity"), Registry->GetCapacity(Inventory), 6);
+			TestEqual(TEXT("Max capacity"), Registry->GetMaxCapacity(Inventory), 8);
+			TestTrue(TEXT("Last usable cell"), Registry->IsPlacementUsable(Inventory, FInventoryPlacement::AtCell(FIntPoint(1, 1))));
+			TestFalse(TEXT("First locked cell"), Registry->IsPlacementUsable(Inventory, FInventoryPlacement::AtCell(FIntPoint(2, 1))));
 
-			const FInventoryItemHandle Stone = AddTestItem(*Registry, Data->Stone, Pockets);
-			const EInventoryError OntoLocked = Registry->CanPlace(Stone, Pockets, FInventoryPlacement::AtCell(FIntPoint(3, 1)));
+			const FInventoryItemHandle Stone = AddTestItem(*Registry, Data->Stone, Inventory);
+			const EInventoryError OntoLocked = Registry->CanPlace(Stone, Inventory, FInventoryPlacement::AtCell(FIntPoint(3, 1)));
 			TestTrue(*DescribeErrors(TEXT("Stone onto a locked cell"), OntoLocked, EInventoryError::OutOfBounds), OntoLocked == EInventoryError::OutOfBounds);
 
 			// Standing up at (2, 0), the knife would reach down into a locked cell.
 			const FInventoryItemHandle Knife = AddTestItem(*Registry, Data->Knife, Grid);
-			const EInventoryError KnifeOverLocked = Registry->CanPlace(Knife, Pockets, FInventoryPlacement::AtCell(FIntPoint(2, 0)));
+			const EInventoryError KnifeOverLocked = Registry->CanPlace(Knife, Inventory, FInventoryPlacement::AtCell(FIntPoint(2, 0)));
 			TestTrue(*DescribeErrors(TEXT("Knife over a locked cell"), KnifeOverLocked, EInventoryError::OutOfBounds), KnifeOverLocked == EInventoryError::OutOfBounds);
 
 			for (int32 Index = 1; Index < 6; ++Index)
 			{
-				TestTrue(*FString::Printf(TEXT("Stone %d added"), Index + 1), AddTestItem(*Registry, Data->Stone, Pockets).IsSet());
+				TestTrue(*FString::Printf(TEXT("Stone %d added"), Index + 1), AddTestItem(*Registry, Data->Stone, Inventory).IsSet());
 			}
-			TestFalse(TEXT("No room for a seventh stone"), AddTestItem(*Registry, Data->Stone, Pockets).IsSet());
+			TestFalse(TEXT("No room for a seventh stone"), AddTestItem(*Registry, Data->Stone, Inventory).IsSet());
 		});
 
-		It("unlock cells with a layout that has more usable cells", [this]()
+		It("take a new layout's capacity when given one", [this]()
 		{
-			UInventoryContainerLayout* Partial = Data->Make<UInventoryContainerLayout>();
-			Partial->GridSize = FIntPoint(4, 2);
-			Partial->UsableCells = 6;
-			const FInventoryContainerHandle Pockets = Registry->CreateContainer(Partial, FGameplayTag(), nullptr);
-			const FInventoryItemHandle Stone = AddTestItem(*Registry, Data->Stone, Pockets, 1, FInventoryPlacement::AtCell(FIntPoint(1, 1)));
+			const FInventoryContainerHandle Inventory = Registry->CreateContainer(Data->Grid4x2, FGameplayTag(), nullptr, 6);
+			const FInventoryItemHandle Stone = AddTestItem(*Registry, Data->Stone, Inventory, 1, FInventoryPlacement::AtCell(FIntPoint(1, 1)));
 
-			TestTrue(TEXT("Unlocked"), Registry->SetContainerLayout(Pockets, Data->Grid4x2) == EInventoryError::None);
+			TestTrue(TEXT("Given a bigger layout"), Registry->SetContainerLayout(Inventory, Data->Grid4x4) == EInventoryError::None);
+			TestEqual(TEXT("The new layout's capacity"), Registry->GetCapacity(Inventory), 16);
 			TestTrue(TEXT("Stone in place"), Registry->GetItemPlacement(Stone).Cell == FIntPoint(1, 1));
-			TestTrue(TEXT("Moved onto a cell that was locked"), Registry->MoveItem(Stone, Pockets, FInventoryPlacement::AtCell(FIntPoint(3, 1))) == EInventoryError::None);
-
-			const EInventoryError Error = Registry->SetContainerLayout(Pockets, Partial);
-			TestTrue(*DescribeErrors(TEXT("Locking the stone's cell"), Error, EInventoryError::OutOfBounds), Error == EInventoryError::OutOfBounds);
-			TestTrue(TEXT("Unlocked layout kept"), Registry->FindContainer(Pockets)->Layout.Get() == Data->Grid4x2);
+			TestTrue(TEXT("Moved onto a cell that was locked"), Registry->MoveItem(Stone, Inventory, FInventoryPlacement::AtCell(FIntPoint(3, 1))) == EInventoryError::None);
 		});
 
 		It("unlock cells at runtime, row by row, within one layout", [this]()
 		{
 			// 4 x 2 starting with four usable cells: the whole bottom row is locked.
-			UInventoryContainerLayout* Partial = Data->Make<UInventoryContainerLayout>();
-			Partial->GridSize = FIntPoint(4, 2);
-			Partial->UsableCells = 4;
-			const FInventoryContainerHandle Pockets = Registry->CreateContainer(Partial, FGameplayTag(), nullptr);
-			TestEqual(TEXT("Usable cells from the layout"), Registry->GetUsableCellCount(Pockets), 4);
-			TestFalse(TEXT("Bottom row locked"), Registry->IsCellUsable(Pockets, FIntPoint(0, 1)));
+			const FInventoryContainerHandle Inventory = Registry->CreateContainer(Data->Grid4x2, FGameplayTag(), nullptr, 4);
+			TestEqual(TEXT("Usable cells to start with"), Registry->GetCapacity(Inventory), 4);
+			TestFalse(TEXT("Bottom row locked"), Registry->IsPlacementUsable(Inventory, FInventoryPlacement::AtCell(FIntPoint(0, 1))));
 
-			TestTrue(TEXT("Two more unlocked"), Registry->SetUsableCellCount(Pockets, 6) == EInventoryError::None);
-			TestEqual(TEXT("Usable cells after unlocking"), Registry->GetUsableCellCount(Pockets), 6);
-			TestTrue(TEXT("First cell of the bottom row usable"), Registry->IsCellUsable(Pockets, FIntPoint(1, 1)));
-			TestFalse(TEXT("Third cell of the bottom row still locked"), Registry->IsCellUsable(Pockets, FIntPoint(2, 1)));
-			TestTrue(TEXT("The layout is unchanged"), Partial->UsableCells == 4);
+			TestTrue(TEXT("Two more unlocked"), Registry->AddCapacity(Inventory, 2) == EInventoryError::None);
+			TestEqual(TEXT("Usable cells after unlocking"), Registry->GetCapacity(Inventory), 6);
+			TestTrue(TEXT("Second cell of the bottom row usable"), Registry->IsPlacementUsable(Inventory, FInventoryPlacement::AtCell(FIntPoint(1, 1))));
+			TestFalse(TEXT("Third cell of the bottom row still locked"), Registry->IsPlacementUsable(Inventory, FInventoryPlacement::AtCell(FIntPoint(2, 1))));
+			TestEqual(TEXT("The layout is unchanged"), Data->Grid4x2->GetStartingCapacity(), 8);
 
-			const FInventoryItemHandle Stone = AddTestItem(*Registry, Data->Stone, Pockets, 1, FInventoryPlacement::AtCell(FIntPoint(1, 1)));
+			const FInventoryItemHandle Stone = AddTestItem(*Registry, Data->Stone, Inventory, 1, FInventoryPlacement::AtCell(FIntPoint(1, 1)));
 			TestTrue(TEXT("Stone on a newly unlocked cell"), Stone.IsSet());
 
-			TestTrue(TEXT("More than the grid unlocks every cell"), Registry->SetUsableCellCount(Pockets, 100) == EInventoryError::None);
-			TestEqual(TEXT("Every cell usable"), Registry->GetUsableCellCount(Pockets), 8);
+			TestTrue(TEXT("More than the grid unlocks every cell"), Registry->SetCapacity(Inventory, 100) == EInventoryError::None);
+			TestEqual(TEXT("Every cell usable"), Registry->GetCapacity(Inventory), 8);
+		});
+
+		It("stop growing once every cell is unlocked", [this]()
+		{
+			const FInventoryContainerHandle Inventory = Registry->CreateContainer(Data->Grid4x2, FGameplayTag(), nullptr, 7);
+
+			TestTrue(TEXT("Two asked for, the last one unlocked"), Registry->AddCapacity(Inventory, 2) == EInventoryError::None);
+			TestEqual(TEXT("Every cell usable"), Registry->GetCapacity(Inventory), 8);
+
+			const EInventoryError Full = Registry->AddCapacity(Inventory, 1);
+			TestTrue(*DescribeErrors(TEXT("Growing a full grid"), Full, EInventoryError::AtMaxCapacity), Full == EInventoryError::AtMaxCapacity);
+
+			// A list without a limit has nothing left to unlock, and a list that holds nothing has nothing left to lock.
+			UInventoryContainerLayout* OpenList = Data->Make<UInventoryContainerLayout>();
+			OpenList->Type = EInventoryContainerType::List;
+			const FInventoryContainerHandle Unlimited = Registry->CreateContainer(OpenList, FGameplayTag(), nullptr);
+			const EInventoryError GrowUnlimited = Registry->AddCapacity(Unlimited, 1);
+			TestTrue(*DescribeErrors(TEXT("Growing a list without a limit"), GrowUnlimited, EInventoryError::AtMaxCapacity), GrowUnlimited == EInventoryError::AtMaxCapacity);
+
+			const FInventoryContainerHandle Closed = Registry->CreateContainer(Data->SmallList, FGameplayTag(), nullptr, 0);
+			const EInventoryError ShrinkClosed = Registry->AddCapacity(Closed, -1);
+			TestTrue(*DescribeErrors(TEXT("Locking a list that holds nothing"), ShrinkClosed, EInventoryError::InvalidCount), ShrinkClosed == EInventoryError::InvalidCount);
+		});
+
+		It("grow with upgrades a whole row at a time, up to Max Rows", [this]()
+		{
+			// Starts as 4 x 2, and can grow to 4 x 4.
+			UInventoryContainerLayout* Growing = Data->Make<UInventoryContainerLayout>();
+			Growing->GridSize = FIntPoint(4, 2);
+			Growing->GridGrowth = EInventoryGridGrowth::WithUpgrades;
+			Growing->MaxRows = 4;
+			const FInventoryContainerHandle Inventory = Registry->CreateContainer(Growing, FGameplayTag(), nullptr);
+			TestEqual(TEXT("Starts with Grid Size's cells"), Registry->GetCapacity(Inventory), 8);
+			TestEqual(TEXT("Can grow to Max Rows"), Registry->GetMaxCapacity(Inventory), 16);
+			TestEqual(TEXT("Has Grid Size's rows"), Registry->GetGridRows(Inventory), 2);
+			TestFalse(TEXT("No third row yet"), Registry->IsPlacementUsable(Inventory, FInventoryPlacement::AtCell(FIntPoint(0, 2))));
+
+			// Two more cells reach into a third row, which comes whole, its last two cells locked.
+			TestTrue(TEXT("Two more cells"), Registry->AddCapacity(Inventory, 2) == EInventoryError::None);
+			TestEqual(TEXT("A third row"), Registry->GetGridRows(Inventory), 3);
+			TestTrue(TEXT("Its second cell usable"), Registry->IsPlacementUsable(Inventory, FInventoryPlacement::AtCell(FIntPoint(1, 2))));
+			TestFalse(TEXT("Its third cell locked"), Registry->IsPlacementUsable(Inventory, FInventoryPlacement::AtCell(FIntPoint(2, 2))));
+
+			// New items fill the grid it started with, then the new cells.
+			for (int32 Index = 0; Index < 10; ++Index)
+			{
+				TestTrue(*FString::Printf(TEXT("Stone %d added"), Index + 1), AddTestItem(*Registry, Data->Stone, Inventory).IsSet());
+			}
+			TestFalse(TEXT("No room for an eleventh stone"), AddTestItem(*Registry, Data->Stone, Inventory).IsSet());
+			TestTrue(TEXT("A stone on the new row"), Registry->GetItemAt(Inventory, FInventoryPlacement::AtCell(FIntPoint(1, 2))).IsSet());
+
+			// It stops at Max Rows.
+			TestTrue(TEXT("Grown to the end"), Registry->AddCapacity(Inventory, 100) == EInventoryError::None);
+			TestEqual(TEXT("Every cell of 4 x 4"), Registry->GetCapacity(Inventory), 16);
+			TestEqual(TEXT("Four rows"), Registry->GetGridRows(Inventory), 4);
+			const EInventoryError Full = Registry->AddCapacity(Inventory, 1);
+			TestTrue(*DescribeErrors(TEXT("Growing past Max Rows"), Full, EInventoryError::AtMaxCapacity), Full == EInventoryError::AtMaxCapacity);
+
+			// Grid Size's rows always count, however few cells are usable, and a container can start grown.
+			TestEqual(TEXT("Grid Size's rows with nothing usable"), Growing->GetGridRowsAtCapacity(0), 2);
+			TestEqual(TEXT("Started with ten cells"), Registry->GetGridRows(Registry->CreateContainer(Growing, FGameplayTag(), nullptr, 10)), 3);
+
+			// Max Rows below Grid Size's rows adds nothing, and nor does it without growth.
+			UInventoryContainerLayout* Fixed = Data->Make<UInventoryContainerLayout>();
+			Fixed->GridSize = FIntPoint(4, 2);
+			Fixed->GridGrowth = EInventoryGridGrowth::WithUpgrades;
+			Fixed->MaxRows = 1;
+			TestEqual(TEXT("Max Rows below Grid Size"), Fixed->GetMaxCapacity(), 8);
+			Fixed->GridGrowth = EInventoryGridGrowth::None;
+			Fixed->MaxRows = 5;
+			TestEqual(TEXT("Max Rows without growth"), Fixed->GetMaxCapacity(), 8);
+		});
+
+		It("grow with upgrades without a limit when Max Rows is 0", [this]()
+		{
+			UInventoryContainerLayout* Endless = Data->Make<UInventoryContainerLayout>();
+			Endless->GridSize = FIntPoint(4, 2);
+			Endless->GridGrowth = EInventoryGridGrowth::WithUpgrades;
+			const FInventoryContainerHandle Inventory = Registry->CreateContainer(Endless, FGameplayTag(), nullptr);
+			TestEqual(TEXT("No most"), Registry->GetMaxCapacity(Inventory), INDEX_NONE);
+
+			TestTrue(TEXT("A thousand more cells"), Registry->AddCapacity(Inventory, 1000) == EInventoryError::None);
+			TestEqual(TEXT("All of them usable"), Registry->GetCapacity(Inventory), 1008);
+			TestEqual(TEXT("Rows for all of them"), Registry->GetGridRows(Inventory), 252);
+			TestTrue(TEXT("The last cell usable"), Registry->IsPlacementUsable(Inventory, FInventoryPlacement::AtCell(FIntPoint(3, 251))));
+			TestFalse(TEXT("None past it"), Registry->IsPlacementUsable(Inventory, FInventoryPlacement::AtCell(FIntPoint(0, 252))));
+			TestTrue(TEXT("A stone at the bottom"), AddTestItem(*Registry, Data->Stone, Inventory, 1, FInventoryPlacement::AtCell(FIntPoint(3, 251))).IsSet());
+		});
+
+		It("grow to fit their items, and lose empty rows again", [this]()
+		{
+			UInventoryContainerLayout* Bag = Data->Make<UInventoryContainerLayout>();
+			Bag->GridSize = FIntPoint(4, 2);
+			Bag->GridGrowth = EInventoryGridGrowth::ToFitItems;
+			const FInventoryContainerHandle Inventory = Registry->CreateContainer(Bag, FGameplayTag(), nullptr);
+			TestEqual(TEXT("No limit"), Registry->GetCapacity(Inventory), INDEX_NONE);
+			TestEqual(TEXT("Starts at Grid Size"), Registry->GetGridRows(Inventory), 2);
+
+			// The ninth stone doesn't fit 4 x 2, so the grid adds a row for it.
+			TArray<FInventoryItemHandle> Stones;
+			for (int32 Index = 0; Index < 9; ++Index)
+			{
+				const FInventoryItemHandle Stone = AddTestItem(*Registry, Data->Stone, Inventory);
+				TestTrue(*FString::Printf(TEXT("Stone %d added"), Index + 1), Stone.IsSet());
+				Stones.Add(Stone);
+			}
+			TestEqual(TEXT("A third row"), Registry->GetGridRows(Inventory), 3);
+			TestTrue(TEXT("The ninth stone on it"), Registry->GetItemPlacement(Stones.Last()).Cell == FIntPoint(0, 2));
+
+			// Put far below, the grid grows down to it; brought back, the empty rows go again.
+			TestTrue(TEXT("Moved far down"), Registry->MoveItem(Stones[0], Inventory, FInventoryPlacement::AtCell(FIntPoint(3, 9))) == EInventoryError::None);
+			TestEqual(TEXT("Grown to ten rows"), Registry->GetGridRows(Inventory), 10);
+			TestTrue(TEXT("Moved back up"), Registry->MoveItem(Stones[0], Inventory, FInventoryPlacement::AtCell(FIntPoint(0, 0))) == EInventoryError::None);
+			TestEqual(TEXT("Back to three rows"), Registry->GetGridRows(Inventory), 3);
+
+			// Never fewer rows than Grid Size.
+			Registry->RemoveItem(Stones.Last());
+			TestEqual(TEXT("Back to Grid Size"), Registry->GetGridRows(Inventory), 2);
+		});
+
+		It("stop growing to fit at Max Rows", [this]()
+		{
+			UInventoryContainerLayout* Bag = Data->Make<UInventoryContainerLayout>();
+			Bag->GridSize = FIntPoint(4, 2);
+			Bag->GridGrowth = EInventoryGridGrowth::ToFitItems;
+			Bag->MaxRows = 3;
+			const FInventoryContainerHandle Inventory = Registry->CreateContainer(Bag, FGameplayTag(), nullptr);
+			TestEqual(TEXT("Holds three rows"), Registry->GetCapacity(Inventory), 12);
+			for (int32 Index = 0; Index < 12; ++Index)
+			{
+				TestTrue(*FString::Printf(TEXT("Stone %d added"), Index + 1), AddTestItem(*Registry, Data->Stone, Inventory).IsSet());
+			}
+			TestFalse(TEXT("No thirteenth stone"), AddTestItem(*Registry, Data->Stone, Inventory).IsSet());
+			TestFalse(TEXT("Nothing past Max Rows"), Registry->IsPlacementUsable(Inventory, FInventoryPlacement::AtCell(FIntPoint(0, 3))));
+		});
+
+		It("let items stack higher with a stack bonus", [this]()
+		{
+			const int32 BaseStack = Data->Ammo->GetMaxStackSize();
+			const FInventoryContainerHandle Inventory = Registry->CreateContainer(Data->Grid4x2, FGameplayTag(), nullptr);
+			FInventoryItemQuery AmmoOnly;
+			AmmoOnly.Definitions.Add(Data->Ammo);
+			TestTrue(TEXT("Bonus added"), Registry->AddStackBonus(Inventory, AmmoOnly, 5) == EInventoryError::None);
+			TestTrue(TEXT("A bonus of nothing refused"), Registry->AddStackBonus(Inventory, AmmoOnly, 0) == EInventoryError::InvalidCount);
+
+			// One stack holds five more here.
+			TArray<FInventoryItemHandle> Added;
+			TestEqual(TEXT("All added"), Registry->AddItemToContainers(FInventoryItemSpec(Data->Ammo, BaseStack + 5), MakeArrayView(&Inventory, 1), false, &Added), BaseStack + 5);
+			TestEqual(TEXT("In one stack"), Added.Num(), 1);
+			if (Added.Num() != 1)
+			{
+				return;
+			}
+			TestEqual(TEXT("Its limit here"), Registry->GetMaxStackSize(Added[0]), BaseStack + 5);
+			TestEqual(TEXT("Other items don't stack higher"), Registry->GetMaxStackSize(AddTestItem(*Registry, Data->Herb, Inventory)), Data->Herb->GetMaxStackSize());
+
+			// Moved to a container without the bonus, the stack stays whole, but takes no more there.
+			TestTrue(TEXT("Moved whole"), Registry->MoveItem(Added[0], Grid, TOptional<FInventoryPlacement>()) == EInventoryError::None);
+			TestEqual(TEXT("Still one stack"), Registry->FindItem(Added[0])->Count, BaseStack + 5);
+			TestEqual(TEXT("Its limit there"), Registry->GetMaxStackSize(Added[0]), BaseStack);
+		});
+
+		It("weigh items, and what's inside them, for a carry limit", [this]()
+		{
+			UInventoryItemDefinition* Brick = Data->Make<UInventoryItemDefinition>();
+			Brick->TagValues.Emplace(Stat_Weight, 2.0f);
+
+			const FInventoryItemHandle Loose = AddTestItem(*Registry, Brick, Grid);
+			TestEqual(TEXT("A brick weighs its value"), Registry->GetCarriedValue(*Registry->FindItem(Loose), Stat_Weight), 2.0f);
+
+			const FInventoryItemHandle Backpack = AddTestItem(*Registry, Data->Backpack, Grid);
+			const FInventoryItemRecord* BackpackRecord = Registry->FindItem(Backpack);
+			TestTrue(TEXT("Backpack made"), BackpackRecord && BackpackRecord->Containers.Num() == 1);
+			if (!BackpackRecord || BackpackRecord->Containers.Num() != 1)
+			{
+				return;
+			}
+			AddTestItem(*Registry, Brick, BackpackRecord->Containers[0]);
+			TestEqual(TEXT("A backpack weighs what's inside it"), Registry->GetCarriedValue(*Registry->FindItem(Backpack), Stat_Weight), 2.0f);
+
+			// The Inventory Subsystem gives the registry an entry check like this one for each Inventory Component's carry limit.
+			const FInventoryContainerHandle Carried = Registry->CreateContainer(Data->Grid4x4, FGameplayTag(), nullptr);
+			Registry->CanEnterHook = [Carried](const FInventoryRegistry& InRegistry, const FInventoryItemRecord& Item, FInventoryContainerHandle Container)
+			{
+				const float Total = InRegistry.GetTotalTagValue(MakeArrayView(&Carried, 1), Stat_Weight, true);
+				const bool bTooHeavy = Container == Carried && Total + InRegistry.GetCarriedValue(Item, Stat_Weight) > 5.0f;
+				return bTooHeavy ? EInventoryError::OverCarryLimit : EInventoryError::None;
+			};
+			TestTrue(TEXT("A first brick"), AddTestItem(*Registry, Brick, Carried).IsSet());
+			TestTrue(TEXT("A second brick"), AddTestItem(*Registry, Brick, Carried).IsSet());
+			TestFalse(TEXT("A third is too heavy"), AddTestItem(*Registry, Brick, Carried).IsSet());
+			const EInventoryError MoveError = Registry->MoveItem(Loose, Carried, TOptional<FInventoryPlacement>());
+			TestTrue(*DescribeErrors(TEXT("Moving one in is too"), MoveError, EInventoryError::OverCarryLimit), MoveError == EInventoryError::OverCarryLimit);
+			Registry->CanEnterHook = nullptr;
+		});
+
+		It("go back to the layout's capacity with a negative count", [this]()
+		{
+			const FInventoryContainerHandle Inventory = Registry->CreateContainer(Data->Grid4x2, FGameplayTag(), nullptr, 4);
+
+			Registry->SetCapacity(Inventory, 6);
+			TestTrue(TEXT("Back to the layout's"), Registry->SetCapacity(Inventory, -1) == EInventoryError::None);
+			TestEqual(TEXT("The layout's capacity"), Registry->GetCapacity(Inventory), 8);
 		});
 
 		It("refuse to lock a cell an item sits on", [this]()
 		{
-			UInventoryContainerLayout* Partial = Data->Make<UInventoryContainerLayout>();
-			Partial->GridSize = FIntPoint(4, 2);
-			const FInventoryContainerHandle Pockets = Registry->CreateContainer(Partial, FGameplayTag(), nullptr);
-			AddTestItem(*Registry, Data->Stone, Pockets, 1, FInventoryPlacement::AtCell(FIntPoint(3, 1)));
+			const FInventoryContainerHandle Inventory = Registry->CreateContainer(Data->Grid4x2, FGameplayTag(), nullptr);
+			AddTestItem(*Registry, Data->Stone, Inventory, 1, FInventoryPlacement::AtCell(FIntPoint(3, 1)));
 
-			const EInventoryError Error = Registry->SetUsableCellCount(Pockets, 6);
+			const EInventoryError Error = Registry->SetCapacity(Inventory, 6);
 			TestTrue(*DescribeErrors(TEXT("Locking the stone's cell"), Error, EInventoryError::OutOfBounds), Error == EInventoryError::OutOfBounds);
-			TestEqual(TEXT("Nothing locked"), Registry->GetUsableCellCount(Pockets), 8);
+			TestEqual(TEXT("Nothing locked"), Registry->GetCapacity(Inventory), 8);
 		});
 
-		It("go back to the layout's usable cells with a new layout or a negative count", [this]()
+		It("start with a capacity of their own", [this]()
 		{
-			UInventoryContainerLayout* Partial = Data->Make<UInventoryContainerLayout>();
-			Partial->GridSize = FIntPoint(4, 2);
-			Partial->UsableCells = 4;
-			const FInventoryContainerHandle Pockets = Registry->CreateContainer(Partial, FGameplayTag(), nullptr);
+			UInventoryContainerLayout* Whole = Data->Make<UInventoryContainerLayout>();
+			Whole->GridSize = FIntPoint(4, 3);
+			const FInventoryContainerHandle Smaller = Registry->CreateContainer(Whole, FGameplayTag(), nullptr, 8);
+			const FInventoryContainerHandle Default = Registry->CreateContainer(Whole, FGameplayTag(), nullptr);
+			TestEqual(TEXT("Starting capacity given"), Registry->GetCapacity(Smaller), 8);
+			TestEqual(TEXT("The layout's otherwise"), Registry->GetCapacity(Default), 12);
+			TestEqual(TEXT("More than the grid has is all of it"), Registry->GetCapacity(Registry->CreateContainer(Whole, FGameplayTag(), nullptr, 50)), 12);
 
-			Registry->SetUsableCellCount(Pockets, 6);
-			TestTrue(TEXT("Back to the layout's"), Registry->SetUsableCellCount(Pockets, -1) == EInventoryError::None);
-			TestEqual(TEXT("The layout's usable cells"), Registry->GetUsableCellCount(Pockets), 4);
-
-			Registry->SetUsableCellCount(Pockets, 5);
-			TestTrue(TEXT("New layout"), Registry->SetContainerLayout(Pockets, Data->Grid4x2) == EInventoryError::None);
-			TestEqual(TEXT("The new layout's usable cells"), Registry->GetUsableCellCount(Pockets), 8);
-		});
-
-		It("only unlock cells in grids", [this]()
-		{
-			const EInventoryError Error = Registry->SetUsableCellCount(Hands, 1);
-			TestTrue(*DescribeErrors(TEXT("Unlocking cells in slots"), Error, EInventoryError::Rejected), Error == EInventoryError::Rejected);
+			// Items carrying containers can start them smaller than their layout, per item kind.
+			UInventoryItemDefinition* Bag = Data->Make<UInventoryItemDefinition>();
+			FInventoryItemContainer& BagSpace = Bag->Containers.AddDefaulted_GetRef();
+			BagSpace.Layout = Whole;
+			BagSpace.bOverrideStartingCapacity = true;
+			BagSpace.StartingCapacity = 4;
+			const FInventoryItemHandle BagItem = AddTestItem(*Registry, Bag, Grid);
+			const FInventoryItemRecord* BagRecord = Registry->FindItem(BagItem);
+			TestTrue(TEXT("Bag made"), BagRecord && BagRecord->Containers.Num() == 1);
+			if (BagRecord && BagRecord->Containers.Num() == 1)
+			{
+				TestEqual(TEXT("Bag starts with one row"), Registry->GetCapacity(BagRecord->Containers[0]), 4);
+			}
 		});
 
 		It("lock slots past Usable Slots, and unlock them at runtime", [this]()
@@ -655,6 +848,130 @@ void FInventoryFeatureSpec::Define()
 			TestTrue(TEXT("Two herbs for two"), Registry->IsMadeFrom(*MakeMedkitRecipe(2), Both, FGameplayTagContainer()));
 			TestFalse(TEXT("One herb for two"), Registry->IsMadeFrom(*MakeMedkitRecipe(2), One, FGameplayTagContainer()));
 			TestFalse(TEXT("Two herbs for one, one left over"), Registry->IsMadeFrom(*MakeMedkitRecipe(1), Both, FGameplayTagContainer()));
+		});
+	});
+
+	Describe("Rules and growth", [this]()
+	{
+		It("check merging into another container like any other way in", [this]()
+		{
+			const FInventoryContainerHandle Other = Registry->CreateContainer(Data->Grid4x2, FGameplayTag(), nullptr);
+			const FInventoryItemHandle Source = AddTestItem(*Registry, Data->Ammo, Grid, 10);
+			const FInventoryItemHandle Target = AddTestItem(*Registry, Data->Ammo, Other, 5);
+
+			// Such as a carry limit on whoever holds the other container.
+			Registry->CanEnterHook = [Other](const FInventoryRegistry& InRegistry, const FInventoryItemRecord& Item, FInventoryContainerHandle Container)
+			{
+				return Container == Other ? EInventoryError::OverCarryLimit : EInventoryError::None;
+			};
+			const EInventoryError Refused = Registry->MergeStacks(Source, Target, 0);
+			TestTrue(*DescribeErrors(TEXT("Merging past the check"), Refused, EInventoryError::OverCarryLimit), Refused == EInventoryError::OverCarryLimit);
+			TestEqual(TEXT("Nothing moved"), Registry->FindItem(Target)->Count, 5);
+
+			Registry->CanEnterHook = nullptr;
+			TestTrue(TEXT("Merged without it"), Registry->MergeStacks(Source, Target, 0) == EInventoryError::None);
+			TestEqual(TEXT("Topped up"), Registry->FindItem(Target)->Count, 15);
+		});
+
+		It("say why an item was turned away when no container would take it", [this]()
+		{
+			Registry->CanEnterHook = [](const FInventoryRegistry& InRegistry, const FInventoryItemRecord& Item, FInventoryContainerHandle Container)
+			{
+				return EInventoryError::OverCarryLimit;
+			};
+			EInventoryError Error = EInventoryError::None;
+			Registry->AddItemToContainers(FInventoryItemSpec(Data->Stone), MakeArrayView(&Grid, 1), false, nullptr, &Error);
+			TestTrue(*DescribeErrors(TEXT("Adding past the check"), Error, EInventoryError::OverCarryLimit), Error == EInventoryError::OverCarryLimit);
+			Registry->CanEnterHook = nullptr;
+
+			// A container that would take it but has no room still says No Space.
+			const FInventoryContainerHandle Tiny = Registry->CreateContainer(Data->Grid1x1, FGameplayTag(), nullptr);
+			AddTestItem(*Registry, Data->Stone, Tiny);
+			Registry->AddItemToContainers(FInventoryItemSpec(Data->Stone), MakeArrayView(&Tiny, 1), false, nullptr, &Error);
+			TestTrue(*DescribeErrors(TEXT("Adding to a full grid"), Error, EInventoryError::NoSpace), Error == EInventoryError::NoSpace);
+		});
+
+		It("refuse placements once their layout's columns change, until given it again", [this]()
+		{
+			UInventoryContainerLayout* Changing = Data->Make<UInventoryContainerLayout>();
+			Changing->GridSize = FIntPoint(4, 2);
+			const FInventoryContainerHandle Inventory = Registry->CreateContainer(Changing, FGameplayTag(), nullptr);
+			const FInventoryItemHandle Stone = AddTestItem(*Registry, Data->Stone, Inventory);
+
+			// Such as the asset edited while playing.
+			Changing->GridSize = FIntPoint(5, 2);
+			const EInventoryError Stale = Registry->CanPlace(Stone, Inventory, FInventoryPlacement::AtCell(FIntPoint(4, 0)));
+			TestTrue(*DescribeErrors(TEXT("Placing with the old cells"), Stale, EInventoryError::OutOfBounds), Stale == EInventoryError::OutOfBounds);
+
+			TestTrue(TEXT("Given its layout again"), Registry->SetContainerLayout(Inventory, Changing) == EInventoryError::None);
+			TestTrue(TEXT("The new column usable"), Registry->CanPlace(Stone, Inventory, FInventoryPlacement::AtCell(FIntPoint(4, 0))) == EInventoryError::None);
+		});
+
+		It("undo a grid's growth with the change that grew it", [this]()
+		{
+			UInventoryContainerLayout* Bag = Data->Make<UInventoryContainerLayout>();
+			Bag->GridSize = FIntPoint(4, 2);
+			Bag->GridGrowth = EInventoryGridGrowth::ToFitItems;
+			const FInventoryContainerHandle Inventory = Registry->CreateContainer(Bag, FGameplayTag(), nullptr);
+			for (int32 Index = 0; Index < 8; ++Index)
+			{
+				AddTestItem(*Registry, Data->Stone, Inventory);
+			}
+
+			const EInventoryError Preview = Registry->DryRun([&]()
+			{
+				EInventoryError AddError = EInventoryError::None;
+				Registry->AddItemToContainers(FInventoryItemSpec(Data->Stone), MakeArrayView(&Inventory, 1), false, nullptr, &AddError);
+				return AddError;
+			});
+			TestTrue(TEXT("A ninth stone would fit"), Preview == EInventoryError::None);
+			TestEqual(TEXT("Still two rows"), Registry->GetGridRows(Inventory), 2);
+			TestEqual(TEXT("And two rows of cells"), Registry->FindContainer(Inventory)->Cells.Num(), 8);
+		});
+
+		It("pack a grid that grows to fit when it's sorted", [this]()
+		{
+			UInventoryContainerLayout* Bag = Data->Make<UInventoryContainerLayout>();
+			Bag->GridSize = FIntPoint(4, 2);
+			Bag->GridGrowth = EInventoryGridGrowth::ToFitItems;
+			const FInventoryContainerHandle Inventory = Registry->CreateContainer(Bag, FGameplayTag(), nullptr);
+			TArray<FInventoryItemHandle> Stones;
+			for (int32 Index = 0; Index < 9; ++Index)
+			{
+				Stones.Add(AddTestItem(*Registry, Data->Stone, Inventory));
+			}
+
+			// The first row emptied leaves the ninth stone alone on the third.
+			for (int32 Index = 0; Index < 4; ++Index)
+			{
+				Registry->RemoveItem(Stones[Index]);
+			}
+			TestEqual(TEXT("Three rows before"), Registry->GetGridRows(Inventory), 3);
+			TestTrue(TEXT("Sorted"), Registry->SortContainer(Inventory) == EInventoryError::None);
+			TestEqual(TEXT("Grid Size's two after"), Registry->GetGridRows(Inventory), 2);
+		});
+
+		It("take a stack bigger than its definition allows where a bonus lets it", [this]()
+		{
+			const int32 BaseStack = Data->Ammo->GetMaxStackSize();
+			const FInventoryContainerHandle Inventory = Registry->CreateContainer(Data->Grid4x2, FGameplayTag(), nullptr);
+			TestFalse(TEXT("Too big without a bonus"), AddTestItem(*Registry, Data->Ammo, Inventory, BaseStack + 1, FInventoryPlacement::AtCell(FIntPoint(0, 0))).IsSet());
+
+			FInventoryItemQuery Anything;
+			TestTrue(TEXT("A bonus for every item"), Registry->AddStackBonus(Inventory, Anything, 5) == EInventoryError::None);
+			TestTrue(TEXT("Five more fit"), AddTestItem(*Registry, Data->Ammo, Inventory, BaseStack + 5, FInventoryPlacement::AtCell(FIntPoint(0, 0))).IsSet());
+			TestFalse(TEXT("Six more don't"), AddTestItem(*Registry, Data->Ammo, Inventory, BaseStack + 6, FInventoryPlacement::AtCell(FIntPoint(1, 0))).IsSet());
+			TestEqual(TEXT("Items that don't stack never do"), Registry->GetMaxStackSize(AddTestItem(*Registry, Data->Stone, Inventory)), 1);
+		});
+
+		It("weigh a stack by its count", [this]()
+		{
+			UInventoryItemDefinition* Brick = Data->Make<UInventoryItemDefinition>();
+			Brick->TagValues.Emplace(Stat_Weight, 2.0f);
+			Brick->StackRules = Data->Ammo->StackRules;
+			const FInventoryItemHandle Bricks = AddTestItem(*Registry, Brick, Grid, 3);
+			TestEqual(TEXT("Three bricks"), Registry->GetCarriedValue(*Registry->FindItem(Bricks), Stat_Weight), 6.0f);
+			TestEqual(TEXT("In the total"), Registry->GetTotalTagValue(MakeArrayView(&Grid, 1), Stat_Weight, true), 6.0f);
 		});
 	});
 }

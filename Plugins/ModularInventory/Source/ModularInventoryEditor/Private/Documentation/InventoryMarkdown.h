@@ -6,11 +6,11 @@
 #include "Templates/Function.h"
 
 /**
- * Markdown as GitHub shows it, as far as READMEs use it: headings, paragraphs, emphasis, code, links and images, nested and task lists,
- * tables, fenced code, quotes and alerts, and rules. Parsed into blocks for the Markdown Reviewer to draw, and checked for what a reader
- * would trip over, such as a link to a heading that doesn't exist.
+ * The Markdown the plugin's guide is written in, read as GitHub reads it, as far as READMEs use it: headings, paragraphs, emphasis, code,
+ * links and images, nested and task lists, tables, fenced code, quotes and alerts, and rules. Parsed into blocks for the documentation
+ * window to draw, and checked for what a reader would trip over, such as a link to a heading that doesn't exist.
  */
-namespace MarkdownReview
+namespace InventoryMarkdown
 {
 	enum class EInlineStyle : uint8
 	{

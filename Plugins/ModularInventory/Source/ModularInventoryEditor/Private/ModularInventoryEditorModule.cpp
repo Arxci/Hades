@@ -13,9 +13,10 @@
 #include "Data/InventoryItemDefinition.h"
 #include "Details/InventoryItemDefinitionCustomization.h"
 #include "Details/InventoryLootTableCustomization.h"
+#include "Documentation/SInventoryDocumentation.h"
 #include "InventoryEditorMenus.h"
+#include "InventoryEditorStyle.h"
 #include "Loot/InventoryLootTable.h"
-#include "Markdown/SMarkdownReviewer.h"
 #include "ModularInventoryEditor.h"
 
 #define LOCTEXT_NAMESPACE "ModularInventoryEditor"
@@ -32,6 +33,9 @@ class FModularInventoryEditorModule : public IModuleInterface
 public:
 	virtual void StartupModule() override
 	{
+		// The icons are needed by the menus and the documentation tab, so they come first.
+		FInventoryEditorStyle::Initialize();
+
 		UThumbnailManager::Get().RegisterCustomRenderer(UInventoryItemDefinition::StaticClass(), UInventoryIconThumbnailRenderer::StaticClass());
 		UThumbnailManager::Get().RegisterCustomRenderer(UInventoryItemCosmetics::StaticClass(), UInventoryIconThumbnailRenderer::StaticClass());
 
@@ -44,18 +48,18 @@ public:
 		MessageLog.RegisterLogListing(InventoryEditor::MessageLogName, LOCTEXT("MessageLogLabel", "Modular Inventory"));
 
 		UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FModularInventoryEditorModule::RegisterMenus));
-		SMarkdownReviewer::RegisterTab();
+		SInventoryDocumentation::RegisterTab();
 
-		InventoryAssetManagerSetup::CheckOnceLoaded();
+		InventoryAssetManagerSetup::Start();
 		InventoryAssetRenaming::Register();
 	}
 
 	virtual void ShutdownModule() override
 	{
 		InventoryAssetRenaming::Unregister();
-		InventoryAssetManagerSetup::StopChecking();
+		InventoryAssetManagerSetup::Stop();
 
-		SMarkdownReviewer::UnregisterTab();
+		SInventoryDocumentation::UnregisterTab();
 		UToolMenus::UnRegisterStartupCallback(this);
 		UToolMenus::UnregisterOwner(this);
 
@@ -77,6 +81,8 @@ public:
 			UThumbnailManager::Get().UnregisterCustomRenderer(UInventoryItemDefinition::StaticClass());
 			UThumbnailManager::Get().UnregisterCustomRenderer(UInventoryItemCosmetics::StaticClass());
 		}
+
+		FInventoryEditorStyle::Shutdown();
 	}
 
 private:

@@ -28,6 +28,16 @@ struct MODULARINVENTORY_API FInventoryItemContainer
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Container")
 	TObjectPtr<UInventoryContainerLayout> Layout;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Container", meta = (InlineEditConditionToggle))
+	bool bOverrideStartingCapacity = false;
+
+	/**
+	 * How much the container holds to start with, instead of its layout's: cells for a grid, counted row by row from the top left; slots
+	 * for slots, from the first; items for a list. 0 starts it with nothing usable. For item kinds that share a layout but not a size.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Container", meta = (EditCondition = "bOverrideStartingCapacity", ClampMin = "0"))
+	int32 StartingCapacity = 0;
 };
 
 

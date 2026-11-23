@@ -38,6 +38,7 @@ const FInstancedStruct* UInventoryItemDefinition::FindFragment(const UScriptStru
 #include "Engine/AssetManager.h"
 #include "Engine/Engine.h"
 
+#include "Data/InventoryCapacityUpgrade.h"
 #include "Data/InventoryContainerLayout.h"
 #include "InventoryValidation.h"
 
@@ -57,7 +58,7 @@ EDataValidationResult UInventoryItemDefinition::IsDataValid(FDataValidationConte
 	const UAssetManager* AssetManager = GEngine ? GEngine->AssetManager.Get() : nullptr;
 	if (AssetManager && !AssetManager->GetPrimaryAssetTypeInfo(AssetType, TypeInfo))
 	{
-		Context.AddWarning(LOCTEXT("NotRegistered", "Items aren't registered with the Asset Manager, so they can't be found by ID or given with Inventory.Give, and items that nothing references won't be cooked. Use Tools > Modular Inventory > Register Items With Asset Manager."));
+		Context.AddWarning(LOCTEXT("NotRegistered", "Items aren't registered with the Asset Manager, so they can't be found by ID or given with Inventory.Give, and items that nothing references won't be cooked. The editor adds the InventoryItem entry to Config/DefaultGame.ini by itself; make sure that file is writable and open the editor, or add the entry by hand as the guide's Asset Manager section shows."));
 	}
 
 	if (!Containers.IsEmpty() && StackRules && StackRules->MaxStackSize > 1)
@@ -97,6 +98,25 @@ EDataValidationResult UInventoryItemDefinition::IsDataValid(FDataValidationConte
 	if (bHasAttachmentModifiers && !EquipRules)
 	{
 		Context.AddWarning(LOCTEXT("UnattachableModifiers", "The attachment modifiers do nothing: without equip rules, this item can't go in an attachment slot."));
+	}
+
+	if (const FInventoryCapacityUpgrade* Upgrade = FindFragment<FInventoryCapacityUpgrade>())
+	{
+		if (!Upgrade->ContainerTag.IsValid())
+		{
+			Context.AddError(LOCTEXT("UpgradeWithoutContainer", "The Inventory Capacity Upgrade has no Container Tag, so there's no container for it to upgrade."));
+			Result = EDataValidationResult::Invalid;
+		}
+	}
+
+	// The upgrade is a rule of the item kind, read from Fragments; a copy in each item's state would never be used.
+	const bool bUpgradeAsInstance = InstanceFragments.ContainsByPredicate([](const FInstancedStruct& Fragment)
+	{
+		return Fragment.GetScriptStruct() == FInventoryCapacityUpgrade::StaticStruct();
+	});
+	if (bUpgradeAsInstance)
+	{
+		Context.AddWarning(LOCTEXT("UpgradeAsInstanceFragment", "The Inventory Capacity Upgrade is under Instance Fragments, where it does nothing. Move it to Fragments."));
 	}
 
 	Result = CombineDataValidationResults(Result, InventoryValidation::ValidateFragments(Fragments, LOCTEXT("Fragments", "Fragments"), Context));

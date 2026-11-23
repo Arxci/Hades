@@ -40,9 +40,9 @@ public:
 	FInventoryItemHandle GetItem() const;
 
 	/**
-	 * Locks or unlocks the cell. A locked cell, such as one past its container's usable cells or slots, is disabled: it draws with its
-	 * style's Disabled brush, can't be clicked and takes no gamepad focus. Locked Marker shows, and On Cell Locked Changed fires. Grids and
-	 * slot widgets lock their cells as their container's capacity says.
+	 * Locks or unlocks the cell. A locked cell, past its container's capacity, is disabled: it draws with its style's Disabled brush,
+	 * can't be clicked and takes no gamepad focus. Locked Marker shows, if the cell has one, and On Cell Locked Changed fires. Grids and slot
+	 * widgets lock their cells as their container's capacity says.
 	 */
 	void SetLocked(bool bInLocked);
 
@@ -73,7 +73,10 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Cell")
 	void OnCellLockedChanged(bool bIsLocked);
 
-	/** Shown only while the cell is locked, such as a padlock or a hatched tile, on top of the style's Disabled brush. */
+	/**
+	 * Optional. Shown only while the cell is locked, on top of the style's Disabled brush, such as a padlock or a hatched tile. Leave it out
+	 * when the Disabled brush alone sets locked cells apart, such as a plain dark tile beside empty ones marked with a cross.
+	 */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Cell", meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> LockedMarker;
 

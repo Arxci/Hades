@@ -28,9 +28,10 @@ struct FInventoryChangeSet;
  * around it, so the held item moves on as the cursor crosses the middle of a gap.
  * With the Inventory UI Subsystem's Snap Held Item on, it also draws the held item on those cells, using Item Class.
  * The highlighted item is drawn above the others, so a glow around it can spill over its neighbours.
- * Locked cells, past the container's usable cells, are disabled: they draw with the cell style's Disabled brush and the cell's Locked
- * Marker, and take no focus. They unlock as the container's capacity grows, by Set Capacity or a layout with more Usable Cells. With Hide
- * Locked Rows, rows that are wholly locked aren't drawn at all, so the grid grows a row at a time.
+ * It draws the rows the container has: its layout's Grid Size, and every row it has grown into, always whole. A grid that grows with
+ * upgrades disables the cells of its last row that haven't been added yet: they draw with the cell style's Disabled brush, and the cell's
+ * Locked Marker if it has one, and take no focus. A grid that grows to fit also draws a free row below its last, or as many as the held
+ * item is tall, for the player to put items in.
  */
 UCLASS(Abstract)
 class MODULARINVENTORYUI_API UInventoryGridWidget : public UUserWidget
@@ -80,7 +81,7 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Grid")
 	void OnPlacementPreviewShown(bool bShown);
 
-	/** A container of the owning player's inventory component, such as Container.Pockets. Found on construct, and again when the player's pawn changes. */
+	/** A container of the owning player's inventory component, such as Container.Inventory. Found on construct, and again when the player's pawn changes. */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Grid")
 	FGameplayTag ContainerTag;
 
@@ -105,14 +106,6 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Inventory|Grid", meta = (ClampMin = "0"))
 	float PreviewGlideSpeed = 0.0f;
 
-	/**
-	 * Rows with no usable cell aren't drawn, so the grid grows a row at a time as its cells unlock, showing only room the player has or is
-	 * partway to. A row that's only partly usable still draws its locked cells, disabled. Off, every cell of the grid is drawn, the locked
-	 * ones disabled, so the player sees all the room there is to unlock.
-	 */
-	UPROPERTY(EditAnywhere, Category = "Inventory|Grid")
-	bool bHideLockedRows = false;
-
 	/** Draws thin lines between the cells, under them, sized to the grid as it grows. With a Cell Gap, they run along the middle of the gaps. */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Grid|Lines")
 	bool bDrawGridLines = false;
@@ -132,9 +125,12 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Inventory|Grid|Preview", meta = (ClampMin = "0"))
 	FIntPoint PreviewGridSize = FIntPoint(4, 3);
 
-	/** Cells past this many, counted row by row, are drawn locked in the designer, as with a layout's Usable Cells. 0 locks none. */
+	/**
+	 * Cells added past Preview Grid Size in the designer, as capacity upgrades add them: a grid of 4 x 2 with 2 added cells draws a third
+	 * row, its last two cells disabled. 0 draws Preview Grid Size alone.
+	 */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Grid|Preview", meta = (ClampMin = "0"))
-	int32 PreviewUsableCells = 0;
+	int32 PreviewAddedCells = 0;
 
 	/** Items drawn on the designer's grid, with Item Class: each a definition, its cell, its count, and whether it's drawn highlighted. */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Grid|Preview", meta = (TitleProperty = "Definition"))
@@ -210,8 +206,8 @@ private:
 	void Refresh();
 	void ClearCells();
 
-	/** Builds a cell for each of the layout's cells, or each row with a usable one with Hide Locked Rows, and locks those past Usable Cells. */
-	void RebuildCells(const UInventoryContainerLayout* Layout, int32 UsableCells);
+	/** Builds a cell for each cell of Rows rows of the layout's columns, and disables those past Unlocked Cells; INDEX_NONE disables none. */
+	void RebuildCells(const UInventoryContainerLayout* Layout, int32 Rows, int32 UnlockedCells);
 	void RefreshItems();
 	void RefreshItemOrder();
 	void RefreshGridLines();

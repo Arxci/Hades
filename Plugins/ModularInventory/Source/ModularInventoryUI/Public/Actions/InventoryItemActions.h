@@ -51,3 +51,30 @@ protected:
 	virtual bool CanRun_Implementation(const FInventoryItemActionContext& Context) const override;
 	virtual void Run_Implementation(const FInventoryItemActionContext& Context) override;
 };
+
+
+/**
+ * Uses a capacity upgrade the player carries, such as a pouch without Apply When Taken: its Inventory Capacity Upgrade adds room to the
+ * player's container, or lets items stack higher there, and one of it is used up. Only offered for items with one, and shown disabled
+ * once the container can't grow any more if When Unavailable says so.
+ */
+UCLASS(meta = (DisplayName = "Apply Capacity Upgrade"))
+class MODULARINVENTORYUI_API UInventoryItemAction_ApplyCapacityUpgrade : public UInventoryItemAction
+{
+	GENERATED_BODY()
+
+public:
+	UInventoryItemAction_ApplyCapacityUpgrade();
+
+	/** Only items with an Inventory Capacity Upgrade, on top of Item Filter. */
+	virtual bool AppliesTo(const FInventoryItemActionContext& Context) const override;
+
+protected:
+	virtual bool CanRun_Implementation(const FInventoryItemActionContext& Context) const override;
+	virtual FText GetUnavailableReason_Implementation(const FInventoryItemActionContext& Context) const override;
+	virtual void Run_Implementation(const FInventoryItemActionContext& Context) override;
+
+	/** Why it can't run while the container can't grow any more, for an entry shown disabled. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action")
+	FText AtMaxCapacityReason;
+};

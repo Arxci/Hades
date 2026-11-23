@@ -59,7 +59,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	bool BeginHold(FInventoryItemHandle Item, int32 Count = 0);
 
-	/** False for items in read-only containers, and while choosing an item. */
+	/** False for items in containers whose Player Access doesn't let the player take items out, and while choosing an item. */
 	UFUNCTION(BlueprintPure, Category = "Inventory UI")
 	bool CanBeginHold(FInventoryItemHandle Item) const;
 
@@ -72,7 +72,7 @@ public:
 
 	/**
 	 * Whether the held item can turn, and could still fit the grid it's over turned: the targeted one, or else the one it's in, counting
-	 * only its rows with usable cells.
+	 * only its rows with unlocked cells.
 	 */
 	UFUNCTION(BlueprintPure, Category = "Inventory UI")
 	bool CanRotateHeld() const;
@@ -103,6 +103,13 @@ public:
 	/** Cells the held item takes in its held rotation. */
 	UFUNCTION(BlueprintPure, Category = "Inventory UI")
 	FIntPoint GetHeldSize() const;
+
+	/**
+	 * How many rows a grid widget draws for the container: the grid's rows, and for a grid that grows to fit, free rows below its last for
+	 * the player to put items in, as many as the held item is tall, or one. 0 for other types.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Inventory UI")
+	int32 GetGridRowsShown(FInventoryContainerHandle Container) const;
 
 	// Placing. In a grid, a placement passed in is the cell aimed at: the held item goes with the cell it's held by there.
 	/** Puts the held item there: on a free spot, onto a stack it can join, or by swapping with an item of its size there. */
@@ -227,7 +234,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory UI")
 	FInventoryContainerHandle GetTransferContainer() const { return TransferContainer; }
 
-	/** Moves as much of the item as fits to the other side: into the transfer container, or out of it into the player's storage. */
+	/**
+	 * Moves as much of the item as fits to the other side: into the transfer container, or out of it into the player's storage, as the
+	 * player's Inventory Component takes items, so a capacity upgrade it applies is used rather than stored. Containers' Player Access
+	 * decides what may leave and what may be put into the transfer container.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	bool TransferItem(FInventoryItemHandle Item);
 
@@ -297,7 +308,12 @@ public:
 private:
 	FInventoryRegistry* GetRegistry() const;
 	UInventoryComponent* GetPlayerInventory() const;
-	TArray<FInventoryContainerHandle> GetTransferTargets(FInventoryItemHandle Item) const;
+
+	/**
+	 * Whether Transfer Item could move the item, as the containers' Player Access allows, and which way: into the player's storage, as the
+	 * player's Inventory Component takes items, or into the transfer container.
+	 */
+	bool FindTransferDirection(FInventoryItemHandle Item, bool& bOutToPlayer) const;
 	FInventoryPlacement FitInGrid(FInventoryContainerHandle Container, const FInventoryPlacement& Placement) const;
 	EInventoryDropAction ResolvePlacement(FInventoryContainerHandle Container, const FInventoryPlacement& Placement, bool bApply);
 

@@ -89,9 +89,9 @@ public:
 
 	/**
 	 * Whether the action is for this item at all: the item matches Item Filter. Menus leave out actions that aren't, even those shown
-	 * disabled while they can't run. Can Run For asks this too.
+	 * disabled while they can't run. Can Run For asks this too. C++ subclasses can narrow it further, such as to items with a fragment.
 	 */
-	bool AppliesTo(const FInventoryItemActionContext& Context) const;
+	virtual bool AppliesTo(const FInventoryItemActionContext& Context) const;
 
 	// What menus and screens call. Each gives the action the context's world while it runs.
 	/** Applies To, then Can Run. */

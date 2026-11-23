@@ -65,7 +65,7 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Tabs", meta = (ClampMin = "0"))
 	int32 ItemsPage = 1;
 
-	/** A row of the UI input action table that repacks the pockets. */
+	/** A row of the UI input action table that repacks the inventory. */
 	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
 	FDataTableRowHandle OrganizeAction;
 

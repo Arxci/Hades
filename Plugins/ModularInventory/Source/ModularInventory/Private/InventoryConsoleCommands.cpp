@@ -38,7 +38,7 @@ namespace
 			}
 			Names.Sort();
 			UE_LOG(LogInventory, Warning, TEXT("Inventory.Give: no item named %s. Known items: %s"), *Args[0],
-				Names.IsEmpty() ? TEXT("none; register items with the Asset Manager first.") : *FString::Join(Names, TEXT(", ")));
+				Names.IsEmpty() ? TEXT("none. Items get IDs from the InventoryItem entry in the Asset Manager settings, which the editor adds once the project has an item.") : *FString::Join(Names, TEXT(", ")));
 			return;
 		}
 

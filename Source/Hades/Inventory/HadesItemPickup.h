@@ -11,7 +11,6 @@
 #include "HadesItemPickup.generated.h"
 
 class UHadesInteractableComponent;
-class UHadesInventoryComponent;
 class UInventoryComponent;
 class UStaticMeshComponent;
 
@@ -65,7 +64,6 @@ private:
 	void WatchTaker(UInventoryComponent* NewTaker);
 	void RefreshRoom();
 	bool HasRoomFor(const UInventoryComponent& Taker) const;
-	void TakePouch(UHadesInventoryComponent& Taker, FInventoryItemHandle Pouch);
 	TArray<FInventoryItemHandle> GetItems() const;
 	void ShowFirstItem();
 

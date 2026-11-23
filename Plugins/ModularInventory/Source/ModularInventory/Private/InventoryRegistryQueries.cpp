@@ -193,6 +193,33 @@ bool FInventoryRegistry::RecordsCanStack(const FInventoryItemRecord& Item, const
 		&& HaveSameElements(Item.Fragments, Other.Fragments);
 }
 
+int32 FInventoryRegistry::GetRecordMaxStackSize(const FInventoryItemRecord& Item, FInventoryContainerHandle Container) const
+{
+	// Items that don't stack never do, whatever the container's bonuses.
+	const int32 DefinitionMax = Item.Definition ? Item.Definition->GetMaxStackSize() : 1;
+	const FInventoryContainerRecord* ContainerRecord = FindContainer(Container);
+	if (DefinitionMax <= 1 || !ContainerRecord)
+	{
+		return DefinitionMax;
+	}
+
+	int64 Max = DefinitionMax;
+	for (const FInventoryStackBonus& Bonus : ContainerRecord->StackBonuses)
+	{
+		if (Bonus.Amount > 0 && RecordMatchesQuery(Item, Bonus.Items))
+		{
+			Max += Bonus.Amount;
+		}
+	}
+	return static_cast<int32>(FMath::Min<int64>(Max, MAX_int32));
+}
+
+int32 FInventoryRegistry::GetMaxStackSize(FInventoryItemHandle Item) const
+{
+	const FInventoryItemRecord* Record = FindItem(Item);
+	return Record ? GetRecordMaxStackSize(*Record, Record->Container) : 0;
+}
+
 FInventoryItemRecord FInventoryRegistry::MakeItemRecord(const FInventoryItemSpec& Spec) const
 {
 	FInventoryItemRecord Record;
@@ -390,6 +417,16 @@ float FInventoryRegistry::GetTotalTagValue(TConstArrayView<FInventoryContainerHa
 		Total += GetRecordTagValue(Record, Tag) * Record.Count;
 	}
 	return Total;
+}
+
+float FInventoryRegistry::GetCarriedValue(const FInventoryItemRecord& Item, const FGameplayTag& Tag) const
+{
+	if (!Item.Definition || !Tag.IsValid())
+	{
+		return 0.0f;
+	}
+	const float Own = GetRecordTagValue(Item, Tag) * Item.Count;
+	return Item.Containers.IsEmpty() ? Own : Own + GetTotalTagValue(Item.Containers, Tag, true);
 }
 
 // Item state changes

@@ -113,7 +113,7 @@ void UInventoryListWidget::Refresh()
 		const int32 Capacity = Inventory->GetCapacity(Container);
 		const bool bHasRoom = Capacity == INDEX_NONE || Items.Num() < Capacity;
 		EndPosition = Items.Num();
-		if (bShowEmptyEntry && bHasRoom && !Record->Layout->bReadOnlyInUI)
+		if (bShowEmptyEntry && bHasRoom && Record->Layout->CanPlayerPutIn())
 		{
 			Positions.Add(EndPosition);
 		}

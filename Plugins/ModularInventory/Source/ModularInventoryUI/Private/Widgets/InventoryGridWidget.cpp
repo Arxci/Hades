@@ -71,14 +71,17 @@ void UInventoryGridWidget::RefreshDesignerPreview()
 	{
 		PreviewLayout = NewObject<UInventoryContainerLayout>(this, NAME_None, RF_Transient);
 	}
+	// A grid that grows with upgrades, given the preview's added cells, so the designer shows a grown row with its disabled cells.
 	PreviewLayout->Type = EInventoryContainerType::Grid;
 	PreviewLayout->GridSize = PreviewGridSize.ComponentMax(FIntPoint::ZeroValue);
-	PreviewLayout->UsableCells = PreviewUsableCells;
+	PreviewLayout->GridGrowth = EInventoryGridGrowth::WithUpgrades;
+	PreviewLayout->MaxRows = 0;
 
 	// Built afresh each time, as the designer runs this again whenever the widget changes.
 	ClearCells();
 	const bool bHasPreviewGrid = PreviewGridSize.X > 0 && PreviewGridSize.Y > 0;
-	RebuildCells(bHasPreviewGrid ? PreviewLayout.Get() : nullptr, bHasPreviewGrid ? PreviewLayout->GetUsableCellCount() : 0);
+	const int32 PreviewCapacity = PreviewLayout->GetCellCount() + FMath::Max(0, PreviewAddedCells);
+	RebuildCells(bHasPreviewGrid ? PreviewLayout.Get() : nullptr, bHasPreviewGrid ? PreviewLayout->GetGridRowsAtCapacity(PreviewCapacity) : 0, PreviewCapacity);
 
 	for (UInventoryItemWidget* ItemWidget : PreviewItemWidgets)
 	{
@@ -209,8 +212,15 @@ void UInventoryGridWidget::Refresh()
 	const UInventoryContainerLayout* Layout = Inventory ? Inventory->GetContainerLayout(Container) : nullptr;
 	const bool bIsGrid = Layout && Layout->Type == EInventoryContainerType::Grid;
 
-	// The container's own usable cells, as cells unlock at runtime, not only its layout's.
-	RebuildCells(bIsGrid ? Layout : nullptr, bIsGrid ? Inventory->GetUsableCellCount(Container) : 0);
+	// The rows the container has now, with a free row below them for a grid that grows to fit, and its capacity, the count of usable
+	// cells, deciding which are disabled.
+	int32 Rows = 0;
+	if (bIsGrid)
+	{
+		const UInventoryUISubsystem* Interaction = GetInteraction();
+		Rows = Interaction ? Interaction->GetGridRowsShown(Container) : Inventory->GetGridRows(Container);
+	}
+	RebuildCells(bIsGrid ? Layout : nullptr, Rows, bIsGrid ? Inventory->GetCapacity(Container) : 0);
 	RefreshItems();
 	RefreshPreview();
 	OnContainerRefreshed();
@@ -229,15 +239,10 @@ void UInventoryGridWidget::ClearCells()
 	BuiltGridSize = FIntPoint::ZeroValue;
 }
 
-void UInventoryGridWidget::RebuildCells(const UInventoryContainerLayout* Layout, int32 UsableCells)
+void UInventoryGridWidget::RebuildCells(const UInventoryContainerLayout* Layout, int32 Rows, int32 UnlockedCells)
 {
-	// Cells unlock row by row from the top left, so with Hide Locked Rows, the rows down to the last usable cell are drawn.
-	const FIntPoint LayoutSize = Layout ? Layout->GridSize : FIntPoint::ZeroValue;
-	FIntPoint GridSize = LayoutSize;
-	if (bHideLockedRows && LayoutSize.X > 0)
-	{
-		GridSize.Y = FMath::Min(LayoutSize.Y, FMath::DivideAndRoundUp(FMath::Max(0, UsableCells), LayoutSize.X));
-	}
+	// Whole rows of the layout's columns.
+	const FIntPoint GridSize = Layout ? FIntPoint(FMath::Max(0, Layout->GridSize.X), FMath::Max(0, Rows)) : FIntPoint::ZeroValue;
 
 	if (GridSize != BuiltGridSize)
 	{
@@ -265,13 +270,13 @@ void UInventoryGridWidget::RebuildCells(const UInventoryContainerLayout* Layout,
 		}
 	}
 
-	// The same cells serve whichever container of this size is shown, and its usable cells, counted row by row, decide which are locked.
-	// Only whole rows are ever left out, so a cell's index is still its index in the container's full grid.
+	// The same cells serve whichever container of this size is shown, and its capacity, counted row by row from the top left, decides
+	// which are disabled. Without a limit, none are.
 	for (int32 Index = 0; Index < Cells.Num(); ++Index)
 	{
 		const FIntPoint Cell(Index % GridSize.X, Index / GridSize.X);
 		Cells[Index]->SetPlacement(Container, FInventoryPlacement::AtCell(Cell));
-		Cells[Index]->SetLocked(Layout && Index >= UsableCells);
+		Cells[Index]->SetLocked(Layout && UnlockedCells != INDEX_NONE && Index >= UnlockedCells);
 	}
 	RefreshGridLines();
 }
@@ -499,6 +504,14 @@ void UInventoryGridWidget::HandleTargetChanged()
 
 void UInventoryGridWidget::HandleHeldItemChanged()
 {
+	// A grid that grows to fit draws as many free rows as the held item is tall, so picking one up or turning it can change its rows.
+	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
+	const UInventoryContainerLayout* Layout = Inventory ? Inventory->GetContainerLayout(Container) : nullptr;
+	if (Layout && Layout->Type == EInventoryContainerType::Grid && Layout->GridGrowth == EInventoryGridGrowth::ToFitItems)
+	{
+		Refresh();
+		return;
+	}
 	RefreshPreview();
 }
 

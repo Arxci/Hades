@@ -65,6 +65,19 @@ namespace
 		}
 		return TEXT("");
 	}
+
+	/** What the inventory UI lets the player do there, when that's less than everything. */
+	const TCHAR* DescribeAccess(EInventoryPlayerAccess Access)
+	{
+		switch (Access)
+		{
+		case EInventoryPlayerAccess::Full:     return TEXT("");
+		case EInventoryPlayerAccess::TakeOnly: return TEXT(" take-only");
+		case EInventoryPlayerAccess::PutOnly:  return TEXT(" put-only");
+		case EInventoryPlayerAccess::ReadOnly: return TEXT(" read-only");
+		}
+		return TEXT("");
+	}
 }
 
 FGameplayDebuggerCategory_Inventory::FGameplayDebuggerCategory_Inventory()
@@ -115,16 +128,28 @@ void FGameplayDebuggerCategory_Inventory::AddContainerLines(const FInventoryRegi
 		return;
 	}
 
-	// The grid's size, and how much of it, or of the slots or list, can hold items now.
+	// The grid's size now and at its biggest, and how much of it, or of the slots or list, can hold items now.
 	const UInventoryContainerLayout& Layout = *Record->Layout;
 	const int32 Capacity = Registry.GetCapacity(Container);
 	FString Size;
 	switch (Layout.Type)
 	{
 	case EInventoryContainerType::Grid:
-		Size = FString::Printf(TEXT(" %dx%d"), Layout.GridSize.X, Layout.GridSize.Y);
-		Size += Capacity < Layout.GetCellCount() ? FString::Printf(TEXT(" (%d usable)"), Capacity) : FString();
+	{
+		// Its rows now, how many of their cells are usable, and how it grows.
+		const int32 Columns = Layout.GridSize.X;
+		const int32 Rows = Registry.GetGridRows(Container);
+		const int32 MaxRows = Layout.GetMaxRows();
+		Size = FString::Printf(TEXT(" %dx%d"), Columns, Rows);
+		Size += Capacity != INDEX_NONE && Capacity < Columns * Rows ? FString::Printf(TEXT(" (%d usable)"), Capacity) : FString();
+		if (Layout.GridGrowth != EInventoryGridGrowth::None)
+		{
+			const TCHAR* How = Layout.GridGrowth == EInventoryGridGrowth::ToFitItems ? TEXT("to fit") : TEXT("with upgrades");
+			Size += MaxRows == INDEX_NONE ? FString::Printf(TEXT(", grows %s without limit"), How)
+				: FString::Printf(TEXT(", grows %s to %dx%d"), How, Columns, MaxRows);
+		}
 		break;
+	}
 	case EInventoryContainerType::Slots:
 		Size = Capacity < Layout.GetSlotCount() ? FString::Printf(TEXT(" (%d of %d usable)"), Capacity, Layout.GetSlotCount()) : FString();
 		break;
@@ -132,8 +157,8 @@ void FGameplayDebuggerCategory_Inventory::AddContainerLines(const FInventoryRegi
 		Size = Capacity != INDEX_NONE ? FString::Printf(TEXT(" (holds %d)"), Capacity) : FString();
 		break;
 	}
-	AddLine(FString::Printf(TEXT("%s{green}%s{white} %s%s%s  %d items"), *Indent(Depth), *Record->Tag.ToString(), DescribeType(Layout.Type), *Size,
-		Layout.bEquipment ? TEXT(" equipment") : TEXT(""), Record->Items.Num()));
+	AddLine(FString::Printf(TEXT("%s{green}%s{white} %s%s%s%s  %d items"), *Indent(Depth), *Record->Tag.ToString(), DescribeType(Layout.Type), *Size,
+		Layout.bEquipment ? TEXT(" equipment") : TEXT(""), DescribeAccess(Layout.PlayerAccess), Record->Items.Num()));
 
 	for (const FInventoryItemHandle& Item : Record->Items)
 	{
@@ -156,8 +181,9 @@ void FGameplayDebuggerCategory_Inventory::AddContainerLines(const FInventoryRegi
 
 void FGameplayDebuggerCategory_Inventory::AddGridLines(const FInventoryRegistry& Registry, FInventoryContainerHandle Container, int32 Depth)
 {
+	// The rows the grid has now, as the inventory UI shows them.
 	const FInventoryContainerRecord& Record = *Registry.FindContainer(Container);
-	const FIntPoint GridSize = Record.Layout->GridSize;
+	const FIntPoint GridSize(Record.Layout->GridSize.X, Registry.GetGridRows(Container));
 
 	// Each item gets a letter in the order it's listed above. Empty cells are dots, and locked cells hashes.
 	TMap<int32, TCHAR> Letters;
@@ -174,7 +200,7 @@ void FGameplayDebuggerCategory_Inventory::AddGridLines(const FInventoryRegistry&
 			const int32 CellIndex = Y * GridSize.X + X;
 			const int32 Occupant = Record.Cells.IsValidIndex(CellIndex) ? Record.Cells[CellIndex] : INDEX_NONE;
 			const TCHAR* Letter = Letters.Find(Occupant);
-			const TCHAR EmptyChar = Registry.IsCellUsable(Container, FIntPoint(X, Y)) ? TEXT('.') : TEXT('#');
+			const TCHAR EmptyChar = Registry.IsPlacementUsable(Container, FInventoryPlacement::AtCell(FIntPoint(X, Y))) ? TEXT('.') : TEXT('#');
 			Row.AppendChar(Letter ? *Letter : EmptyChar);
 		}
 		AddLine(Row + TEXT("{white}"));

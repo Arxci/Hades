@@ -37,7 +37,8 @@ bool FInventoryValueDisplay::Resolve(const UInventorySubsystem& Inventory, FInve
 	{
 	case EInventoryValueSource::StackCount:
 	{
-		const int32 MaxStackSize = Definition->GetMaxStackSize();
+		// As high as it stacks where it is, its container's stack bonuses counted.
+		const int32 MaxStackSize = Inventory.GetMaxStackSize(Item);
 		if (MaxStackSize <= 1 || (bHideSingle && Count <= 1))
 		{
 			return false;

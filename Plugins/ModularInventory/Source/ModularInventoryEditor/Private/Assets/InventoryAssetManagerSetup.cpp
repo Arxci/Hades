@@ -1,12 +1,11 @@
 #include "Assets/InventoryAssetManagerSetup.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "Containers/Ticker.h"
 #include "Engine/AssetManager.h"
 #include "Engine/AssetManagerSettings.h"
 #include "FileHelpers.h"
-#include "Framework/Notifications/NotificationManager.h"
 #include "Misc/App.h"
-#include "Widgets/Notifications/SNotificationList.h"
 
 #include "Data/InventoryItemDefinition.h"
 #include "ModularInventoryEditor.h"
@@ -15,8 +14,9 @@
 
 namespace
 {
-	TWeakPtr<SNotificationItem> RegisterPrompt;
 	FDelegateHandle FilesLoadedHandle;
+	FDelegateHandle AssetAddedHandle;
+	FTSTicker::FDelegateHandle SetUpTicker;
 
 	bool IsItemTypeRegistered()
 	{
@@ -26,20 +26,53 @@ namespace
 		});
 	}
 
-	TArray<FAssetData> FindItems()
+	bool IsItemClass(const FAssetData& Asset)
+	{
+		const UClass* AssetClass = Asset.GetClass();
+		return AssetClass && AssetClass->IsChildOf(UInventoryItemDefinition::StaticClass());
+	}
+
+	/** Whether the project has an item definition, saved or only just made. */
+	bool HasItems()
 	{
 		TArray<FAssetData> Items;
 		IAssetRegistry::GetChecked().GetAssetsByClass(UInventoryItemDefinition::StaticClass()->GetClassPathName(), Items, true);
-		return Items;
+		return !Items.IsEmpty();
 	}
 
-	/** Items saved before item definitions had a fixed Asset Manager type keep their old ID until they're saved again. */
+	/**
+	 * Items saved by a version of the plugin from before item definitions had a fixed Asset Manager type. Their ID is read from the file, so
+	 * it stays old until they're saved again.
+	 */
 	TArray<FAssetData> FindItemsWithOldIds()
 	{
-		return FindItems().FilterByPredicate([](const FAssetData& Item)
+		FARFilter Filter;
+		Filter.ClassPaths.Add(UInventoryItemDefinition::StaticClass()->GetClassPathName());
+		Filter.bRecursiveClasses = true;
+		Filter.bIncludeOnlyOnDiskAssets = true;
+
+		TArray<FAssetData> Items;
+		IAssetRegistry::GetChecked().GetAssets(Filter, Items);
+		return Items.FilterByPredicate([](const FAssetData& Item)
 		{
 			return Item.GetPrimaryAssetId().PrimaryAssetType != UInventoryItemDefinition::AssetType;
 		});
+	}
+
+	/** Adds the InventoryItem entry to the Asset Manager settings, and saves it in Config/DefaultGame.ini. False when the file couldn't be written. */
+	bool AddItemType()
+	{
+		FDirectoryPath GameContent;
+		GameContent.Path = TEXT("/Game");
+
+		FPrimaryAssetTypeInfo ItemTypeInfo(UInventoryItemDefinition::AssetType.GetName(), UInventoryItemDefinition::StaticClass(), false, false, { GameContent }, {});
+		// Save games may be the only thing referencing an item, so every item is cooked.
+		ItemTypeInfo.Rules.CookRule = EPrimaryAssetCookRule::AlwaysCook;
+
+		UAssetManagerSettings* Settings = GetMutableDefault<UAssetManagerSettings>();
+		Settings->PrimaryAssetTypesToScan.Add(ItemTypeInfo);
+		Settings->PostEditChange();
+		return Settings->TryUpdateDefaultConfigFile();
 	}
 
 	int32 ResaveItemsWithOldIds()
@@ -59,95 +92,100 @@ namespace
 		return Packages.Num();
 	}
 
-	void CloseRegisterPrompt()
+	/** Not while cooking, or on a build machine, where nobody would see or commit what changed. */
+	bool CanChangeProject()
 	{
-		if (const TSharedPtr<SNotificationItem> Prompt = RegisterPrompt.Pin())
+		return GIsEditor && !IsRunningCommandlet() && !FApp::IsUnattended();
+	}
+
+	void SetUpItems()
+	{
+		if (!CanChangeProject() || !HasItems())
 		{
-			Prompt->ExpireAndFadeout();
+			return;
 		}
-		RegisterPrompt.Reset();
-	}
-}
 
-void InventoryAssetManagerSetup::RegisterItems()
-{
-	CloseRegisterPrompt();
-
-	UAssetManagerSettings* Settings = GetMutableDefault<UAssetManagerSettings>();
-	if (!IsItemTypeRegistered())
-	{
-		FDirectoryPath GameContent;
-		GameContent.Path = TEXT("/Game");
-
-		FPrimaryAssetTypeInfo ItemTypeInfo(UInventoryItemDefinition::AssetType.GetName(), UInventoryItemDefinition::StaticClass(), false, false, { GameContent }, {});
-		// Save games may be the only thing referencing an item, so every item is cooked.
-		ItemTypeInfo.Rules.CookRule = EPrimaryAssetCookRule::AlwaysCook;
-
-		Settings->PrimaryAssetTypesToScan.Add(ItemTypeInfo);
-		Settings->PostEditChange();
-		Settings->TryUpdateDefaultConfigFile();
-	}
-
-	const int32 ResavedCount = ResaveItemsWithOldIds();
-	UAssetManager::Get().ReinitializeFromConfig();
-
-	InventoryEditor::Notify(FText::Format(LOCTEXT("Registered", "Items are registered with the Asset Manager (Config/DefaultGame.ini). Resaved {0} item definitions that had an old ID."),
-		FText::AsNumber(ResavedCount)));
-}
-
-void InventoryAssetManagerSetup::PromptIfNeeded()
-{
-	if (RegisterPrompt.IsValid() || IsRunningCommandlet() || FApp::IsUnattended())
-	{
-		return;
-	}
-
-	const bool bRegistered = IsItemTypeRegistered();
-	const int32 OldIdCount = bRegistered ? FindItemsWithOldIds().Num() : 0;
-	if (bRegistered && OldIdCount == 0)
-	{
-		return;
-	}
-
-	FNotificationInfo Info(bRegistered
-		? FText::Format(LOCTEXT("ResavePrompt", "{0} inventory items still carry an old ID, so they can't be found by it. Resave them to give them their ID."), FText::AsNumber(OldIdCount))
-		: LOCTEXT("RegisterPrompt", "Inventory items aren't registered with the Asset Manager yet, so they can't be found by ID, given with Inventory.Give or saved by ID."));
-	Info.bFireAndForget = false;
-	Info.ButtonDetails.Emplace(bRegistered ? LOCTEXT("Resave", "Resave Items") : LOCTEXT("Register", "Register Items"), FText(),
-		FSimpleDelegate::CreateStatic(&InventoryAssetManagerSetup::RegisterItems));
-	Info.ButtonDetails.Emplace(LOCTEXT("NotNow", "Not Now"), FText(), FSimpleDelegate::CreateStatic(&CloseRegisterPrompt));
-	RegisterPrompt = FSlateNotificationManager::Get().AddNotification(Info);
-}
-
-void InventoryAssetManagerSetup::CheckOnceLoaded()
-{
-	auto Check = []()
-	{
-		if (!FindItems().IsEmpty())
+		const bool bAddType = !IsItemTypeRegistered();
+		const bool bSavedType = bAddType && AddItemType();
+		const int32 ResavedCount = ResaveItemsWithOldIds();
+		if (!bAddType && ResavedCount == 0)
 		{
-			PromptIfNeeded();
+			return;
 		}
-	};
 
+		UAssetManager::Get().ReinitializeFromConfig();
+
+		TArray<FText> Lines;
+		if (bAddType)
+		{
+			Lines.Add(bSavedType
+				? LOCTEXT("TypeAdded", "Inventory items now have Asset Manager IDs: the InventoryItem entry was added to Config/DefaultGame.ini. Commit that file.")
+				: LOCTEXT("TypeNotSaved", "Inventory items have Asset Manager IDs for this session, but Config/DefaultGame.ini couldn't be written. Make it writable and restart the editor."));
+		}
+		if (ResavedCount > 0)
+		{
+			Lines.Add(FText::Format(LOCTEXT("Resaved", "Resaved {0} item definitions that still had an ID from an older version of the plugin."), FText::AsNumber(ResavedCount)));
+		}
+		InventoryEditor::Notify(FText::Join(FText::FromString(TEXT("\n")), Lines));
+	}
+
+	void HandleAssetAdded(const FAssetData& Asset)
+	{
+		if (!IsItemTypeRegistered() && IsItemClass(Asset))
+		{
+			InventoryAssetManagerSetup::SetUpSoon();
+		}
+	}
+
+	void HandleFilesLoaded()
+	{
+		// Only now: while the Asset Registry is still looking, every asset it finds is announced as added.
+		IAssetRegistry& AssetRegistry = IAssetRegistry::GetChecked();
+		AssetRegistry.OnAssetAdded().Remove(AssetAddedHandle);
+		AssetAddedHandle = AssetRegistry.OnAssetAdded().AddStatic(&HandleAssetAdded);
+		InventoryAssetManagerSetup::SetUpSoon();
+	}
+}
+
+void InventoryAssetManagerSetup::Start()
+{
 	IAssetRegistry& AssetRegistry = IAssetRegistry::GetChecked();
 	if (AssetRegistry.IsLoadingAssets())
 	{
-		FilesLoadedHandle = AssetRegistry.OnFilesLoaded().AddLambda(Check);
+		FilesLoadedHandle = AssetRegistry.OnFilesLoaded().AddStatic(&HandleFilesLoaded);
 	}
 	else
 	{
-		Check();
+		HandleFilesLoaded();
 	}
 }
 
-void InventoryAssetManagerSetup::StopChecking()
+void InventoryAssetManagerSetup::Stop()
 {
 	if (IAssetRegistry* AssetRegistry = IAssetRegistry::Get())
 	{
 		AssetRegistry->OnFilesLoaded().Remove(FilesLoadedHandle);
+		AssetRegistry->OnAssetAdded().Remove(AssetAddedHandle);
 	}
 	FilesLoadedHandle.Reset();
-	CloseRegisterPrompt();
+	AssetAddedHandle.Reset();
+
+	FTSTicker::RemoveTicker(SetUpTicker);
+	SetUpTicker.Reset();
+}
+
+void InventoryAssetManagerSetup::SetUpSoon()
+{
+	// On the next frame, once the editor has finished starting, or the asset being made exists.
+	if (!SetUpTicker.IsValid())
+	{
+		SetUpTicker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([](float)
+		{
+			SetUpTicker.Reset();
+			SetUpItems();
+			return false;
+		}));
+	}
 }
 
 #undef LOCTEXT_NAMESPACE

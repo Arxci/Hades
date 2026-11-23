@@ -22,7 +22,7 @@ class FInventoryIconRenderer
 public:
 	FInventoryIconRenderer();
 
-	/** Waits until the mesh is built and its textures are fully loaded, so the picture is sharp. */
+	/** Sets the mesh to render, and waits until it can be drawn as it looks: built, its shaders compiled and its textures fully loaded. */
 	void SetMesh(UStaticMesh* Mesh);
 	UStaticMesh* GetMesh() const;
 
@@ -30,6 +30,16 @@ public:
 	TArray<FColor> Render(const FInventoryIconFraming& Framing, FIntPoint ImageSize);
 
 private:
+	/**
+	 * Waits until the mesh can be drawn as it looks. Its render state is built again until nothing it asks for is still compiling, as a
+	 * mesh drawn while its shaders compile shows the default material. Then every texture its materials use is fully streamed in.
+	 * Returns whether anything had to be compiled.
+	 */
+	bool WaitUntilDrawable();
+
+	/** Makes every texture the mesh's materials use fully resident, and waits until it is. */
+	void StreamInTextures();
+
 	void ApplyLighting();
 
 	/** Linear HDR pixels. Shift moves the camera sideways (Y) and up (Z); HalfWidthTangent sets the horizontal field of view. */
@@ -43,4 +53,7 @@ private:
 	TArray<UDirectionalLightComponent*> Lights;
 
 	TStrongObjectPtr<UTextureRenderTarget2D> RenderTarget;
+
+	/** The mesh hasn't been drawn since Set Mesh. Its first draw can ask for more, so Render waits again after it. */
+	bool bFirstDraw = false;
 };

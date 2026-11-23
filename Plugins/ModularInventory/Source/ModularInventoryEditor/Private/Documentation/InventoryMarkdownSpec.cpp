@@ -1,25 +1,26 @@
-﻿#include "Markdown/MarkdownDocument.h"
+﻿#include "Documentation/InventoryMarkdown.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "HAL/FileManager.h"
+#include "Interfaces/IPluginManager.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 
-BEGIN_DEFINE_SPEC(FMarkdownDocumentSpec, "ModularInventory.Editor.MarkdownReviewer", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+BEGIN_DEFINE_SPEC(FInventoryMarkdownSpec, "ModularInventory.Editor.Documentation.Markdown", EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 	/** Runs as [text] when plain, else {flags->link:text}, with B, I, C and S for bold, italic, code and struck, and IMG for an image. */
-	static FString RunsToText(const TArray<MarkdownReview::FInlineRun>& Runs)
+	static FString RunsToText(const TArray<InventoryMarkdown::FInlineRun>& Runs)
 	{
 		FString Result;
-		for (const MarkdownReview::FInlineRun& Run : Runs)
+		for (const InventoryMarkdown::FInlineRun& Run : Runs)
 		{
 			FString Flags;
-			Flags += EnumHasAnyFlags(Run.Style, MarkdownReview::EInlineStyle::Bold) ? TEXT("B") : TEXT("");
-			Flags += EnumHasAnyFlags(Run.Style, MarkdownReview::EInlineStyle::Italic) ? TEXT("I") : TEXT("");
-			Flags += EnumHasAnyFlags(Run.Style, MarkdownReview::EInlineStyle::Code) ? TEXT("C") : TEXT("");
-			Flags += EnumHasAnyFlags(Run.Style, MarkdownReview::EInlineStyle::Strikethrough) ? TEXT("S") : TEXT("");
+			Flags += EnumHasAnyFlags(Run.Style, InventoryMarkdown::EInlineStyle::Bold) ? TEXT("B") : TEXT("");
+			Flags += EnumHasAnyFlags(Run.Style, InventoryMarkdown::EInlineStyle::Italic) ? TEXT("I") : TEXT("");
+			Flags += EnumHasAnyFlags(Run.Style, InventoryMarkdown::EInlineStyle::Code) ? TEXT("C") : TEXT("");
+			Flags += EnumHasAnyFlags(Run.Style, InventoryMarkdown::EInlineStyle::Strikethrough) ? TEXT("S") : TEXT("");
 			Flags += Run.bImage ? TEXT("IMG") : TEXT("");
 			if (!Run.Link.IsEmpty())
 			{
@@ -32,17 +33,17 @@ BEGIN_DEFINE_SPEC(FMarkdownDocumentSpec, "ModularInventory.Editor.MarkdownReview
 
 	static FString InlineToText(const TCHAR* Text)
 	{
-		TArray<MarkdownReview::FInlineRun> Runs;
-		MarkdownReview::ParseInline(Text, Runs);
+		TArray<InventoryMarkdown::FInlineRun> Runs;
+		InventoryMarkdown::ParseInline(Text, Runs);
 		return RunsToText(Runs);
 	}
 
 	/** The block types in reading order, nested ones indented by a space per level. */
-	static FString Outline(const TArray<MarkdownReview::FBlock>& Blocks, int32 Depth = 0)
+	static FString Outline(const TArray<InventoryMarkdown::FBlock>& Blocks, int32 Depth = 0)
 	{
 		static const TCHAR* const Names[] = { TEXT("Paragraph"), TEXT("Heading"), TEXT("List"), TEXT("Item"), TEXT("Table"), TEXT("Code"), TEXT("Quote"), TEXT("Rule"), TEXT("Image") };
 		FString Result;
-		for (const MarkdownReview::FBlock& Block : Blocks)
+		for (const InventoryMarkdown::FBlock& Block : Blocks)
 		{
 			Result += FString::ChrN(Depth, TEXT(' ')) + Names[static_cast<int32>(Block.Type)] + TEXT("\n");
 			Result += Outline(Block.Children, Depth + 1);
@@ -52,11 +53,11 @@ BEGIN_DEFINE_SPEC(FMarkdownDocumentSpec, "ModularInventory.Editor.MarkdownReview
 
 	FString Folder;
 
-END_DEFINE_SPEC(FMarkdownDocumentSpec)
+END_DEFINE_SPEC(FInventoryMarkdownSpec)
 
-void FMarkdownDocumentSpec::Define()
+void FInventoryMarkdownSpec::Define()
 {
-	using namespace MarkdownReview;
+	using namespace InventoryMarkdown;
 
 	Describe("Anchors", [this]()
 	{
@@ -154,7 +155,7 @@ void FMarkdownDocumentSpec::Define()
 	{
 		BeforeEach([this]()
 		{
-			Folder = FPaths::ConvertRelativePathToFull(FPaths::AutomationTransientDir() / TEXT("MarkdownReviewer"));
+			Folder = FPaths::ConvertRelativePathToFull(FPaths::AutomationTransientDir() / TEXT("InventoryDocumentation"));
 			IFileManager::Get().MakeDirectory(*Folder, true);
 			FFileHelper::SaveStringToFile(TEXT("int Main;"), *(Folder / TEXT("main.cpp")));
 		});
@@ -187,6 +188,33 @@ void FMarkdownDocumentSpec::Define()
 				TestEqual(TEXT("Renumbered"), Document.Problems[1].Message, FString(TEXT("No heading has the anchor #124-item-details. Did you mean #125-item-details?")));
 				TestEqual(TEXT("Missing file"), Document.Problems[2].Message, FString(TEXT("Links to nope.md, which isn't there.")));
 				TestEqual(TEXT("Missing image on its line"), Document.Problems[3].Line, 7);
+			}
+		});
+	});
+
+	// The documentation window follows the guide's links between chapters, so a broken one is a dead end for readers there too.
+	Describe("The plugin's guide", [this]()
+	{
+		It("has no broken links, images, tables or code blocks", [this]()
+		{
+			const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("ModularInventory"));
+			if (!TestTrue(TEXT("The plugin is found"), Plugin.IsValid()))
+			{
+				return;
+			}
+
+			const FString Guide = FPaths::ConvertRelativePathToFull(Plugin->GetBaseDir() / TEXT("README.md"));
+			FString Text;
+			if (!TestTrue(TEXT("The guide can be read"), FFileHelper::LoadFileToString(Text, *Guide)))
+			{
+				return;
+			}
+
+			FDocument Document = Parse(Text);
+			Review(Document, FPaths::GetPath(Guide));
+			for (const FProblem& Problem : Document.Problems)
+			{
+				AddError(FString::Printf(TEXT("README.md line %d: %s"), Problem.Line, *Problem.Message));
 			}
 		});
 	});

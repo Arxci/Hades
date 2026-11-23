@@ -188,9 +188,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory|Containers")
 	int32 CountItems(const TArray<FInventoryContainerHandle>& Containers, const FInventoryItemQuery& Query, bool bRecursive = true) const { return Registry.CountItems(Containers, Query, bRecursive); }
 
-	/** A container that isn't owned by an item or component, e.g. for world storage. Destroy it when done. */
+	/**
+	 * A container that isn't owned by an item or component, e.g. for world storage. Destroy it when done. Starting Capacity gives it its
+	 * own capacity instead of its layout's, as Set Capacity would; -1 follows the layout.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
-	FInventoryContainerHandle CreateContainer(const UInventoryContainerLayout* Layout, FGameplayTag Tag, UObject* Owner);
+	FInventoryContainerHandle CreateContainer(const UInventoryContainerLayout* Layout, FGameplayTag Tag, UObject* Owner, int32 StartingCapacity = -1);
 
 	/** Root containers only, along with everything inside. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
@@ -203,53 +206,65 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
 	bool SetContainerLayout(FInventoryContainerHandle Container, const UInventoryContainerLayout* Layout, EInventoryError& OutError);
 
+	// Capacity: how much of a container's layout can hold items now. The layout is the most it can ever hold; capacity unlocks part of it.
 	/**
-	 * How much the container can hold now: usable cells for a grid, usable slots for slots, the most items for a list, or -1 for a list
-	 * without a limit. Set Capacity and Add Capacity change it for one container; otherwise it's its layout's.
+	 * How much the container can hold now: unlocked cells for a grid, unlocked slots for slots, the most items for a list, or -1 for a list
+	 * without a limit. Its own once it has one, from a Starting Capacity, Set Capacity, Add Capacity or a capacity upgrade; else its layout's.
 	 */
-	UFUNCTION(BlueprintPure, Category = "Inventory|Containers")
+	UFUNCTION(BlueprintPure, Category = "Inventory|Capacity")
 	int32 GetCapacity(FInventoryContainerHandle Container) const { return Registry.GetCapacity(Container); }
 
 	/**
-	 * Whether the placement is in the part of the container that can hold items now: a usable cell of a grid, a usable slot, or a position
-	 * in a list below its capacity. Locked cells and slots are the rest.
+	 * The most the container can be unlocked to: every cell of its grid at its layout's Max Rows, or every slot. -1 for a grid that grows
+	 * without limit, or a list, which has no most.
 	 */
-	UFUNCTION(BlueprintPure, Category = "Inventory|Containers")
+	UFUNCTION(BlueprintPure, Category = "Inventory|Capacity")
+	int32 GetMaxCapacity(FInventoryContainerHandle Container) const { return Registry.GetMaxCapacity(Container); }
+
+	/**
+	 * How many rows a grid has now, as grid widgets draw them: its layout's Grid Size, and every row it has grown into, as its capacity
+	 * rose or to fit its items. 0 for other types.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Capacity")
+	int32 GetGridRows(FInventoryContainerHandle Container) const { return Registry.GetGridRows(Container); }
+
+	/**
+	 * Whether the placement is in the part of the container that can hold items now: an unlocked cell of a grid, an unlocked slot, or a
+	 * position in a list below its capacity. Locked cells and slots are the rest.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Capacity")
 	bool IsPlacementUsable(FInventoryContainerHandle Container, const FInventoryPlacement& Placement) const { return Registry.IsPlacementUsable(Container, Placement); }
 
 	/**
-	 * Unlocks or locks part of a container, for this container only, overriding its layout: storage drawn at its full size that unlocks as
-	 * upgrades are found, slots earned during play, a satchel that holds more. Grids: Count cells can hold items, counted row by row from
-	 * the top left. Slots: the first Count slots can. Lists: at most Count items. A negative Count follows the layout again. Fails, changing
-	 * nothing, while an item sits where it would lock, or a list holds more than Count.
+	 * Gives the container its own capacity, overriding its layout's: storage that grows as upgrades are found, slots earned during play, a
+	 * satchel that holds more, a harder difficulty that starts with less room. Grids: Count cells can hold items, counted row by row from
+	 * the top left; past Grid Size, the grid gains the rows they reach into, up to Max Rows. Slots: the first Count slots can. Lists: at
+	 * most Count items. A negative Count follows the layout again. Fails, changing nothing, while an item sits where it would lock, or a list
+	 * holds more than Count.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Capacity")
 	bool SetCapacity(FInventoryContainerHandle Container, int32 Count, EInventoryError& OutError);
 
 	/**
 	 * Unlocks Count more of what the container can hold, such as 2 cells for a storage upgrade, one slot for a newly earned ring, or 5 more
-	 * items for a bigger satchel, or locks them again with a negative Count. Fails, changing nothing, when there's nothing left to unlock or
-	 * lock, for a list without a limit, or while an item sits where it would lock. So an upgrade can be refused once the container is at its
-	 * biggest.
+	 * items for a bigger satchel, or locks that many again with a negative Count. Fails, changing nothing, with At Max Capacity when there's
+	 * nothing left to unlock, as for a list without a limit, so an upgrade can be refused once the container is at its biggest; with Invalid
+	 * Count when there's nothing left to lock; and while an item sits where it would lock.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Capacity")
 	bool AddCapacity(FInventoryContainerHandle Container, int32 Count, EInventoryError& OutError);
 
-	/** Whether a grid cell can hold items now: inside the grid and not locked. */
-	UFUNCTION(BlueprintPure, Category = "Inventory|Containers")
-	bool IsCellUsable(FInventoryContainerHandle Container, FIntPoint Cell) const { return Registry.IsCellUsable(Container, Cell); }
+	/** How many of the item one stack holds where it is: its definition's Max Stack Size, and its container's stack bonuses. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Capacity")
+	int32 GetMaxStackSize(FInventoryItemHandle Item) const { return Registry.GetMaxStackSize(Item); }
 
-	/** How many of a grid's cells can hold items now, counted row by row from the top left. 0 for slots and lists. */
-	UFUNCTION(BlueprintPure, Category = "Inventory|Containers")
-	int32 GetUsableCellCount(FInventoryContainerHandle Container) const { return Registry.GetUsableCellCount(Container); }
-
-	/** Set Capacity for grids only: Count cells can hold items, counted row by row from the top left. Anything but a grid is Rejected. */
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
-	bool SetUsableCellCount(FInventoryContainerHandle Container, int32 Count, EInventoryError& OutError);
-
-	/** Add Capacity for grids only: unlocks Count more cells, row by row, or locks them with a negative Count. Anything but a grid is Rejected. */
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
-	bool AddUsableCells(FInventoryContainerHandle Container, int32 Count, EInventoryError& OutError);
+	/**
+	 * Lets items matching Item Query stack Amount higher in the container, such as for a stack size upgrade. Bonuses add up, and stay with
+	 * the container. A stack bigger than a container allows, such as one moved out of a container with a bonus, stays whole but takes no
+	 * more.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Capacity")
+	bool AddStackBonus(FInventoryContainerHandle Container, const FInventoryItemQuery& ItemQuery, int32 Amount, EInventoryError& OutError);
 
 	/** Sorts a grid or list: merges partial stacks, then orders the items biggest first in a grid, then by name. All or nothing. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
@@ -334,6 +349,9 @@ protected:
 private:
 	void HandleRegistryChanged(const FInventoryChangeSet& Changes);
 	EInventoryError CheckOwnerRequirements(const FInventoryRegistry& InRegistry, const FInventoryItemRecord& Item, FInventoryContainerHandle Container) const;
+
+	/** The carry limit of the Inventory Component that owns the container's root, if it has one. */
+	EInventoryError CheckCarryLimit(const FInventoryRegistry& InRegistry, const FInventoryItemRecord& Item, FInventoryContainerHandle Container) const;
 
 	UPROPERTY()
 	FInventoryRegistry Registry;

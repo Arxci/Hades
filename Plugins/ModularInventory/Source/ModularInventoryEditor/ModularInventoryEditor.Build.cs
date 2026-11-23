@@ -8,7 +8,7 @@ public class ModularInventoryEditor : ModuleRules
 
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
-			"Core", "CoreUObject", "Engine", "InputCore", "Slate", "SlateCore", "GameplayTags", "DeveloperSettings",
+			"Core", "CoreUObject", "Engine", "RenderCore", "InputCore", "ApplicationCore", "Slate", "SlateCore", "GameplayTags", "DeveloperSettings",
 			"UnrealEd", "PropertyEditor", "AssetTools", "AssetRegistry", "ContentBrowser", "ContentBrowserData", "ToolMenus",
 			"MessageLog", "Settings", "DataValidation", "DesktopPlatform", "Projects", "ImageCore",
 			"ModularInventory"

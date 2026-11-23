@@ -47,7 +47,7 @@ UInventoryItemDefinitionFactory::UInventoryItemDefinitionFactory()
 
 UObject* UInventoryItemDefinitionFactory::FactoryCreateNew(UClass* InClass, UObject* InParent, FName InName, EObjectFlags Flags, UObject* Context, FFeedbackContext* Warn)
 {
-	InventoryAssetManagerSetup::PromptIfNeeded();
+	InventoryAssetManagerSetup::SetUpSoon();
 	return Super::FactoryCreateNew(InClass, InParent, InName, Flags, Context, Warn);
 }
 

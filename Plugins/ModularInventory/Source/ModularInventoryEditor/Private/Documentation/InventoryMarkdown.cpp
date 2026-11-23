@@ -1,8 +1,8 @@
-﻿#include "Markdown/MarkdownDocument.h"
+﻿#include "Documentation/InventoryMarkdown.h"
 
 #include "Misc/Paths.h"
 
-namespace MarkdownReview
+namespace InventoryMarkdown
 {
 	namespace
 	{

@@ -175,7 +175,7 @@ struct MODULARINVENTORYUI_API FInventoryInteractionStyle
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
 	bool bSwapPicksUpOther = false;
 
-	/** Shift and a click on an item moves it to the other side, such as from a chest into the pockets, while there's a transfer container. */
+	/** Shift and a click on an item moves it to the other side, such as from a chest into the player's inventory, while there's a transfer container. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Inventory UI")
 	bool bShiftClickTransfers = false;
 

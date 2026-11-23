@@ -47,10 +47,12 @@ struct FHadesGun
 
 
 /**
- * The player's inventory with the game's rules on top: one item in hand, using, discarding and combining items, guns and their ammo, and
- * pouches that grow the pockets. The item in hand stays where it is in the pockets. Its equip rules decide which hand slot it's equipped to.
- * Expects a Container.Pockets grid and a Container.KeyItems list, plus an Inventory Equipment Component on the same actor. Give the pockets
- * one layout at the biggest size they grow to, with Usable Cells set to what they start with: pouches unlock the rest.
+ * The player's inventory with the game's rules on top: one item in hand, using, discarding and combining items, and guns and their ammo.
+ * The item in hand stays where it is in the inventory. Its equip rules decide which hand slot it's equipped to.
+ * Expects a Container.Inventory grid and a Container.KeyItems list, plus an Inventory Equipment Component on the same actor.
+ * Give the inventory's layout the grid it starts with as its Grid Size, Grid Growth With Upgrades, and the most rows it grows to as its
+ * Max Rows. Pouches are items with an Inventory Capacity Upgrade for Container.Inventory: picking one up adds cells, and this component
+ * tells the player so.
  */
 UCLASS(ClassGroup = (Inventory), meta = (BlueprintSpawnableComponent))
 class HADES_API UHadesInventoryComponent : public UInventoryComponent
@@ -130,27 +132,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Guns")
 	bool SpendRounds(FInventoryItemHandle Gun, int32 Count = 1);
 
-	// Pockets. They're one layout at the biggest size they grow to, with Usable Cells set to what they start with.
-	/** Unlocks Cells more of the pockets' cells, row by row. False, unlocking none, once every cell is unlocked. */
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Pockets")
-	bool GrowPockets(int32 Cells);
-
-	/** An item tagged Item.Type.Pouch: it grows the pockets by its Item.Stat.PocketCells instead of going in them. */
-	UFUNCTION(BlueprintPure, Category = "Inventory|Pockets")
-	bool IsPouch(FInventoryItemHandle Item) const;
-
-	/**
-	 * Grows the pockets by the pouch's Item.Stat.PocketCells, uses the pouch up and tells the player. False, keeping it, when it isn't a
-	 * pouch, unlocks nothing, or the pockets are already at their biggest.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Pockets")
-	bool UsePouch(FInventoryItemHandle Pouch);
-
-	/** Repacks the pockets, biggest items first. */
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Pockets")
-	bool OrganizePockets();
+	// Organizing
+	/** Repacks the inventory grid, biggest items first. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory")
+	bool OrganizeInventory();
 
 protected:
+	//~ Begin UActorComponent Interface
+	virtual void BeginPlay() override;
+	//~ End UActorComponent Interface
+
 	/** Spawned with a discarded item inside, so it can be picked up again. Empty destroys discarded items. */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Hades")
 	TSubclassOf<AHadesItemPickup> DroppedPickupClass;
@@ -160,6 +151,10 @@ protected:
 	TObjectPtr<UInventoryRecipeBook> CombineRecipes;
 
 private:
+	/** Tells the player a pouch, or any other capacity upgrade, made room for more. */
+	UFUNCTION()
+	void HandleCapacityUpgraded(UInventoryComponent* Inventory, FGameplayTag ContainerTag, const UInventoryItemDefinition* Upgrade);
+
 	FGameplayTag ChooseHand(FInventoryItemHandle Item) const;
 	const FHadesGun* FindGun(FInventoryItemHandle Item) const;
 

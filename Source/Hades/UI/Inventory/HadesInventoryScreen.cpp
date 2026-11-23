@@ -27,7 +27,7 @@ UHadesInventoryScreen::UHadesInventoryScreen(const FObjectInitializer& ObjectIni
 	InteractionStyle.bSwapPicksUpOther = true;
 	InteractionStyle.bKeepLastHoveredItem = true;
 
-	// Opens on the item last highlighted, or the first pocket, highlighted and in the details, with the mouse too.
+	// Opens on the item last highlighted, or the inventory's first cell, highlighted and in the details, with the mouse too.
 	bAimOnOpen = true;
 	bStartOnLastItem = true;
 	bPauseGame = true;
@@ -166,9 +166,9 @@ void UHadesInventoryScreen::HandleOrganizeAction()
 	}
 
 	Interaction->CancelHold();
-	if (!Inventory->OrganizePockets())
+	if (!Inventory->OrganizeInventory())
 	{
-		AHadesPlayerController::ShowMessageTo(GetOwningPlayerPawn(), LOCTEXT("CantOrganize", "Couldn't organize your pockets."));
+		AHadesPlayerController::ShowMessageTo(GetOwningPlayerPawn(), LOCTEXT("CantOrganize", "Couldn't organize your inventory."));
 	}
 }
 

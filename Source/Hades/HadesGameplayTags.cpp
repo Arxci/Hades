@@ -39,7 +39,7 @@ namespace HadesGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Input_QuickSlot_3, "Input.QuickSlot.3");
 	UE_DEFINE_GAMEPLAY_TAG(Input_QuickSlot_4, "Input.QuickSlot.4");
 
-	UE_DEFINE_GAMEPLAY_TAG(Container_Pockets,  "Container.Pockets");
+	UE_DEFINE_GAMEPLAY_TAG(Container_Inventory,  "Container.Inventory");
 	UE_DEFINE_GAMEPLAY_TAG(Container_KeyItems, "Container.KeyItems");
 	UE_DEFINE_GAMEPLAY_TAG(Container_ItemBox,  "Container.ItemBox");
 	UE_DEFINE_GAMEPLAY_TAG(Container_Pickup,   "Container.Pickup");
@@ -48,9 +48,7 @@ namespace HadesGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Equipment_Slot_Hand_Left,  "Equipment.Slot.Hand.Left");
 
 	UE_DEFINE_GAMEPLAY_TAG(Item_Type_KeyItem, "Item.Type.KeyItem");
-	UE_DEFINE_GAMEPLAY_TAG(Item_Type_Pouch,   "Item.Type.Pouch");
 	UE_DEFINE_GAMEPLAY_TAG(Item_Stat_Uses,    "Item.Stat.Uses");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Item_Stat_Rounds,   "Item.Stat.Rounds",   "Rounds loaded in a gun. Its definition's value is what it's found with.");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Item_Stat_Capacity, "Item.Stat.Capacity", "Rounds a gun holds when full. Attachments can add to it, such as an extended magazine.");
-	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Item_Stat_PocketCells, "Item.Stat.PocketCells", "On a pouch: how many more of the pockets' cells it unlocks.");
 }

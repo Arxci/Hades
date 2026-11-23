@@ -133,10 +133,9 @@ int32 FInventoryRegistry::FindOccupant(const FInventoryContainerRecord& Containe
 	{
 	case EInventoryContainerType::Grid:
 	{
-		const FIntPoint& Cell = Placement.Cell;
-		const bool bInside = Cell.X >= 0 && Cell.Y >= 0 && Cell.X < Layout.GridSize.X && Cell.Y < Layout.GridSize.Y;
-		const int32 CellIndex = Cell.Y * Layout.GridSize.X + Cell.X;
-		return bInside && Container.Cells.IsValidIndex(CellIndex) ? Container.Cells[CellIndex] : INDEX_NONE;
+		// Cells past the end of a grid's storage are empty.
+		const int32 CellIndex = GetCellIndex(Layout, Placement.Cell);
+		return Container.Cells.IsValidIndex(CellIndex) ? Container.Cells[CellIndex] : INDEX_NONE;
 	}
 	case EInventoryContainerType::Slots:
 		return Container.Cells.IsValidIndex(Placement.Index) ? Container.Cells[Placement.Index] : INDEX_NONE;
@@ -317,14 +316,15 @@ int32 FInventoryRegistry::CreateItem(FInventoryItemRecord&& Record)
 	{
 		if (ContainerSpec.Layout)
 		{
-			const FInventoryContainerHandle Container = CreateContainerRecord(ContainerSpec.Layout, ContainerSpec.Tag, nullptr, Handle);
+			const int32 StartingCapacity = ContainerSpec.bOverrideStartingCapacity ? FMath::Max(0, ContainerSpec.StartingCapacity) : INDEX_NONE;
+			const FInventoryContainerHandle Container = CreateContainerRecord(ContainerSpec.Layout, ContainerSpec.Tag, nullptr, Handle, StartingCapacity);
 			Items[Index].Containers.Add(Container);
 		}
 	}
 	return Index;
 }
 
-FInventoryContainerHandle FInventoryRegistry::CreateContainerRecord(const UInventoryContainerLayout* Layout, const FGameplayTag& Tag, UObject* Owner, FInventoryItemHandle OwnerItem)
+FInventoryContainerHandle FInventoryRegistry::CreateContainerRecord(const UInventoryContainerLayout* Layout, const FGameplayTag& Tag, UObject* Owner, FInventoryItemHandle OwnerItem, int32 StartingCapacity)
 {
 	const int32 Index = AllocateContainer();
 	FInventoryContainerRecord& Record = Containers[Index];
@@ -334,6 +334,10 @@ FInventoryContainerHandle FInventoryRegistry::CreateContainerRecord(const UInven
 	Record.OwnerItem = OwnerItem;
 	Record.Fragments = Layout->InstanceFragments;
 	Record.Cells.Init(INDEX_NONE, Layout->Type == EInventoryContainerType::Grid ? Layout->GetCellCount() : Layout->GetSlotCount());
+	Record.CellColumns = Layout->Type == EInventoryContainerType::Grid ? Layout->GridSize.X : 0;
+
+	// It's empty, so any capacity fits.
+	Record.CapacityOverride = Layout->ClampCapacity(StartingCapacity);
 	return MakeContainerHandle(Index);
 }
 
@@ -366,14 +370,14 @@ void FInventoryRegistry::DestroyContainerRecord(int32 Index)
 	FreeContainer(Index);
 }
 
-FInventoryContainerHandle FInventoryRegistry::CreateContainer(const UInventoryContainerLayout* Layout, const FGameplayTag& Tag, UObject* Owner)
+FInventoryContainerHandle FInventoryRegistry::CreateContainer(const UInventoryContainerLayout* Layout, const FGameplayTag& Tag, UObject* Owner, int32 StartingCapacity)
 {
 	FInventoryContainerHandle Result;
 	if (Layout)
 	{
 		RunTransaction([&]()
 		{
-			Result = CreateContainerRecord(Layout, Tag, Owner, FInventoryItemHandle());
+			Result = CreateContainerRecord(Layout, Tag, Owner, FInventoryItemHandle(), StartingCapacity);
 			return EInventoryError::None;
 		});
 	}
@@ -451,15 +455,41 @@ void FInventoryRegistry::StampCells(int32 ContainerIndex, int32 ItemIndex, int32
 	if (Layout.Type == EInventoryContainerType::Grid)
 	{
 		const FIntPoint Size = Item.Definition->GetSize(Item.Placement.bRotated);
+		const int32 Columns = Layout.GridSize.X;
 		for (int32 Y = Item.Placement.Cell.Y; Y < Item.Placement.Cell.Y + Size.Y; ++Y)
 		{
 			for (int32 X = Item.Placement.Cell.X; X < Item.Placement.Cell.X + Size.X; ++X)
 			{
-				const int32 CellIndex = Y * Layout.GridSize.X + X;
+				const int32 CellIndex = GetCellIndex(Layout, FIntPoint(X, Y));
+				if (CellIndex == INDEX_NONE)
+				{
+					continue;
+				}
+
+				// A grid that has grown takes on the rows an item goes into, a whole row of empty cells at a time.
+				if (Value != INDEX_NONE && CellIndex >= Container.Cells.Num())
+				{
+					const int32 CellsNeeded = (CellIndex / Columns + 1) * Columns;
+					Container.Cells.Reserve(CellsNeeded);
+					while (Container.Cells.Num() < CellsNeeded)
+					{
+						Container.Cells.Add(INDEX_NONE);
+					}
+				}
 				if (Container.Cells.IsValidIndex(CellIndex))
 				{
 					Container.Cells[CellIndex] = Value;
 				}
+			}
+		}
+
+		// A grid that grows to fit gives up the empty rows at its bottom again, down to Grid Size.
+		if (Value == INDEX_NONE && Layout.GridGrowth == EInventoryGridGrowth::ToFitItems && Columns > 0)
+		{
+			const int32 CellsKept = GetRecordGridRows(Container) * Columns;
+			if (Container.Cells.Num() > CellsKept)
+			{
+				Container.Cells.SetNum(CellsKept);
 			}
 		}
 	}

@@ -23,6 +23,19 @@ namespace
 	constexpr double DropDistance = 60.0;
 }
 
+void UHadesInventoryComponent::BeginPlay()
+{
+	// Bound once the starting items are in, so starting with a pouch says nothing.
+	Super::BeginPlay();
+
+	OnCapacityUpgraded.AddUniqueDynamic(this, &ThisClass::HandleCapacityUpgraded);
+}
+
+void UHadesInventoryComponent::HandleCapacityUpgraded(UInventoryComponent* Inventory, FGameplayTag ContainerTag, const UInventoryItemDefinition* Upgrade)
+{
+	AHadesPlayerController::ShowMessageTo(GetOwner(), FText::Format(LOCTEXT("InventoryGrew", "{0}: you can carry more."), Upgrade ? Upgrade->DisplayName : FText::GetEmpty()));
+}
+
 // Hands
 bool UHadesInventoryComponent::DrawItem(FInventoryItemHandle Item)
 {
@@ -343,55 +356,12 @@ bool UHadesInventoryComponent::IsKeyItem(FInventoryItemHandle Item) const
 	return InventorySubsystem && InventorySubsystem->HasItemTag(Item, HadesGameplayTags::Item_Type_KeyItem);
 }
 
-// Pockets
-bool UHadesInventoryComponent::GrowPockets(int32 Cells)
-{
-	// Within the one layout: it fails once every cell is unlocked.
-	UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
-	EInventoryError Error = EInventoryError::None;
-	return InventorySubsystem && Cells > 0 && InventorySubsystem->AddUsableCells(GetContainer(HadesGameplayTags::Container_Pockets), Cells, Error);
-}
-
-bool UHadesInventoryComponent::IsPouch(FInventoryItemHandle Item) const
-{
-	const UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
-	return InventorySubsystem && InventorySubsystem->HasItemTag(Item, HadesGameplayTags::Item_Type_Pouch);
-}
-
-bool UHadesInventoryComponent::UsePouch(FInventoryItemHandle Pouch)
-{
-	UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
-	if (!InventorySubsystem || !IsPouch(Pouch))
-	{
-		return false;
-	}
-
-	// What it unlocks is on the pouch, so each kind of pouch can say its own.
-	const UInventoryItemDefinition* Definition = InventorySubsystem->GetItemDefinition(Pouch);
-	const int32 Cells = FMath::RoundToInt32(InventorySubsystem->GetTagValue(Pouch, HadesGameplayTags::Item_Stat_PocketCells));
-	if (Cells <= 0)
-	{
-		UE_LOG(LogHadesInventory, Warning, TEXT("[Inventory] %s is a pouch without an Item.Stat.PocketCells tag value, so it unlocks nothing. Give its definition one, such as 2."),
-			*GetNameSafe(Definition));
-		return false;
-	}
-	if (!GrowPockets(Cells))
-	{
-		UE_LOG(LogHadesInventory, Warning, TEXT("[Inventory] %s can't grow %s's pockets: every cell is already unlocked. Give the pockets' layout a bigger grid."),
-			*GetNameSafe(Definition), *GetNameSafe(GetOwner()));
-		return false;
-	}
-
-	AHadesPlayerController::ShowMessageTo(GetOwner(), FText::Format(LOCTEXT("PocketsGrew", "{0}: you can carry more."), Definition ? Definition->DisplayName : FText::GetEmpty()));
-	InventorySubsystem->RemoveItem(Pouch);
-	return true;
-}
-
-bool UHadesInventoryComponent::OrganizePockets()
+// Organizing
+bool UHadesInventoryComponent::OrganizeInventory()
 {
 	UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
 	EInventoryError Error;
-	return InventorySubsystem && InventorySubsystem->SortContainer(GetContainer(HadesGameplayTags::Container_Pockets), Error);
+	return InventorySubsystem && InventorySubsystem->SortContainer(GetContainer(HadesGameplayTags::Container_Inventory), Error);
 }
 
 #undef LOCTEXT_NAMESPACE

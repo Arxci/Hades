@@ -12,11 +12,15 @@
 
 class UInventoryComponent;
 class UInventoryContainerLayout;
+class UInventoryItemDefinition;
 class UInventoryLootTable;
 class UInventoryRecipe;
 class UInventoryRecipeBook;
 class UInventorySubsystem;
+struct FInventoryCapacityUpgrade;
 struct FInventoryChangeSet;
+struct FInventoryItemRecord;
+struct FInventoryRegistry;
 
 
 USTRUCT(BlueprintType)
@@ -24,12 +28,25 @@ struct MODULARINVENTORY_API FInventoryContainerConfig
 {
 	GENERATED_BODY()
 
-	/** Tells this component's containers apart, e.g. Container.Pockets or Container.Equipment. */
+	/** Tells this component's containers apart, e.g. Container.Inventory or Container.Equipment. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory")
 	FGameplayTag Tag;
 
+	/** Its shape and rules. For a grid that grows during play, give it the size it starts at and the Max Rows it can grow to. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory")
 	TObjectPtr<UInventoryContainerLayout> Layout;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory", meta = (InlineEditConditionToggle))
+	bool bOverrideStartingCapacity = false;
+
+	/**
+	 * How much this container holds when play begins, instead of its layout's: cells for a grid, counted row by row from the top left;
+	 * slots for slots, from the first; items for a list. 0 starts it with nothing usable. Capacity upgrades and Set Capacity grow it from
+	 * there, up to the most its layout allows, so one layout serves any number of starting sizes, such as a harder difficulty that starts
+	 * with less room.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory", meta = (EditCondition = "bOverrideStartingCapacity", ClampMin = "0"))
+	int32 StartingCapacity = 0;
 };
 
 
@@ -47,12 +64,31 @@ struct MODULARINVENTORY_API FInventoryStartingEquipment
 };
 
 
+/** Whether a total of a tag value across everything an Inventory Component holds, such as weight, limits what it can take. */
+UENUM(BlueprintType)
+enum class EInventoryCarryLimit : uint8
+{
+	/** Only the room in its containers limits what it takes. */
+	None,
+	/** Items that would take the total past Max Carried are turned away: by pickups, chests, the inventory UI and code alike. */
+	Refuse,
+	/** Items are always taken. Past Max Carried it's over its limit, for the game to slow its owner down. */
+	AllowOver
+};
+
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInventoryComponentChangedSignature, UInventoryComponent*, Inventory);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FInventoryCapacityUpgradedSignature, UInventoryComponent*, Inventory, FGameplayTag, ContainerTag, const UInventoryItemDefinition*, Upgrade);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FInventoryOverCarryLimitSignature, UInventoryComponent*, Inventory, bool, bIsOverCarryLimit);
 
 
 /**
- * Gives an actor its own root containers: a player's pockets and equipment slots, a chest, a pickup lying in the world.
+ * Gives an actor its own root containers: a player's inventory and equipment slots, a chest, a pickup lying in the world.
  * The items live in the world's inventory registry; this component creates the containers on begin play and destroys them on end play.
+ *
+ * This is the gameplay way in: give it items, take items into it, use upgrades, craft, all by container tag, with its rules applied, such
+ * as capacity upgrades used as they're taken and its carry limit. The Inventory Subsystem works on any container or item by handle, for
+ * what this doesn't cover, such as exact placements, chests' contents or tag values.
  */
 UCLASS(Blueprintable, ClassGroup = (Inventory), meta = (BlueprintSpawnableComponent))
 class MODULARINVENTORY_API UInventoryComponent : public UActorComponent
@@ -89,7 +125,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory")
 	bool OwnsItem(FInventoryItemHandle Item) const;
 
-	// Items
+	// Items. Taking in a capacity upgrade that's applied when taken grows its container and uses it up, instead of storing it.
 	/** Adds to the storage containers, topping up stacks first. Returns how many were added; without Allow Partial that is all or nothing. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	int32 AddItem(const FInventoryItemSpec& Spec, bool bAllowPartial, TArray<FInventoryItemHandle>& OutItems);
@@ -97,6 +133,13 @@ public:
 	/** Whether Add Item would succeed, without adding anything. With Allow Partial, whether any of it fits. */
 	UFUNCTION(BlueprintPure, Category = "Inventory")
 	bool CanAddItem(const FInventoryItemSpec& Spec, bool bAllowPartial) const;
+
+	/**
+	 * Creates Count of an item kind in storage: Add Item with nothing but a definition and a count. Returns how many were added; without
+	 * Allow Partial that is all or nothing.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory")
+	int32 AddItemByDefinition(UInventoryItemDefinition* Definition, int32 Count = 1, bool bAllowPartial = false);
 
 	/** Rolls the table and adds the results. With Allow Partial, whatever doesn't fit is discarded; otherwise all or nothing. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
@@ -133,6 +176,68 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory")
 	float GetTotalTagValue(FGameplayTag Tag) const;
 
+	// Capacity: how much one of this component's containers holds, by its tag. The Inventory Subsystem's versions take a container handle.
+	/** How much the container holds now: usable cells for a grid, unlocked slots, or the most items for a list. -1 for no limit. 0 without that container. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Capacity")
+	int32 GetContainerCapacity(FGameplayTag ContainerTag) const;
+
+	/** The most the container can grow to. -1 for no limit. 0 without that container. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Capacity")
+	int32 GetContainerMaxCapacity(FGameplayTag ContainerTag) const;
+
+	/**
+	 * Adds room to the container, such as two cells for a story reward, as a capacity upgrade does, or takes that much away with a negative
+	 * Count. Fails with At Max Capacity when it can't grow any more.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Capacity")
+	bool AddContainerCapacity(FGameplayTag ContainerTag, int32 Count, EInventoryError& OutError);
+
+	/** Sets how much the container holds, as Add Container Capacity counts it. -1 goes back to its layout's. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Capacity")
+	bool SetContainerCapacity(FGameplayTag ContainerTag, int32 Count, EInventoryError& OutError);
+
+	/** Lets items matching Item Query stack Amount higher in the container, as a stack size upgrade does. Bonuses add up. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Capacity")
+	bool AddContainerStackBonus(FGameplayTag ContainerTag, const FInventoryItemQuery& ItemQuery, int32 Amount, EInventoryError& OutError);
+
+	// Capacity upgrades: items with an Inventory Capacity Upgrade fragment, such as a pouch, upgrade the container its Container Tag names.
+	/**
+	 * Applies the item's Inventory Capacity Upgrade to this component's container with its Container Tag, adding room or letting items
+	 * stack higher, and uses one of the item up, wherever the item is: here, in a pickup, or in a chest. Upgrades with Apply When Taken
+	 * apply as they're picked up, so this is for the others, such as from an item menu's Apply Capacity Upgrade action. Fails, changing
+	 * nothing, when the item isn't a capacity upgrade (Invalid Fragment), this component has no container with its tag (Invalid
+	 * Container), or the container can't grow any more (At Max Capacity).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Capacity")
+	bool ApplyCapacityUpgrade(FInventoryItemHandle Item, EInventoryError& OutError);
+
+	/** Whether Apply Capacity Upgrade would work for the item now, such as to offer it in an item menu. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Capacity")
+	bool CanApplyCapacityUpgrade(FInventoryItemHandle Item) const;
+
+	// Carry limit: a total of a tag value, such as weight, across everything this component holds. Off unless Carry Limit is set.
+	/** The total of Carried Value Tag across everything it holds, equipped items and what's inside other items included. 0 without a carry limit. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Carry Limit")
+	float GetCarried() const;
+
+	UFUNCTION(BlueprintPure, Category = "Inventory|Carry Limit")
+	float GetMaxCarried() const { return MaxCarried; }
+
+	/** Changes Max Carried, such as for a strength bonus or a better backpack. Lowering it never drops anything. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Carry Limit")
+	void SetMaxCarried(float NewMaxCarried);
+
+	/** How much more it can carry before it's over its limit. A very large number without a carry limit. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Carry Limit")
+	float GetCarryRoom() const;
+
+	/** Whether it carries more than Max Carried: with Allow Over, or after Max Carried was lowered. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Carry Limit")
+	bool IsOverCarryLimit() const;
+
+	/** For the inventory registry's entry check: Over Carry Limit when Item entering one of this component's containers would break a Refuse carry limit. */
+	EInventoryError CheckCarryLimit(const FInventoryRegistry& Registry, const FInventoryItemRecord& Item) const;
+
 	// Crafting. Ingredients come from storage, and the owner's ability system tags join the context tags.
 	UFUNCTION(BlueprintPure, Category = "Inventory|Crafting")
 	bool CanCraft(const UInventoryRecipe* Recipe, const FGameplayTagContainer& ContextTags, int32 Times = 1) const;
@@ -160,12 +265,25 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Inventory")
 	FInventoryComponentChangedSignature OnInventoryChanged;
 
+	/**
+	 * A capacity upgrade grew one of this component's containers, once for each one used up: with Apply Capacity Upgrade, or as it was
+	 * taken. After On Inventory Changed, so widgets already show the new room. Upgrade is the item's definition, such as for its name in a
+	 * message.
+	 */
+	UPROPERTY(BlueprintAssignable, Category = "Inventory|Capacity")
+	FInventoryCapacityUpgradedSignature OnCapacityUpgraded;
+
+	/** It went over its carry limit, or back under it, such as to slow its owner down while it's over. */
+	UPROPERTY(BlueprintAssignable, Category = "Inventory|Carry Limit")
+	FInventoryOverCarryLimitSignature OnOverCarryLimitChanged;
+
 protected:
 	//~ Begin UActorComponent Interface
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	//~ End UActorComponent Interface
 
+	/** The root containers, created on begin play. Their order is the order new items go into them. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory", meta = (TitleProperty = "Tag"))
 	TArray<FInventoryContainerConfig> Containers;
 
@@ -191,11 +309,66 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory|Starting Items")
 	FGameplayTagContainer StartingLootContext;
 
+	/**
+	 * Whether a total of Carried Value Tag across everything it holds, such as weight, limits what it takes: not at all, by refusing
+	 * what would go past Max Carried, or by taking it and being over its limit.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory|Carry Limit")
+	EInventoryCarryLimit CarryLimit = EInventoryCarryLimit::None;
+
+	/** The tag value that adds up, such as Item.Stat.Weight: each item's value times its count, and everything inside it. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory|Carry Limit", meta = (EditCondition = "CarryLimit != EInventoryCarryLimit::None", EditConditionHides))
+	FGameplayTag CarriedValueTag;
+
+	/** The most it can carry before it's over its limit. Set Max Carried changes it at runtime. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory|Carry Limit", meta = (ClampMin = "0", EditCondition = "CarryLimit != EInventoryCarryLimit::None", EditConditionHides))
+	float MaxCarried = 100.0f;
+
 private:
+	/** Capacity upgrades used up by one call, to announce once its change is made. */
+	struct FAppliedUpgrade
+	{
+		TWeakObjectPtr<const UInventoryItemDefinition> Definition;
+		FGameplayTag ContainerTag;
+		int32 Times = 0;
+	};
+
 	UInventorySubsystem* GetSubsystem() const { return Subsystem.Get(); }
 	FGameplayTagContainer GatherContextTags(const FGameplayTagContainer& ExtraTags) const;
 	void HandleRegistryChanged(const FInventoryChangeSet& Changes);
 	void RefreshCosmeticsPreload();
+
+	/** The capacity upgrade of an item kind this component applies as it's taken, and the container of this component it grows. */
+	const FInventoryCapacityUpgrade* FindUpgradeAppliedWhenTaken(const UInventoryItemDefinition* Definition, FInventoryContainerHandle& OutContainer) const;
+
+	/**
+	 * Grows Container by Upgrade Times times. With bAllowPartial, as many times as it can, failing only when it can't once; otherwise all or
+	 * nothing. Call it inside a transaction. Returns how many times it applied.
+	 */
+	static int32 ApplyUpgrade(FInventoryRegistry& Registry, const FInventoryCapacityUpgrade& Upgrade, FInventoryContainerHandle Container, int32 Times,
+		bool bAllowPartial, EInventoryError& OutError);
+
+	/** Add Item into Storage, inside the caller's transaction: a capacity upgrade applied when taken is applied instead. Returns how many were added or applied. */
+	int32 AddToStorage(FInventoryRegistry& Registry, const FInventoryItemSpec& Spec, TConstArrayView<FInventoryContainerHandle> Storage, bool bAllowPartial,
+		TArray<FInventoryItemHandle>* OutItems, EInventoryError& OutError, TArray<FAppliedUpgrade>& OutApplied) const;
+
+	/** Take Item into Storage, inside the caller's transaction: a capacity upgrade applied when taken is applied, and used up, instead. */
+	EInventoryError TakeIntoStorage(FInventoryRegistry& Registry, FInventoryItemHandle Item, int32 Count, bool bAllowPartial,
+		TConstArrayView<FInventoryContainerHandle> Storage, TArray<FAppliedUpgrade>& OutApplied) const;
+
+	/** Fires On Capacity Upgraded for each upgrade a committed call used up. */
+	void AnnounceUpgrades(const TArray<FAppliedUpgrade>& Applied);
+
+	bool HasCarryLimit() const { return CarryLimit != EInventoryCarryLimit::None && CarriedValueTag.IsValid(); }
+
+	/**
+	 * How many of Wanted, each adding Value Per One, a Refuse carry limit lets it take in, so a partial pickup takes what it can carry.
+	 * Wanted when nothing limits it.
+	 */
+	int32 GetCountItCanCarry(float ValuePerOne, int32 Wanted) const;
+
+	/** Fires On Over Carry Limit Changed when it went over its carry limit or back under it. */
+	void RefreshCarryLimitState();
 
 	TArray<FInventoryContainerHandle> RootContainers;
 	TWeakObjectPtr<UInventorySubsystem> Subsystem;
@@ -203,4 +376,6 @@ private:
 
 	TSet<FSoftObjectPath> PreloadedCosmetics;
 	TSharedPtr<FStreamableHandle> CosmeticsHandle;
+
+	bool bWasOverCarryLimit = false;
 };
