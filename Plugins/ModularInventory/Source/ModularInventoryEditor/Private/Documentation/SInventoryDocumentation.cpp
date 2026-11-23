@@ -6,8 +6,10 @@
 #include "Brushes/SlateRoundedBoxBrush.h"
 #include "CoreGlobals.h"
 #include "Engine/Texture2D.h"
+#include "Fonts/FontMeasure.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/Docking/TabManager.h"
+#include "Framework/Text/RichTextLayoutMarshaller.h"
 #include "Framework/Text/SlateHyperlinkRun.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformApplicationMisc.h"
@@ -16,11 +18,14 @@
 #include "ImageUtils.h"
 #include "InputCoreTypes.h"
 #include "Interfaces/IPluginManager.h"
+#include "Layout/ArrangedChildren.h"
+#include "Layout/Children.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "PluginDescriptor.h"
 #include "Rendering/DrawElements.h"
+#include "Rendering/SlateRenderer.h"
 #include "Styling/CoreStyle.h"
 #include "Styling/SlateStyle.h"
 #include "Styling/SlateTypes.h"
@@ -34,7 +39,6 @@
 #include "Widgets/Input/SSearchBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
-#include "Widgets/Layout/SGridPanel.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SSeparator.h"
 #include "Widgets/Layout/SSplitter.h"
@@ -42,6 +46,7 @@
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/SLeafWidget.h"
 #include "Widgets/SOverlay.h"
+#include "Widgets/SPanel.h"
 #include "Widgets/Text/SMultiLineEditableText.h"
 #include "Widgets/Text/SRichTextBlock.h"
 #include "Widgets/Text/STextBlock.h"
@@ -131,12 +136,51 @@ namespace InventoryDocumentation
 		return &Brush;
 	}
 
-	/** Code blocks and cards: a raised panel with a faint outline. */
+	/** Cards: a raised panel with a faint outline. */
 	const FSlateBrush* PanelBrush()
 	{
 		static const FSlateRoundedBoxBrush Brush(FStyleColors::Background, 6.0f, FStyleColors::Hover, 1.0f);
 		return &Brush;
 	}
+
+	/** Code blocks: darker than the page, as in a code editor, with an outline. */
+	const FLinearColor CodeBackground(FColor(17, 17, 17));
+	const FLinearColor CodeOutline(FColor(58, 58, 58));
+
+	const FSlateBrush* CodeBrush()
+	{
+		static const FSlateRoundedBoxBrush Brush(CodeBackground, 6.0f, CodeOutline, 1.0f);
+		return &Brush;
+	}
+
+	/** A code editor's colors for each kind of code, those of Visual Studio Code's dark theme. */
+	FLinearColor CodeColor(ECodeToken Token)
+	{
+		switch (Token)
+		{
+		case ECodeToken::Keyword:
+			return FLinearColor(FColor(86, 156, 214));
+		case ECodeToken::Type:
+			return FLinearColor(FColor(78, 201, 176));
+		case ECodeToken::Function:
+			return FLinearColor(FColor(220, 220, 170));
+		case ECodeToken::String:
+			return FLinearColor(FColor(206, 145, 120));
+		case ECodeToken::Number:
+			return FLinearColor(FColor(181, 206, 168));
+		case ECodeToken::Comment:
+			return FLinearColor(FColor(106, 153, 85));
+		case ECodeToken::Preprocessor:
+			return FLinearColor(FColor(197, 134, 192));
+		case ECodeToken::Plain:
+		default:
+			return FLinearColor(FColor(212, 212, 212));
+		}
+	}
+
+	/** Table cells' room around their text, and the grid line between them, which is half on each side. */
+	const FMargin TableCellPadding(10.0f, 6.0f);
+	constexpr float TableLine = 0.5f;
 
 	/** Entries in the contents, and other flat buttons: nothing until hovered. */
 	const FButtonStyle& FlatButtonStyle()
@@ -162,9 +206,29 @@ namespace InventoryDocumentation
 			bLink ? TEXT("l") : TEXT("")));
 	}
 
-	FName CodeBlockStyleName()
+	/** The style of a kind of code in a code block: mdcode for plain code, else mdcode. and the kind, such as mdcode.keyword. */
+	FName CodeStyleName(ECodeToken Token)
 	{
-		return FName(TEXT("mdcodeblock"));
+		switch (Token)
+		{
+		case ECodeToken::Keyword:
+			return FName(TEXT("mdcode.keyword"));
+		case ECodeToken::Type:
+			return FName(TEXT("mdcode.type"));
+		case ECodeToken::Function:
+			return FName(TEXT("mdcode.function"));
+		case ECodeToken::String:
+			return FName(TEXT("mdcode.string"));
+		case ECodeToken::Number:
+			return FName(TEXT("mdcode.number"));
+		case ECodeToken::Comment:
+			return FName(TEXT("mdcode.comment"));
+		case ECodeToken::Preprocessor:
+			return FName(TEXT("mdcode.preprocessor"));
+		case ECodeToken::Plain:
+		default:
+			return FName(TEXT("mdcode"));
+		}
 	}
 
 	const FSlateStyleSet& GetTextStyles()
@@ -177,7 +241,7 @@ namespace InventoryDocumentation
 		TextStyles = MakeShared<FSlateStyleSet>(TEXT("ModularInventoryDocumentationText"));
 		const FTextBlockStyle& NormalText = FCoreStyle::Get().GetWidgetStyle<FTextBlockStyle>(TEXT("NormalText"));
 		const FHyperlinkStyle& Hyperlink = FCoreStyle::Get().GetWidgetStyle<FHyperlinkStyle>(TEXT("Hyperlink"));
-		const FSlateColor CodeColor(FLinearColor(FColor(236, 184, 136)));
+		const FSlateColor InlineCodeColor(FLinearColor(FColor(236, 184, 136)));
 
 		for (int32 Scale = 0; Scale < ScaleCount; ++Scale)
 		{
@@ -200,7 +264,7 @@ namespace InventoryDocumentation
 					}
 					else if (bCode)
 					{
-						Color = CodeColor;
+						Color = InlineCodeColor;
 					}
 					else if (EnumHasAnyFlags(Style, EInlineStyle::Strikethrough) || Scale >= 5)
 					{
@@ -222,7 +286,14 @@ namespace InventoryDocumentation
 			}
 		}
 
-		TextStyles->Set(CodeBlockStyleName(), FTextBlockStyle(NormalText).SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Mono"), 10)));
+		// Code blocks: a monospaced font, colored by what each piece of code is.
+		for (int32 Token = 0; Token <= static_cast<int32>(ECodeToken::Preprocessor); ++Token)
+		{
+			const ECodeToken CodeToken = static_cast<ECodeToken>(Token);
+			TextStyles->Set(CodeStyleName(CodeToken), FTextBlockStyle(NormalText)
+				.SetFont(FCoreStyle::GetDefaultFontStyle(TEXT("Mono"), 10))
+				.SetColorAndOpacity(FSlateColor(CodeColor(CodeToken))));
+		}
 		return *TextStyles;
 	}
 
@@ -381,6 +452,217 @@ namespace InventoryDocumentation
 		double AvailableWidth = 0.0;
 	};
 
+	/**
+	 * How wide the longest stretch of a table cell's text that can't wrap is, in the fonts it's drawn in, such as a long piece of code like
+	 * UInventoryComponent::FindInventoryComponent(Actor). Header cells are bold.
+	 */
+	float MeasureLongestWord(const FTableCell& Cell, bool bHeader)
+	{
+		if (!FSlateApplication::IsInitialized() || !FSlateApplication::Get().GetRenderer())
+		{
+			return 0.0f;
+		}
+		const TSharedRef<FSlateFontMeasure> FontMeasure = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
+		const FSlateStyleSet& Styles = GetTextStyles();
+		float Longest = 0.0f;
+		float Word = 0.0f;
+		for (const FInlineRun& Run : Cell)
+		{
+			const EInlineStyle Style = bHeader ? (Run.Style | EInlineStyle::Bold) : Run.Style;
+			const FSlateFontInfo& Font = Styles.GetWidgetStyle<FTextBlockStyle>(StyleName(0, Style, false)).Font;
+			const FString Text = Run.bImage ? FString::Printf(TEXT("[%s]"), Run.Text.IsEmpty() ? TEXT("image") : *Run.Text) : Run.Text;
+
+			// A word can run on from one run into the next, such as a bold name and the comma after it.
+			int32 Start = 0;
+			for (int32 Index = 0; Index <= Text.Len(); ++Index)
+			{
+				const bool bEnd = Index == Text.Len();
+				if (!bEnd && !FChar::IsWhitespace(Text[Index]))
+				{
+					continue;
+				}
+				if (Index > Start)
+				{
+					Word += static_cast<float>(FontMeasure->Measure(Text.Mid(Start, Index - Start), Font).X);
+				}
+				if (!bEnd)
+				{
+					Longest = FMath::Max(Longest, Word);
+					Word = 0.0f;
+				}
+				Start = Index + 1;
+			}
+		}
+		return FMath::Max(Longest, Word);
+	}
+
+	/**
+	 * A table's cells, laid out as a grid as wide as the table is given. Every column gets at least the room its longest word needs, so
+	 * code that can't wrap isn't cut off, and the rest of the room is shared by how much text each column holds. Each row is as tall as
+	 * its tallest cell. Cells go in row by row.
+	 */
+	class SDocumentationTable : public SPanel
+	{
+	public:
+		SLATE_BEGIN_ARGS(SDocumentationTable) {}
+		SLATE_END_ARGS()
+
+		SDocumentationTable()
+			: Children(this)
+		{
+		}
+
+		void Construct(const FArguments& InArgs, const TArray<float>& InMinWidths, const TArray<float>& InWeights)
+		{
+			MinWidths = InMinWidths;
+			Weights = InWeights;
+			Weights.SetNumZeroed(MinWidths.Num());
+		}
+
+		void AddCell(const TSharedRef<SWidget>& Cell)
+		{
+			Children.Add(Cell);
+			Cells.Add(Cell);
+		}
+
+		virtual void OnArrangeChildren(const FGeometry& AllottedGeometry, FArrangedChildren& ArrangedChildren) const override
+		{
+			const int32 Columns = MinWidths.Num();
+			if (Columns == 0)
+			{
+				return;
+			}
+
+			const TArray<float> Widths = FitColumns(static_cast<float>(FVector2D(AllottedGeometry.GetLocalSize()).X));
+			float Top = 0.0f;
+			for (int32 Row = 0; Row * Columns < Cells.Num(); ++Row)
+			{
+				const float Height = GetRowHeight(Row);
+				float Left = 0.0f;
+				for (int32 Column = 0; Column < Columns && Cells.IsValidIndex(Row * Columns + Column); ++Column)
+				{
+					ArrangedChildren.AddWidget(AllottedGeometry.MakeChild(Cells[Row * Columns + Column], FVector2D(Left, Top), FVector2D(Widths[Column], Height)));
+					Left += Widths[Column];
+				}
+				Top += Height;
+			}
+		}
+
+		virtual FVector2D ComputeDesiredSize(float LayoutScaleMultiplier) const override
+		{
+			const int32 Columns = MinWidths.Num();
+			float Width = 0.0f;
+			for (const float MinWidth : MinWidths)
+			{
+				Width += MinWidth;
+			}
+			float Height = 0.0f;
+			for (int32 Row = 0; Columns > 0 && Row * Columns < Cells.Num(); ++Row)
+			{
+				Height += GetRowHeight(Row);
+			}
+			return FVector2D(Width, Height);
+		}
+
+		virtual FChildren* GetChildren() override
+		{
+			return &Children;
+		}
+
+	private:
+		float GetRowHeight(int32 Row) const
+		{
+			const int32 Columns = MinWidths.Num();
+			float Height = 0.0f;
+			for (int32 Column = 0; Column < Columns && Cells.IsValidIndex(Row * Columns + Column); ++Column)
+			{
+				Height = FMath::Max(Height, static_cast<float>(FVector2D(Cells[Row * Columns + Column]->GetDesiredSize()).Y));
+			}
+			return Height;
+		}
+
+		/**
+		 * Each column's share of Width by its weight. A column whose share is less than it needs gets what it needs, and the others share
+		 * what's left again, until every column has enough. Columns that need more than Width between them get what they need and stick out.
+		 */
+		TArray<float> FitColumns(float Width) const
+		{
+			const int32 Columns = MinWidths.Num();
+			TArray<float> Widths = MinWidths;
+			TArray<bool> AtMinimum;
+			AtMinimum.Init(false, Columns);
+
+			bool bChanged = true;
+			while (bChanged)
+			{
+				bChanged = false;
+				float Room = Width;
+				float WeightTotal = 0.0f;
+				for (int32 Column = 0; Column < Columns; ++Column)
+				{
+					if (AtMinimum[Column])
+					{
+						Room -= MinWidths[Column];
+					}
+					else
+					{
+						WeightTotal += Weights[Column];
+					}
+				}
+
+				for (int32 Column = 0; Column < Columns; ++Column)
+				{
+					if (AtMinimum[Column])
+					{
+						continue;
+					}
+					const float Share = WeightTotal > 0.0f ? FMath::Max(Room, 0.0f) * Weights[Column] / WeightTotal : 0.0f;
+					if (Share < MinWidths[Column])
+					{
+						AtMinimum[Column] = true;
+						bChanged = true;
+					}
+					Widths[Column] = FMath::Max(Share, MinWidths[Column]);
+				}
+			}
+			return Widths;
+		}
+
+		TSlotlessChildren<SWidget> Children;
+
+		/** The same cells, to lay out. */
+		TArray<TSharedRef<SWidget>> Cells;
+
+		TArray<float> MinWidths;
+		TArray<float> Weights;
+	};
+
+	/** A code block's code as rich text, each piece in the style of what it is. Markup can't span lines, so each line of a piece is tagged on its own. */
+	FString MakeCodeMarkup(const FBlock& Code)
+	{
+		FString Markup;
+		for (const FCodeSpan& Span : HighlightCode(Code.Text, Code.Info))
+		{
+			const FString Style = CodeStyleName(Span.Token).ToString();
+			TArray<FString> Lines;
+			Span.Text.ParseIntoArray(Lines, TEXT("\n"), false);
+			for (int32 LineIndex = 0; LineIndex < Lines.Num(); ++LineIndex)
+			{
+				if (LineIndex > 0)
+				{
+					Markup += TEXT("\n");
+				}
+				if (Lines[LineIndex].IsEmpty())
+				{
+					continue;
+				}
+				const FString Escaped = EscapeMarkup(Lines[LineIndex]);
+				Markup += Span.Token == ECodeToken::Plain ? Escaped : FString::Printf(TEXT("<%s>%s</>"), *Style, *Escaped);
+			}
+		}
+		return Markup;
+	}
+
 	TSharedRef<SDockTab> SpawnTab(const FSpawnTabArgs& Args)
 	{
 		const TSharedRef<SInventoryDocumentation> Window = SNew(SInventoryDocumentation);
@@ -525,6 +807,8 @@ void SInventoryDocumentation::Construct(const FArguments& InArgs)
 				.Padding(FMargin(8.0f, 10.0f))
 				[
 					SAssignNew(SidebarScroll, SScrollBox)
+					.AnimateWheelScrolling(false)
+					.AllowOverscroll(EAllowOverscroll::No)
 					+ SScrollBox::Slot()
 					[
 						SAssignNew(SidebarArea, SBox)
@@ -539,7 +823,10 @@ void SInventoryDocumentation::Construct(const FArguments& InArgs)
 				.BorderBackgroundColor(FStyleColors::Recessed)
 				.Padding(0.0f)
 				[
+					// The mouse wheel moves the page at once, without easing or bouncing at the ends.
 					SAssignNew(DocumentScroll, SScrollBox)
+					.AnimateWheelScrolling(false)
+					.AllowOverscroll(EAllowOverscroll::No)
 					+ SScrollBox::Slot()
 					.HAlign(HAlign_Center)
 					.Padding(36.0f, 28.0f)
@@ -765,13 +1052,13 @@ void SInventoryDocumentation::ShowPage(int32 PageIndex, const FString& Anchor, f
 	PendingAnchor = Target == Pages[NewPage].Anchor ? FString() : Target;
 	PendingScrollOffset = ScrollOffset;
 
-	// The page on screen only scrolls, and one still settling scrolls once it's shown.
+	// The page on screen only jumps there, and one still settling jumps there once it's shown.
 	const bool bAlreadyThere = NewPage == CurrentPage && (ShownPage.IsValid() || IncomingPage.IsValid());
 	if (bAlreadyThere && !bRebuild)
 	{
 		if (!IncomingPage.IsValid())
 		{
-			ScrollToPending(true);
+			ScrollToPending(false);
 		}
 		return;
 	}
@@ -812,12 +1099,13 @@ void SInventoryDocumentation::FinishPageChange()
 
 void SInventoryDocumentation::ScrollToPending(bool bAnimate)
 {
+	// Straight there, never animated: the page is long, and a smooth scroll over it judders.
 	if (DocumentScroll.IsValid())
 	{
 		const TSharedRef<SWidget>* Heading = PendingAnchor.IsEmpty() ? nullptr : AnchorWidgets.Find(PendingAnchor);
 		if (Heading)
 		{
-			DocumentScroll->ScrollDescendantIntoView(*Heading, bAnimate, EDescendantScrollDestination::TopOrLeft, 12.0f);
+			DocumentScroll->ScrollDescendantIntoView(*Heading, /*bAnimateScroll*/ bAnimate, EDescendantScrollDestination::TopOrLeft, 12.0f);
 		}
 		else if (PendingScrollOffset >= 0.0f)
 		{
@@ -1128,12 +1416,24 @@ TSharedRef<SWidget> SInventoryDocumentation::MakeTable(const FBlock& Table)
 {
 	using namespace InventoryDocumentation;
 
+	// Each column needs at least the room of its longest word, which can't wrap, with the cell's padding and the grid line around it.
 	const int32 Columns = Table.Alignments.Num();
-	const TSharedRef<SGridPanel> Grid = SNew(SGridPanel);
+	TArray<float> MinWidths;
+	TArray<float> Weights;
 	for (int32 Column = 0; Column < Columns; ++Column)
 	{
-		Grid->SetColumnFill(Column, ColumnWeight(Table, Column));
+		float Longest = Table.Header.IsValidIndex(Column) ? MeasureLongestWord(Table.Header[Column], true) : 0.0f;
+		for (const TArray<FTableCell>& Row : Table.Rows)
+		{
+			if (Row.IsValidIndex(Column))
+			{
+				Longest = FMath::Max(Longest, MeasureLongestWord(Row[Column], false));
+			}
+		}
+		MinWidths.Add(FMath::CeilToFloat(Longest) + TableCellPadding.Left + TableCellPadding.Right + 2.0f * TableLine + 2.0f);
+		Weights.Add(ColumnWeight(Table, Column));
 	}
+	const TSharedRef<SDocumentationTable> Grid = SNew(SDocumentationTable, MinWidths, Weights);
 
 	// The gaps between cells show the border's color behind them as grid lines.
 	auto AddCell = [this, &Grid, &Table](int32 CellColumn, int32 CellRow, const FTableCell& Cell)
@@ -1144,17 +1444,18 @@ TSharedRef<SWidget> SInventoryDocumentation::MakeTable(const FBlock& Table)
 		const bool bHeader = CellRow == 0;
 		const FSlateColor Background = bHeader ? FSlateColor(FStyleColors::Header)
 			: ((CellRow % 2 == 0) ? FSlateColor(FStyleColors::Panel) : FSlateColor(FStyleColors::Background));
-		Grid->AddSlot(CellColumn, CellRow)
-			.Padding(0.5f)
+		Grid->AddCell(
+			SNew(SBox)
+			.Padding(TableLine)
 			[
 				SNew(SBorder)
 				.BorderImage(WhiteBrush())
 				.BorderBackgroundColor(Background)
-				.Padding(FMargin(10.0f, 6.0f))
+				.Padding(TableCellPadding)
 				[
 					MakeText(Cell, 0, bHeader, Justification)
 				]
-			];
+			]);
 	};
 
 	for (int32 Column = 0; Column < Columns; ++Column)
@@ -1172,7 +1473,7 @@ TSharedRef<SWidget> SInventoryDocumentation::MakeTable(const FBlock& Table)
 	return SNew(SBorder)
 		.BorderImage(WhiteBrush())
 		.BorderBackgroundColor(FStyleColors::Hover)
-		.Padding(0.5f)
+		.Padding(TableLine)
 		[
 			Grid
 		];
@@ -1182,15 +1483,16 @@ TSharedRef<SWidget> SInventoryDocumentation::MakeCode(const FBlock& Code)
 {
 	using namespace InventoryDocumentation;
 
-	// The language, if the fence names one, and a button to copy the code.
-	const TSharedRef<SHorizontalBox> Bar = SNew(SHorizontalBox)
+	// A header with the language, if the fence names one, and a button to copy the code, over a line.
+	const FText Language = FText::FromString(InventoryMarkdown::GetLanguageName(Code.Info));
+	const TSharedRef<SHorizontalBox> Header = SNew(SHorizontalBox)
 		+ SHorizontalBox::Slot()
 		.FillWidth(1.0f)
 		.VAlign(VAlign_Center)
 		[
 			SNew(STextBlock)
-			.Text(FText::FromString(Code.Info.ToUpper()))
-			.Font(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 8))
+			.Text(Language)
+			.Font(FCoreStyle::GetDefaultFontStyle(TEXT("Bold"), 9))
 			.ColorAndOpacity(FSlateColor::UseSubduedForeground())
 		]
 		+ SHorizontalBox::Slot()
@@ -1210,21 +1512,34 @@ TSharedRef<SWidget> SInventoryDocumentation::MakeCode(const FBlock& Code)
 			]
 		];
 
-	// Selectable, to copy from. Long lines scroll sideways, as on GitHub, without taking the mouse wheel from the page.
+	// Colored as a code editor colors it, and selectable, to copy part of it. Long lines scroll sideways, as on GitHub, without taking the
+	// mouse wheel from the page.
+	const FSlateStyleSet& Styles = GetTextStyles();
 	return SNew(SBorder)
-		.BorderImage(PanelBrush())
-		.Padding(FMargin(14.0f, 6.0f, 6.0f, 12.0f))
+		.BorderImage(CodeBrush())
+		.Padding(0.0f)
 		[
 			SNew(SVerticalBox)
 			+ SVerticalBox::Slot()
 			.AutoHeight()
-			.Padding(0.0f, 0.0f, 0.0f, 4.0f)
+			.Padding(FMargin(14.0f, 5.0f, 6.0f, 5.0f))
 			[
-				Bar
+				Header
 			]
 			+ SVerticalBox::Slot()
 			.AutoHeight()
-			.Padding(0.0f, 0.0f, 8.0f, 0.0f)
+			[
+				SNew(SBox)
+				.HeightOverride(1.0f)
+				[
+					SNew(SBorder)
+					.BorderImage(WhiteBrush())
+					.BorderBackgroundColor(CodeOutline)
+				]
+			]
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.Padding(FMargin(14.0f, 10.0f, 14.0f, 12.0f))
 			[
 				SNew(SScrollBox)
 				.Orientation(Orient_Horizontal)
@@ -1232,8 +1547,9 @@ TSharedRef<SWidget> SInventoryDocumentation::MakeCode(const FBlock& Code)
 				+ SScrollBox::Slot()
 				[
 					SNew(SMultiLineEditableText)
-					.Text(FText::FromString(Code.Text))
-					.TextStyle(&GetTextStyles().GetWidgetStyle<FTextBlockStyle>(CodeBlockStyleName()))
+					.Text(FText::FromString(MakeCodeMarkup(Code)))
+					.Marshaller(FRichTextLayoutMarshaller::Create(TArray<TSharedRef<ITextDecorator>>(), &Styles))
+					.TextStyle(&Styles.GetWidgetStyle<FTextBlockStyle>(CodeStyleName(ECodeToken::Plain)))
 					.IsReadOnly(true)
 				]
 			]

@@ -2333,4 +2333,508 @@ namespace InventoryMarkdown
 			ForEachBlock(Block.Children, Visitor);
 		}
 	}
+
+	// Code
+	namespace
+	{
+		enum class ECodeLanguage : uint8
+		{
+			Plain,
+			CLike,
+			Ini
+		};
+
+		const TCHAR* const CppKeywordList[] = {
+			TEXT("alignas"), TEXT("alignof"), TEXT("asm"), TEXT("auto"), TEXT("bool"), TEXT("break"), TEXT("case"), TEXT("catch"), TEXT("char"),
+			TEXT("char16_t"), TEXT("char32_t"), TEXT("char8_t"), TEXT("class"), TEXT("co_await"), TEXT("co_return"), TEXT("co_yield"), TEXT("concept"),
+			TEXT("const"), TEXT("const_cast"), TEXT("consteval"), TEXT("constexpr"), TEXT("constinit"), TEXT("continue"), TEXT("decltype"), TEXT("default"),
+			TEXT("delete"), TEXT("do"), TEXT("double"), TEXT("dynamic_cast"), TEXT("else"), TEXT("enum"), TEXT("explicit"), TEXT("export"), TEXT("extern"),
+			TEXT("false"), TEXT("final"), TEXT("float"), TEXT("for"), TEXT("friend"), TEXT("goto"), TEXT("if"), TEXT("inline"), TEXT("int"), TEXT("long"),
+			TEXT("mutable"), TEXT("namespace"), TEXT("new"), TEXT("noexcept"), TEXT("nullptr"), TEXT("operator"), TEXT("override"), TEXT("private"),
+			TEXT("protected"), TEXT("public"), TEXT("register"), TEXT("reinterpret_cast"), TEXT("requires"), TEXT("return"), TEXT("short"), TEXT("signed"),
+			TEXT("sizeof"), TEXT("static"), TEXT("static_assert"), TEXT("static_cast"), TEXT("struct"), TEXT("switch"), TEXT("template"), TEXT("this"),
+			TEXT("thread_local"), TEXT("throw"), TEXT("true"), TEXT("try"), TEXT("typedef"), TEXT("typeid"), TEXT("typename"), TEXT("union"),
+			TEXT("unsigned"), TEXT("using"), TEXT("virtual"), TEXT("void"), TEXT("volatile"), TEXT("wchar_t"), TEXT("while")
+		};
+
+		const TCHAR* const CSharpKeywordList[] = {
+			TEXT("abstract"), TEXT("as"), TEXT("base"), TEXT("bool"), TEXT("break"), TEXT("byte"), TEXT("case"), TEXT("catch"), TEXT("char"),
+			TEXT("checked"), TEXT("class"), TEXT("const"), TEXT("continue"), TEXT("decimal"), TEXT("default"), TEXT("delegate"), TEXT("do"),
+			TEXT("double"), TEXT("else"), TEXT("enum"), TEXT("event"), TEXT("explicit"), TEXT("extern"), TEXT("false"), TEXT("finally"), TEXT("fixed"),
+			TEXT("float"), TEXT("for"), TEXT("foreach"), TEXT("get"), TEXT("goto"), TEXT("if"), TEXT("implicit"), TEXT("in"), TEXT("int"),
+			TEXT("interface"), TEXT("internal"), TEXT("is"), TEXT("lock"), TEXT("long"), TEXT("namespace"), TEXT("new"), TEXT("null"), TEXT("object"),
+			TEXT("operator"), TEXT("out"), TEXT("override"), TEXT("params"), TEXT("private"), TEXT("protected"), TEXT("public"), TEXT("readonly"),
+			TEXT("ref"), TEXT("return"), TEXT("sbyte"), TEXT("sealed"), TEXT("set"), TEXT("short"), TEXT("sizeof"), TEXT("stackalloc"), TEXT("static"),
+			TEXT("string"), TEXT("struct"), TEXT("switch"), TEXT("this"), TEXT("throw"), TEXT("true"), TEXT("try"), TEXT("typeof"), TEXT("uint"),
+			TEXT("ulong"), TEXT("unchecked"), TEXT("unsafe"), TEXT("ushort"), TEXT("using"), TEXT("var"), TEXT("virtual"), TEXT("void"),
+			TEXT("volatile"), TEXT("while")
+		};
+
+		/** JavaScript and TypeScript, and the few words JSON has. */
+		const TCHAR* const ScriptKeywordList[] = {
+			TEXT("async"), TEXT("await"), TEXT("break"), TEXT("case"), TEXT("catch"), TEXT("class"), TEXT("const"), TEXT("continue"), TEXT("default"),
+			TEXT("delete"), TEXT("do"), TEXT("else"), TEXT("export"), TEXT("extends"), TEXT("false"), TEXT("finally"), TEXT("for"), TEXT("from"),
+			TEXT("function"), TEXT("if"), TEXT("import"), TEXT("in"), TEXT("instanceof"), TEXT("let"), TEXT("new"), TEXT("null"), TEXT("of"),
+			TEXT("return"), TEXT("switch"), TEXT("this"), TEXT("throw"), TEXT("true"), TEXT("try"), TEXT("typeof"), TEXT("undefined"), TEXT("var"),
+			TEXT("void"), TEXT("while"), TEXT("yield")
+		};
+
+		/** Unreal's names for the basic types, colored as types like its classes are. */
+		const TCHAR* const UnrealTypeNameList[] = {
+			TEXT("int8"), TEXT("int16"), TEXT("int32"), TEXT("int64"), TEXT("uint8"), TEXT("uint16"), TEXT("uint32"), TEXT("uint64"), TEXT("TCHAR"),
+			TEXT("ANSICHAR"), TEXT("WIDECHAR"), TEXT("UTF8CHAR"), TEXT("SIZE_T"), TEXT("SSIZE_T"), TEXT("PTRINT"), TEXT("UPTRINT"), TEXT("size_t")
+		};
+
+		template <int32 Count>
+		bool IsCodeWordIn(const FString& Word, const TCHAR* const (&List)[Count])
+		{
+			for (const TCHAR* Entry : List)
+			{
+				if (Word.Equals(Entry, ESearchCase::CaseSensitive))
+				{
+					return true;
+				}
+			}
+			return false;
+		}
+
+		ECodeLanguage FindCodeLanguage(const FString& LowerName)
+		{
+			static const TCHAR* const CLikeNames[] = {
+				TEXT("c"), TEXT("cc"), TEXT("cpp"), TEXT("cxx"), TEXT("c++"), TEXT("h"), TEXT("hpp"), TEXT("hxx"), TEXT("hlsl"), TEXT("usf"), TEXT("ush"),
+				TEXT("cs"), TEXT("csharp"), TEXT("c#"), TEXT("java"), TEXT("js"), TEXT("javascript"), TEXT("ts"), TEXT("typescript"), TEXT("json")
+			};
+			static const TCHAR* const IniNames[] = { TEXT("ini"), TEXT("cfg") };
+			if (IsCodeWordIn(LowerName, CLikeNames))
+			{
+				return ECodeLanguage::CLike;
+			}
+			return IsCodeWordIn(LowerName, IniNames) ? ECodeLanguage::Ini : ECodeLanguage::Plain;
+		}
+
+		bool IsCodeIdentifierStart(TCHAR Char)
+		{
+			return FChar::IsAlpha(Char) || Char == TEXT('_');
+		}
+
+		bool IsCodeIdentifierChar(TCHAR Char)
+		{
+			return FChar::IsAlnum(Char) || Char == TEXT('_');
+		}
+
+		/** An Unreal class or struct by its prefix and capitals, such as UObject, AActor, FInventoryRegistry, EError, TArray, IInterface or SWidget. */
+		bool LooksLikeUnrealType(const FString& Word)
+		{
+			if (Word.Len() < 3 || FCString::Strchr(TEXT("UAFETIS"), Word[0]) == nullptr || !FChar::IsUpper(Word[1]))
+			{
+				return false;
+			}
+			for (const TCHAR Char : Word)
+			{
+				if (FChar::IsLower(Char))
+				{
+					return true;
+				}
+			}
+			return false;
+		}
+
+		/** A macro, as they're written in capitals, such as TEXT, INDEX_NONE or UPROPERTY. */
+		bool IsMacroName(const FString& Word)
+		{
+			if (Word.Len() < 2)
+			{
+				return false;
+			}
+			bool bHasLetter = false;
+			for (const TCHAR Char : Word)
+			{
+				if (FChar::IsLower(Char))
+				{
+					return false;
+				}
+				bHasLetter |= FChar::IsAlpha(Char);
+			}
+			return bHasLetter;
+		}
+
+		/** Walks code once, from start to end, adding a span for each piece. */
+		class FCodeHighlighter
+		{
+		public:
+			FCodeHighlighter(const FString& InCode, const FString& LowerLanguage)
+				: Code(InCode)
+				, Language(FindCodeLanguage(LowerLanguage))
+			{
+				const bool bCSharp = LowerLanguage == TEXT("cs") || LowerLanguage == TEXT("csharp") || LowerLanguage == TEXT("c#");
+				const bool bScript = LowerLanguage == TEXT("js") || LowerLanguage == TEXT("javascript") || LowerLanguage == TEXT("ts")
+					|| LowerLanguage == TEXT("typescript") || LowerLanguage == TEXT("json");
+				KeywordSet = bCSharp ? EKeywordSet::CSharp : (bScript ? EKeywordSet::Script : EKeywordSet::Cpp);
+				bPreprocessorLines = !bScript && LowerLanguage != TEXT("java");
+				bVerbatimStrings = bCSharp;
+			}
+
+			TArray<FCodeSpan> Run()
+			{
+				switch (Language)
+				{
+				case ECodeLanguage::CLike:
+					ReadCLike();
+					break;
+				case ECodeLanguage::Ini:
+					ReadIni();
+					break;
+				default:
+					Add(0, Code.Len(), ECodeToken::Plain);
+					break;
+				}
+				return MoveTemp(Spans);
+			}
+
+		private:
+			enum class EKeywordSet : uint8
+			{
+				Cpp,
+				CSharp,
+				Script
+			};
+
+			void Add(int32 Start, int32 End, ECodeToken Token)
+			{
+				if (End <= Start)
+				{
+					return;
+				}
+				if (Spans.Num() > 0 && Spans.Last().Token == Token)
+				{
+					Spans.Last().Text += Code.Mid(Start, End - Start);
+					return;
+				}
+				FCodeSpan& Span = Spans.AddDefaulted_GetRef();
+				Span.Text = Code.Mid(Start, End - Start);
+				Span.Token = Token;
+			}
+
+			TCHAR At(int32 Index) const
+			{
+				return Code.IsValidIndex(Index) ? Code[Index] : TEXT('\0');
+			}
+
+			int32 EndOfLine(int32 Index) const
+			{
+				while (Index < Code.Len() && Code[Index] != TEXT('\n'))
+				{
+					++Index;
+				}
+				return Index;
+			}
+
+			/** Past the quote closing the one at Start, or the end of the line when it isn't closed. Verbatim strings double a quote to hold one. */
+			int32 SkipQuoted(int32 Start, bool bEscapes) const
+			{
+				const TCHAR Quote = Code[Start];
+				int32 Index = Start + 1;
+				while (Index < Code.Len() && Code[Index] != TEXT('\n'))
+				{
+					if (bEscapes && Code[Index] == TEXT('\\'))
+					{
+						Index += 2;
+						continue;
+					}
+					if (Code[Index] == Quote)
+					{
+						if (!bEscapes && At(Index + 1) == Quote)
+						{
+							Index += 2;
+							continue;
+						}
+						return Index + 1;
+					}
+					++Index;
+				}
+				return FMath::Min(Index, Code.Len());
+			}
+
+			/** Past a C++ raw string, R"delimiter(...)delimiter", whose quote is at Quote; it may span lines. */
+			int32 SkipRawString(int32 Quote) const
+			{
+				const int32 Open = Code.Find(TEXT("("), ESearchCase::CaseSensitive, ESearchDir::FromStart, Quote);
+				const int32 LineEnd = EndOfLine(Quote);
+				if (Open == INDEX_NONE || Open > LineEnd)
+				{
+					return SkipQuoted(Quote, true);
+				}
+				const FString Closing = TEXT(")") + Code.Mid(Quote + 1, Open - Quote - 1) + TEXT("\"");
+				const int32 Close = Code.Find(Closing, ESearchCase::CaseSensitive, ESearchDir::FromStart, Open);
+				return Close == INDEX_NONE ? Code.Len() : Close + Closing.Len();
+			}
+
+			bool IsKeyword(const FString& Word) const
+			{
+				switch (KeywordSet)
+				{
+				case EKeywordSet::CSharp:
+					return IsCodeWordIn(Word, CSharpKeywordList);
+				case EKeywordSet::Script:
+					return IsCodeWordIn(Word, ScriptKeywordList);
+				default:
+					return IsCodeWordIn(Word, CppKeywordList);
+				}
+			}
+
+			/** Whether the next thing after Index, past spaces, is an opening bracket, as a call's is. */
+			bool IsFollowedByCall(int32 Index) const
+			{
+				while (At(Index) == TEXT(' ') || At(Index) == TEXT('\t'))
+				{
+					++Index;
+				}
+				return At(Index) == TEXT('(');
+			}
+
+			void ReadCLike()
+			{
+				bool bLineStart = true;
+				bool bIncludeLine = false;
+				int32 Index = 0;
+				while (Index < Code.Len())
+				{
+					const int32 Start = Index;
+					const TCHAR Char = Code[Index];
+					const TCHAR Next = At(Index + 1);
+
+					if (Char == TEXT('\n'))
+					{
+						Add(Start, Index + 1, ECodeToken::Plain);
+						Index = Start + 1;
+						bLineStart = true;
+						bIncludeLine = false;
+						continue;
+					}
+					if (FChar::IsWhitespace(Char))
+					{
+						Add(Start, Index + 1, ECodeToken::Plain);
+						++Index;
+						continue;
+					}
+
+					const bool bWasLineStart = bLineStart;
+					bLineStart = false;
+
+					if (Char == TEXT('/') && Next == TEXT('/'))
+					{
+						Index = EndOfLine(Index);
+						Add(Start, Index, ECodeToken::Comment);
+					}
+					else if (Char == TEXT('/') && Next == TEXT('*'))
+					{
+						const int32 Close = Code.Find(TEXT("*/"), ESearchCase::CaseSensitive, ESearchDir::FromStart, Index + 2);
+						Index = Close == INDEX_NONE ? Code.Len() : Close + 2;
+						Add(Start, Index, ECodeToken::Comment);
+					}
+					else if (Char == TEXT('#') && bWasLineStart && bPreprocessorLines)
+					{
+						// The directive, such as #include; what follows is read as code, but an include's <file> is a string.
+						Index = Start + 1;
+						while (At(Index) == TEXT(' ') || At(Index) == TEXT('\t'))
+						{
+							++Index;
+						}
+						const int32 WordStart = Index;
+						while (IsCodeIdentifierChar(At(Index)))
+						{
+							++Index;
+						}
+						const FString Directive = Code.Mid(WordStart, Index - WordStart);
+						bIncludeLine = Directive == TEXT("include") || Directive == TEXT("import");
+						Add(Start, Index, ECodeToken::Preprocessor);
+					}
+					else if (Char == TEXT('<') && bIncludeLine)
+					{
+						const int32 Close = Code.Find(TEXT(">"), ESearchCase::CaseSensitive, ESearchDir::FromStart, Index);
+						const int32 LineEnd = EndOfLine(Index);
+						Index = (Close == INDEX_NONE || Close > LineEnd) ? LineEnd : Close + 1;
+						Add(Start, Index, ECodeToken::String);
+					}
+					else if (Char == TEXT('"') || Char == TEXT('\''))
+					{
+						Index = SkipQuoted(Index, true);
+						Add(Start, Index, ECodeToken::String);
+					}
+					else if ((Char == TEXT('@') || Char == TEXT('$')) && Next == TEXT('"') && bVerbatimStrings)
+					{
+						Index = SkipQuoted(Index + 1, Char == TEXT('$'));
+						Add(Start, Index, ECodeToken::String);
+					}
+					else if (FChar::IsDigit(Char) || (Char == TEXT('.') && FChar::IsDigit(Next)))
+					{
+						++Index;
+						while (Index < Code.Len())
+						{
+							const TCHAR Current = Code[Index];
+							const TCHAR Previous = Code[Index - 1];
+							const bool bExponentSign = (Current == TEXT('+') || Current == TEXT('-'))
+								&& (Previous == TEXT('e') || Previous == TEXT('E') || Previous == TEXT('p') || Previous == TEXT('P'));
+							if (!IsCodeIdentifierChar(Current) && Current != TEXT('.') && Current != TEXT('\'') && !bExponentSign)
+							{
+								break;
+							}
+							++Index;
+						}
+						Add(Start, Index, ECodeToken::Number);
+					}
+					else if (IsCodeIdentifierStart(Char))
+					{
+						while (IsCodeIdentifierChar(At(Index)))
+						{
+							++Index;
+						}
+						const FString Word = Code.Mid(Start, Index - Start);
+
+						// A prefixed string, such as L"wide" or R"(raw)".
+						if (At(Index) == TEXT('"') && KeywordSet == EKeywordSet::Cpp
+							&& (Word == TEXT("L") || Word == TEXT("u") || Word == TEXT("U") || Word == TEXT("u8") || Word.EndsWith(TEXT("R"), ESearchCase::CaseSensitive)))
+						{
+							const bool bRaw = Word.EndsWith(TEXT("R"), ESearchCase::CaseSensitive)
+								&& (Word == TEXT("R") || Word == TEXT("LR") || Word == TEXT("uR") || Word == TEXT("UR") || Word == TEXT("u8R"));
+							if (bRaw || Word.Len() <= 2)
+							{
+								Index = bRaw ? SkipRawString(Index) : SkipQuoted(Index, true);
+								Add(Start, Index, ECodeToken::String);
+								continue;
+							}
+						}
+
+						ECodeToken Token = ECodeToken::Plain;
+						if (IsKeyword(Word))
+						{
+							Token = ECodeToken::Keyword;
+						}
+						else if (IsCodeWordIn(Word, UnrealTypeNameList) || LooksLikeUnrealType(Word))
+						{
+							Token = ECodeToken::Type;
+						}
+						else if (IsMacroName(Word))
+						{
+							Token = ECodeToken::Preprocessor;
+						}
+						else if (IsFollowedByCall(Index))
+						{
+							Token = ECodeToken::Function;
+						}
+						Add(Start, Index, Token);
+					}
+					else
+					{
+						Add(Start, Index + 1, ECodeToken::Plain);
+						++Index;
+					}
+				}
+			}
+
+			void ReadIni()
+			{
+				int32 LineStart = 0;
+				while (LineStart < Code.Len())
+				{
+					const int32 LineEnd = EndOfLine(LineStart);
+					int32 First = LineStart;
+					while (First < LineEnd && FChar::IsWhitespace(Code[First]))
+					{
+						++First;
+					}
+					Add(LineStart, First, ECodeToken::Plain);
+
+					const TCHAR Char = At(First);
+					if (First >= LineEnd)
+					{
+						// An empty line.
+					}
+					else if (Char == TEXT(';') || Char == TEXT('#'))
+					{
+						Add(First, LineEnd, ECodeToken::Comment);
+					}
+					else if (Char == TEXT('['))
+					{
+						const int32 Close = Code.Find(TEXT("]"), ESearchCase::CaseSensitive, ESearchDir::FromStart, First);
+						const int32 SectionEnd = (Close == INDEX_NONE || Close >= LineEnd) ? LineEnd : Close + 1;
+						Add(First, SectionEnd, ECodeToken::Keyword);
+						Add(SectionEnd, LineEnd, ECodeToken::Plain);
+					}
+					else
+					{
+						// A key, such as +Paths, then its value, whose quoted strings stand out.
+						const int32 Equals = Code.Find(TEXT("="), ESearchCase::CaseSensitive, ESearchDir::FromStart, First);
+						const int32 ValueStart = (Equals == INDEX_NONE || Equals >= LineEnd) ? First : Equals + 1;
+						if (ValueStart > First)
+						{
+							Add(First, Equals, ECodeToken::Type);
+							Add(Equals, ValueStart, ECodeToken::Plain);
+						}
+						int32 Index = ValueStart;
+						while (Index < LineEnd)
+						{
+							if (Code[Index] == TEXT('"'))
+							{
+								const int32 Close = SkipQuoted(Index, true);
+								Add(Index, Close, ECodeToken::String);
+								Index = Close;
+							}
+							else
+							{
+								Add(Index, Index + 1, ECodeToken::Plain);
+								++Index;
+							}
+						}
+					}
+
+					Add(LineEnd, FMath::Min(LineEnd + 1, Code.Len()), ECodeToken::Plain);
+					LineStart = LineEnd + 1;
+				}
+			}
+
+			const FString& Code;
+			ECodeLanguage Language = ECodeLanguage::Plain;
+			EKeywordSet KeywordSet = EKeywordSet::Cpp;
+			bool bPreprocessorLines = true;
+			bool bVerbatimStrings = false;
+			TArray<FCodeSpan> Spans;
+		};
+	}
+
+	TArray<FCodeSpan> HighlightCode(const FString& Code, const FString& Language)
+	{
+		FCodeHighlighter Highlighter(Code, Language.ToLower());
+		return Highlighter.Run();
+	}
+
+	FString GetLanguageName(const FString& Language)
+	{
+		struct FLanguageName
+		{
+			const TCHAR* Fence;
+			const TCHAR* Name;
+		};
+		static const FLanguageName Names[] = {
+			{ TEXT("cpp"), TEXT("C++") }, { TEXT("c++"), TEXT("C++") }, { TEXT("cc"), TEXT("C++") }, { TEXT("cxx"), TEXT("C++") },
+			{ TEXT("h"), TEXT("C++") }, { TEXT("hpp"), TEXT("C++") }, { TEXT("hxx"), TEXT("C++") }, { TEXT("c"), TEXT("C") },
+			{ TEXT("cs"), TEXT("C#") }, { TEXT("csharp"), TEXT("C#") }, { TEXT("c#"), TEXT("C#") }, { TEXT("hlsl"), TEXT("HLSL") },
+			{ TEXT("usf"), TEXT("HLSL") }, { TEXT("ush"), TEXT("HLSL") }, { TEXT("java"), TEXT("Java") }, { TEXT("js"), TEXT("JavaScript") },
+			{ TEXT("javascript"), TEXT("JavaScript") }, { TEXT("ts"), TEXT("TypeScript") }, { TEXT("typescript"), TEXT("TypeScript") },
+			{ TEXT("json"), TEXT("JSON") }, { TEXT("ini"), TEXT("INI") }, { TEXT("cfg"), TEXT("INI") }, { TEXT("py"), TEXT("Python") },
+			{ TEXT("python"), TEXT("Python") }, { TEXT("sh"), TEXT("Shell") }, { TEXT("bash"), TEXT("Shell") }, { TEXT("shell"), TEXT("Shell") },
+			{ TEXT("console"), TEXT("Console") }, { TEXT("powershell"), TEXT("PowerShell") }, { TEXT("ps1"), TEXT("PowerShell") },
+			{ TEXT("bat"), TEXT("Batch") }, { TEXT("cmd"), TEXT("Batch") }, { TEXT("text"), TEXT("Text") }, { TEXT("txt"), TEXT("Text") },
+			{ TEXT("xml"), TEXT("XML") }, { TEXT("yaml"), TEXT("YAML") }, { TEXT("yml"), TEXT("YAML") }, { TEXT("md"), TEXT("Markdown") },
+			{ TEXT("markdown"), TEXT("Markdown") }
+		};
+		for (const FLanguageName& Entry : Names)
+		{
+			if (Language.Equals(Entry.Fence, ESearchCase::IgnoreCase))
+			{
+				return Entry.Name;
+			}
+		}
+		return Language;
+	}
 }

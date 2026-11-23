@@ -139,4 +139,37 @@ namespace InventoryMarkdown
 
 	/** Calls Visitor for every block, nested ones included, in the order they're read. */
 	void ForEachBlock(const TArray<FBlock>& Blocks, TFunctionRef<void(const FBlock&)> Visitor);
+
+	/** What a piece of code is, for the color a code editor would give it. */
+	enum class ECodeToken : uint8
+	{
+		Plain,
+		Keyword,
+		/** A type: Unreal's, by its prefix, such as FInventoryRegistry, or a basic one, such as int32. */
+		Type,
+		/** A name called, such as RunTransaction in Registry.RunTransaction(...). */
+		Function,
+		String,
+		Number,
+		Comment,
+		/** A preprocessor line's directive, such as #include, and macros, which are written in capitals, such as TEXT. */
+		Preprocessor
+	};
+
+	/** A stretch of code of one kind. */
+	struct FCodeSpan
+	{
+		FString Text;
+		ECodeToken Token = ECodeToken::Plain;
+	};
+
+	/**
+	 * Splits code into spans to color, for the language named after its fence. C-like languages, such as cpp, csharp and json, get their
+	 * comments, strings, numbers, keywords, types, calls and preprocessor lines; ini files their sections, keys, strings and comments. Code
+	 * in any other language, or none, is one plain span. The spans' text, joined, is the code exactly.
+	 */
+	TArray<FCodeSpan> HighlightCode(const FString& Code, const FString& Language);
+
+	/** A fence's language as people name it, such as C++ for cpp and C# for csharp, or as written when it isn't known. Empty without one. */
+	FString GetLanguageName(const FString& Language);
 }

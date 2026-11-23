@@ -38,6 +38,23 @@ BEGIN_DEFINE_SPEC(FInventoryMarkdownSpec, "ModularInventory.Editor.Documentation
 		return RunsToText(Runs);
 	}
 
+	/** Code spans as Kind[text]: P plain, K keyword, T type, F call, S string, N number, C comment and M preprocessor or macro. */
+	static FString SpansToText(const TArray<InventoryMarkdown::FCodeSpan>& Spans)
+	{
+		static const TCHAR* const Kinds[] = { TEXT("P"), TEXT("K"), TEXT("T"), TEXT("F"), TEXT("S"), TEXT("N"), TEXT("C"), TEXT("M") };
+		FString Result;
+		for (const InventoryMarkdown::FCodeSpan& Span : Spans)
+		{
+			Result += FString::Printf(TEXT("%s[%s]"), Kinds[static_cast<int32>(Span.Token)], *Span.Text);
+		}
+		return Result;
+	}
+
+	static FString HighlightToText(const TCHAR* Code, const TCHAR* Language)
+	{
+		return SpansToText(InventoryMarkdown::HighlightCode(Code, Language));
+	}
+
 	/** The block types in reading order, nested ones indented by a space per level. */
 	static FString Outline(const TArray<InventoryMarkdown::FBlock>& Blocks, int32 Depth = 0)
 	{
@@ -148,6 +165,49 @@ void FInventoryMarkdownSpec::Define()
 				Text += TEXT("*a _b [c ");
 			}
 			TestEqual(TEXT("One paragraph"), Parse(Text).Blocks.Num(), 1);
+		});
+	});
+
+	Describe("Code", [this]()
+	{
+		It("colors C++ as a code editor does", [this]()
+		{
+			TestEqual(TEXT("Preprocessor, keywords, types, calls, numbers and comments"),
+				HighlightToText(TEXT("#include \"A.h\"\nconst int32 Count = Registry.Num(10); // done"), TEXT("cpp")),
+				FString(TEXT("M[#include]P[ ]S[\"A.h\"]P[\n]K[const]P[ ]T[int32]P[ Count = Registry.]F[Num]P[(]N[10]P[); ]C[// done]")));
+			TestEqual(TEXT("Unreal types, macros, escaped quotes and comments over lines"),
+				HighlightToText(TEXT("FString Name = TEXT(\"a\\\"b\"); /* x\ny */ UInventoryComponent::FindInventoryComponent(Actor);"), TEXT("cpp")),
+				FString(TEXT("T[FString]P[ Name = ]M[TEXT]P[(]S[\"a\\\"b\"]P[); ]C[/* x\ny */]P[ ]T[UInventoryComponent]P[::]F[FindInventoryComponent]P[(Actor);]")));
+		});
+
+		It("reads prefixed, raw and unclosed strings, and gives back the code exactly", [this]()
+		{
+			const TCHAR* const Code = TEXT("R\"x(a)b)x\" + L\"w\" 'c' \"open");
+			const TArray<InventoryMarkdown::FCodeSpan> Spans = HighlightCode(Code, TEXT("cpp"));
+			TestEqual(TEXT("Strings"), SpansToText(Spans), FString(TEXT("S[R\"x(a)b)x\"]P[ + ]S[L\"w\"]P[ ]S['c']P[ ]S[\"open]")));
+
+			FString Joined;
+			for (const InventoryMarkdown::FCodeSpan& Span : Spans)
+			{
+				Joined += Span.Text;
+			}
+			TestEqual(TEXT("Joined"), Joined, FString(Code));
+		});
+
+		It("uses each language's keywords, and colors ini files", [this]()
+		{
+			TestEqual(TEXT("C#"), HighlightToText(TEXT("new string[] { \"A\" };"), TEXT("csharp")), FString(TEXT("K[new]P[ ]K[string]P[[] { ]S[\"A\"]P[ };]")));
+			TestEqual(TEXT("Ini"), HighlightToText(TEXT("[/Script/Engine.Foo]\n; note\n+Paths=\"Game\""), TEXT("ini")),
+				FString(TEXT("K[[/Script/Engine.Foo]]P[\n]C[; note]P[\n]T[+Paths]P[=]S[\"Game\"]")));
+			TestEqual(TEXT("No language"), HighlightToText(TEXT("Inventory.Give <Item> 5"), TEXT("")), FString(TEXT("P[Inventory.Give <Item> 5]")));
+		});
+
+		It("names languages as people do", [this]()
+		{
+			TestEqual(TEXT("C++"), GetLanguageName(TEXT("cpp")), FString(TEXT("C++")));
+			TestEqual(TEXT("C#, in any case"), GetLanguageName(TEXT("CSharp")), FString(TEXT("C#")));
+			TestEqual(TEXT("None"), GetLanguageName(TEXT("")), FString());
+			TestEqual(TEXT("Unknown, as written"), GetLanguageName(TEXT("rust")), FString(TEXT("rust")));
 		});
 	});
 

@@ -1354,8 +1354,9 @@ The **Modular Inventory** button on the Level Editor toolbar, beside the play bu
 
 - The chapters are listed on the left, with the sections of the open chapter under it. The first page introduces the plugin and links every chapter.
 - **Search the guide** finds the chapters and sections that mention every word you type, shows where, and highlights the words. Enter opens the first.
-- Links between chapters open the chapter and scroll to the section. **Back**, or the mouse's back button, returns to where you were.
-- Code samples have a **Copy** button.
+- Links between chapters open the chapter at the section. **Back**, or the mouse's back button, returns to where you were.
+- Code samples are colored as a code editor colors them, for C++, C#, JSON, ini files and other C-like languages, and have a **Copy** button.
+- Table columns are always wide enough for code that can't wrap, such as a long function name.
 - The window reads the guide again whenever it's saved, so it stays current as the plugin changes. It opens where you left it.
 
 ---
