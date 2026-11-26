@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 
-#include "Hades/UI/WorldMarker/HadesWorldMarkerWidget.h"
+#include "WorldMarkers/ModularWorldMarkerWidget.h"
 
 #include "HadesInteractableMarkerWidget.generated.h"
 
@@ -12,9 +12,13 @@ class UWidget;
 class UWidgetAnimation;
 class UHadesInteractableComponent;
 
-/** The marker over an interactable. Shows the indicator while the player is nearby and the prompt while they are focused on it. */
+/**
+ * The marker over an interactable. Shows the indicator while the player is nearby and the prompt while they are focused on it. What the
+ * interactable is and what interacting does can also show in the interactor's prompt message, such as a banner near the bottom of the
+ * screen, so the marker itself can be just an indicator and the key to press: leave Action Text out then.
+ */
 UCLASS(Abstract)
-class HADES_API UHadesInteractableMarkerWidget : public UHadesWorldMarkerWidget
+class HADES_API UHadesInteractableMarkerWidget : public UModularWorldMarkerWidget
 {
 	GENERATED_BODY()
 
@@ -27,13 +31,13 @@ protected:
 	virtual void OnAnimationFinished_Implementation(const UWidgetAnimation* Animation) override;
 	//~ End UUserWidget Interface
 
-	//~ Begin UHadesWorldMarkerWidget Interface
+	//~ Begin UModularWorldMarkerWidget Interface
 	virtual void NativeOnContextChanged() override;
 	virtual void NativeOnStateTagChanged(const FGameplayTag& Tag, bool bAdded) override;
 	virtual void NativeOnProgressChanged(float NewProgress) override;
 	virtual void NativeOnEventReceived(const FGameplayTag& EventTag) override;
 	virtual bool IsTransitionPlaying() const override;
-	//~ End UHadesWorldMarkerWidget Interface
+	//~ End UModularWorldMarkerWidget Interface
 
 	UPROPERTY(BlueprintReadOnly, Category = "Interactable Marker", meta = (BindWidget))
 	TObjectPtr<UWidget> Indicator;
@@ -45,7 +49,10 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Interactable Marker", meta = (BindWidgetOptional))
 	TObjectPtr<UImage> ProgressRing;
 
-	/** Collapsed when the interactable has no text. */
+	/**
+	 * The interactable's interaction text, such as Take, or its disabled text while it's disabled. Collapsed when there's none. Optional:
+	 * leave it out when the prompt message says it.
+	 */
 	UPROPERTY(BlueprintReadOnly, Category = "Interactable Marker", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> ActionText;
 

@@ -244,6 +244,11 @@ bool UInventorySubsystem::SortContainer(FInventoryContainerHandle Container, EIn
 	return Succeeded(Registry.SortContainer(Container), OutError);
 }
 
+bool UInventorySubsystem::SortContainerBy(FInventoryContainerHandle Container, const FInventorySortSettings& Settings, EInventoryError& OutError)
+{
+	return Succeeded(Registry.SortContainer(Container, Settings), OutError);
+}
+
 // Operations
 int32 UInventorySubsystem::AddItem(const FInventoryItemSpec& Spec, FInventoryContainerHandle Container, bool bAllowPartial, TArray<FInventoryItemHandle>& OutItems, EInventoryError& OutError)
 {

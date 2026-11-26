@@ -5,7 +5,9 @@
 #endif
 
 #include "Hades/UI/Inventory/HadesItemActions.h"
-#include "Hades/UI/Inventory/HadesQuickSlotMenu.h"
+
+#include "Actions/InventoryItemActions.h"
+#include "Widgets/InventoryShortcutMenuWidget.h"
 
 #define LOCTEXT_NAMESPACE "HadesItemMenu"
 
@@ -16,14 +18,24 @@ UHadesItemMenu::UHadesItemMenu(const FObjectInitializer& ObjectInitializer) : Su
 		Action->ButtonName = ButtonName;
 		Actions.Add(Action);
 	};
-	AddAction(CreateDefaultSubobject<UHadesItemAction_AssignQuickSlot>(TEXT("AssignQuickSlot")), TEXT("QuickSlotButton"));
-	AddAction(CreateDefaultSubobject<UHadesItemAction_Use>(TEXT("Use")), TEXT("UseButton"));
+
+	// The subobject names stay as they were when these were Hades actions, so menus that changed them keep their changes.
+	AddAction(CreateDefaultSubobject<UInventoryItemAction_AssignShortcut>(TEXT("AssignQuickSlot")), TEXT("QuickSlotButton"));
+	AddAction(CreateDefaultSubobject<UInventoryItemAction_Use>(TEXT("Use")), TEXT("UseButton"));
 	AddAction(CreateDefaultSubobject<UHadesItemAction_Equip>(TEXT("Equip")), TEXT("EquipButton"));
 	AddAction(CreateDefaultSubobject<UHadesItemAction_Unequip>(TEXT("Unequip")), TEXT("UnequipButton"));
 	AddAction(CreateDefaultSubobject<UHadesItemAction_Combine>(TEXT("Combine")), TEXT("CombineButton"));
-	AddAction(CreateDefaultSubobject<UHadesItemAction_Discard>(TEXT("Discard")), TEXT("DiscardButton"));
+	UInventoryItemAction_Drop* Discard = CreateDefaultSubobject<UInventoryItemAction_Drop>(TEXT("Discard"));
+	Discard->DisplayName = LOCTEXT("DiscardName", "Discard");
+	Discard->PromptText = LOCTEXT("DiscardPrompt", "Discard {Item}?");
+	AddAction(Discard, TEXT("DiscardButton"));
 	AddAction(CreateDefaultSubobject<UHadesItemAction_Store>(TEXT("Store")), TEXT("StoreButton"));
 	AddAction(CreateDefaultSubobject<UHadesItemAction_Take>(TEXT("Take")), TEXT("TakeButton"));
+
+	// Right-click goes back, as the gamepad's Back button does, and a click off the menu closes it. A question takes the actions' place.
+	RightClick = EModularMenuRightClick::Back;
+	OutsideClick = EModularMenuOutsideClick::Close;
+	PromptPresentation = EModularPromptPresentation::Inline;
 
 	OpenTransition = MakeTransition();
 	bCloseReversesOpen = true;
@@ -56,10 +68,10 @@ void UHadesItemMenu::ValidateCompiledDefaults(IWidgetCompilerLog& CompileLog) co
 	GatherActions(Gathered);
 	for (const UInventoryItemAction* Action : Gathered)
 	{
-		const UHadesItemAction_AssignQuickSlot* AssignQuickSlot = Cast<UHadesItemAction_AssignQuickSlot>(Action);
-		if (AssignQuickSlot && !AssignQuickSlot->GetMenuClass())
+		const UInventoryItemAction_AssignShortcut* AssignShortcut = Cast<UInventoryItemAction_AssignShortcut>(Action);
+		if (AssignShortcut && !AssignShortcut->GetMenuClass())
 		{
-			CompileLog.Warning(LOCTEXT("NoQuickSlotMenu", "The Assign Quick Slot action has no Menu Class, so the menu never offers it."));
+			CompileLog.Warning(LOCTEXT("NoQuickSlotMenu", "The Assign Shortcut action has no Menu Class, so the menu never offers it."));
 		}
 	}
 }

@@ -1,7 +1,6 @@
 ﻿#include "HadesHUDLayout.h"
 
 #include "Animation/WidgetAnimation.h"
-#include "CommonUIExtensions.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "Input/CommonUIInputTypes.h"
@@ -9,9 +8,11 @@
 #include "Hades/HadesGameplayTags.h"
 #include "Hades/Inventory/HadesQuickSlotComponent.h"
 
+#include "Layers/ModularUISubsystem.h"
+
 UHadesHUDLayout::UHadesHUDLayout(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
-	InputConfig = EHadesWidgetInputMode::GameAndMenu;
+	InputConfig = EModularUIInputMode::GameAndMenu;
 }
 
 void UHadesHUDLayout::NativeOnInitialized()
@@ -50,17 +51,17 @@ void UHadesHUDLayout::HandlePawnChanged(APawn* OldPawn, APawn* NewPawn)
 {
 	if (UHadesQuickSlotComponent* Previous = QuickSlots.Get())
 	{
-		Previous->OnSlotActivated.RemoveDynamic(this, &ThisClass::HandleQuickSlotActivated);
+		Previous->OnShortcutActivated.RemoveDynamic(this, &ThisClass::HandleQuickSlotActivated);
 	}
 
 	QuickSlots = NewPawn ? NewPawn->FindComponentByClass<UHadesQuickSlotComponent>() : nullptr;
 	if (UHadesQuickSlotComponent* Current = QuickSlots.Get())
 	{
-		Current->OnSlotActivated.AddUniqueDynamic(this, &ThisClass::HandleQuickSlotActivated);
+		Current->OnShortcutActivated.AddUniqueDynamic(this, &ThisClass::HandleQuickSlotActivated);
 	}
 }
 
-void UHadesHUDLayout::HandleQuickSlotActivated(int32 SlotIndex)
+void UHadesHUDLayout::HandleQuickSlotActivated(int32 SlotIndex, FInventoryItemHandle Item)
 {
 	if (ShowQuickSlotsAnimation)
 	{
@@ -70,16 +71,18 @@ void UHadesHUDLayout::HandleQuickSlotActivated(int32 SlotIndex)
 
 void UHadesHUDLayout::HandleEscapeAction()
 {
-	if (ensure(!EscapeMenuClass.IsNull()))
+	UModularUISubsystem* UI = UModularUISubsystem::Get(GetOwningLocalPlayer());
+	if (UI && ensure(!EscapeMenuClass.IsNull()))
 	{
-		UCommonUIExtensions::PushStreamedContentToLayer_ForPlayer(GetOwningLocalPlayer(), HadesGameplayTags::UI_Layer_Menu, EscapeMenuClass);
+		UI->K2_PushStreamedWidgetToLayer(HadesGameplayTags::UI_Layer_Menu, EscapeMenuClass);
 	}
 }
 
 void UHadesHUDLayout::HandleInventoryAction()
 {
-	if (!InventoryScreenClass.IsNull())
+	UModularUISubsystem* UI = UModularUISubsystem::Get(GetOwningLocalPlayer());
+	if (UI && !InventoryScreenClass.IsNull())
 	{
-		UCommonUIExtensions::PushStreamedContentToLayer_ForPlayer(GetOwningLocalPlayer(), HadesGameplayTags::UI_Layer_GameMenu, InventoryScreenClass);
+		UI->K2_PushStreamedWidgetToLayer(HadesGameplayTags::UI_Layer_GameMenu, InventoryScreenClass);
 	}
 }

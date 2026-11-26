@@ -80,6 +80,8 @@ enum class EInventoryCarryLimit : uint8
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInventoryComponentChangedSignature, UInventoryComponent*, Inventory);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FInventoryCapacityUpgradedSignature, UInventoryComponent*, Inventory, FGameplayTag, ContainerTag, const UInventoryItemDefinition*, Upgrade);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FInventoryOverCarryLimitSignature, UInventoryComponent*, Inventory, bool, bIsOverCarryLimit);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FInventoryItemUsedSignature, UInventoryComponent*, Inventory, FInventoryItemHandle, Item, const UInventoryItemDefinition*, Definition);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FInventoryItemDroppedSignature, UInventoryComponent*, Inventory, const UInventoryItemDefinition*, Definition, int32, Count, AActor*, DroppedActor);
 
 
 /**
@@ -238,6 +240,31 @@ public:
 	/** For the inventory registry's entry check: Over Carry Limit when Item entering one of this component's containers would break a Refuse carry limit. */
 	EInventoryError CheckCarryLimit(const FInventoryRegistry& Registry, const FInventoryItemRecord& Item) const;
 
+	// Using: items with an Inventory Item Use fragment, such as a herb that heals.
+	/** Whether Use Item would work now: the item is held here, it has an Inventory Item Use, there are enough of it, and the owner meets its requirements. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Use")
+	virtual bool CanUseItem(FInventoryItemHandle Item) const;
+
+	/**
+	 * Uses the item as its Inventory Item Use says: applies its Effect to the owner, sends the owner its Event Tag, and uses up Count Used of
+	 * the stack. Then On Item Used fires, for whatever else using it does in your game.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Use")
+	virtual bool UseItem(FInventoryItemHandle Item);
+
+	// Dropping: taking items out of the inventory into the world, or away for good.
+	/** Whether Drop Item would work now: the item is held here and has none of Undroppable Tags. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Drop")
+	virtual bool CanDropItem(FInventoryItemHandle Item) const;
+
+	/**
+	 * Takes Count of the item out of the inventory, 0 for the whole stack, into a Dropped Item Class actor spawned in front of the owner, such
+	 * as a pickup, so it can be picked up again. Without a Dropped Item Class, it's destroyed. False, changing nothing, when it can't drop
+	 * the item, or the dropped actor has no room for it.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Drop")
+	virtual bool DropItem(FInventoryItemHandle Item, int32 Count = 0);
+
 	// Crafting. Ingredients come from storage, and the owner's ability system tags join the context tags.
 	UFUNCTION(BlueprintPure, Category = "Inventory|Crafting")
 	bool CanCraft(const UInventoryRecipe* Recipe, const FGameplayTagContainer& ContextTags, int32 Times = 1) const;
@@ -276,6 +303,14 @@ public:
 	/** It went over its carry limit, or back under it, such as to slow its owner down while it's over. */
 	UPROPERTY(BlueprintAssignable, Category = "Inventory|Carry Limit")
 	FInventoryOverCarryLimitSignature OnOverCarryLimitChanged;
+
+	/** Use Item used an item. Item is no longer valid when that used up the stack; Definition says what it was. */
+	UPROPERTY(BlueprintAssignable, Category = "Inventory|Use")
+	FInventoryItemUsedSignature OnItemUsed;
+
+	/** Drop Item took Count of an item out of the inventory, into Dropped Actor, or destroyed without one. */
+	UPROPERTY(BlueprintAssignable, Category = "Inventory|Drop")
+	FInventoryItemDroppedSignature OnItemDropped;
 
 protected:
 	//~ Begin UActorComponent Interface
@@ -323,6 +358,24 @@ protected:
 	/** The most it can carry before it's over its limit. Set Max Carried changes it at runtime. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory|Carry Limit", meta = (ClampMin = "0", EditCondition = "CarryLimit != EInventoryCarryLimit::None", EditConditionHides))
 	float MaxCarried = 100.0f;
+
+	/**
+	 * Spawned to hold what Drop Item drops, such as a pickup the player can take it back from. It needs an Inventory Component with room
+	 * for the item, and no starting items of its own. Empty destroys what's dropped.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory|Drop")
+	TSubclassOf<AActor> DroppedItemClass;
+
+	/** How far in front of the owner a dropped item lands, on the floor below. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory|Drop", meta = (ClampMin = "0", Units = "cm"))
+	float DropDistance = 60.0f;
+
+	/** Items with any of these tags can't be dropped, such as Item.Trait.KeyItem. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory|Drop")
+	FGameplayTagContainer UndroppableTags;
+
+	/** Where a dropped item lands: Drop Distance in front of the owner, on the floor below, facing the way the owner does. */
+	virtual FTransform GetDropTransform() const;
 
 private:
 	/** Capacity upgrades used up by one call, to announce once its change is made. */

@@ -29,18 +29,35 @@ void FModularUIReveal::Init(UUserWidget& Owner, TConstArrayView<FModularUIReveal
 
 void FModularUIReveal::Add(UWidget& Target, const FModularUITransition& Transition)
 {
-	// Two parts moving one widget would fight over its opacity and transform.
-	const bool bAdded = Parts.ContainsByPredicate([&Target](const FPart& Part) { return Part.Widget.Get() == &Target; });
+	Add(Target, Target, Transition);
+}
+
+void FModularUIReveal::Add(UWidget& FadeTarget, UWidget& MoveTarget, const FModularUITransition& Transition)
+{
+	// Two parts changing one widget would fight over its opacity and transform.
+	const bool bAdded = Parts.ContainsByPredicate([&FadeTarget, &MoveTarget](const FPart& Part)
+	{
+		return Part.FadeWidget.Get() == &FadeTarget || Part.MoveWidget.Get() == &MoveTarget;
+	});
 	if (bAdded)
 	{
-		UE_LOG(LogModularUI, Warning, TEXT("[Modular UI] %s is revealed more than once. Only its first step is used."), *GetPathNameSafe(&Target));
+		UE_LOG(LogModularUI, Warning, TEXT("[Modular UI] %s is revealed more than once. Only its first step is used."), *GetPathNameSafe(&FadeTarget));
 		return;
 	}
 
 	FPart& Part = Parts.AddDefaulted_GetRef();
-	Part.Widget = &Target;
+	Part.FadeWidget = &FadeTarget;
+	Part.MoveWidget = &MoveTarget;
 	Part.Transition = Transition;
-	Part.Player.Init(&Target, &Target);
+	Part.Player.Init(&FadeTarget, &MoveTarget);
+}
+
+void FModularUIReveal::SetOrigin(const FVector2D& Away, const FVector2D& Corner)
+{
+	for (FPart& Part : Parts)
+	{
+		Part.Player.SetOrigin(Away, Corner);
+	}
 }
 
 void FModularUIReveal::Reset()

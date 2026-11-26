@@ -1,13 +1,9 @@
 ﻿#include "HadesInventoryComponent.h"
 
-#include "AbilitySystemComponent.h"
-#include "AbilitySystemGlobals.h"
 #include "Engine/World.h"
-#include "GameplayEffect.h"
 
 #include "Hades/Hades.h"
 #include "Hades/HadesGameplayTags.h"
-#include "Hades/Inventory/HadesItemPickup.h"
 #include "Hades/Player/HadesPlayerController.h"
 
 #include "Crafting/InventoryRecipe.h"
@@ -17,11 +13,6 @@
 #include "InventorySubsystem.h"
 
 #define LOCTEXT_NAMESPACE "HadesInventory"
-
-namespace
-{
-	constexpr double DropDistance = 60.0;
-}
 
 void UHadesInventoryComponent::BeginPlay()
 {
@@ -101,80 +92,9 @@ FGameplayTag UHadesInventoryComponent::ChooseHand(FInventoryItemHandle Item) con
 }
 
 // Item actions
-bool UHadesInventoryComponent::CanUseItem(FInventoryItemHandle Item) const
+bool UHadesInventoryComponent::CanDropItem(FInventoryItemHandle Item) const
 {
-	const UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
-	const UInventoryItemDefinition* Definition = InventorySubsystem ? InventorySubsystem->GetItemDefinition(Item) : nullptr;
-	const FHadesItemUse* Use = Definition ? Definition->FindFragment<FHadesItemUse>() : nullptr;
-	return Use && Use->Effect && OwnsItem(Item);
-}
-
-bool UHadesInventoryComponent::UseItem(FInventoryItemHandle Item)
-{
-	UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
-	UAbilitySystemComponent* AbilitySystem = UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(GetOwner());
-	if (!InventorySubsystem || !AbilitySystem || !CanUseItem(Item))
-	{
-		return false;
-	}
-
-	const FHadesItemUse* Use = InventorySubsystem->GetItemDefinition(Item)->FindFragment<FHadesItemUse>();
-	FGameplayEffectContextHandle Context = AbilitySystem->MakeEffectContext();
-	Context.AddSourceObject(this);
-	const FGameplayEffectSpecHandle Spec = AbilitySystem->MakeOutgoingSpec(Use->Effect, 1.0f, Context);
-	if (Spec.IsValid())
-	{
-		AbilitySystem->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
-	}
-
-	InventorySubsystem->RemoveItem(Item, 1);
-	return true;
-}
-
-bool UHadesInventoryComponent::CanDiscardItem(FInventoryItemHandle Item) const
-{
-	return OwnsItem(Item) && !IsKeyItem(Item);
-}
-
-bool UHadesInventoryComponent::DiscardItem(FInventoryItemHandle Item)
-{
-	UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
-	if (!InventorySubsystem || !CanDiscardItem(Item))
-	{
-		return false;
-	}
-	if (!DroppedPickupClass)
-	{
-		return InventorySubsystem->RemoveItem(Item) > 0;
-	}
-
-	FActorSpawnParameters SpawnParameters;
-	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	AHadesItemPickup* Pickup = GetWorld()->SpawnActor<AHadesItemPickup>(DroppedPickupClass, FindDropTransform(), SpawnParameters);
-
-	// The pickup made its containers when it began play, during the spawn.
-	EInventoryError Error;
-	if (Pickup && TransferItem(Item, Pickup->GetInventory(), 0, false, Error))
-	{
-		return true;
-	}
-	if (Pickup)
-	{
-		Pickup->Destroy();
-	}
-	return false;
-}
-
-FTransform UHadesInventoryComponent::FindDropTransform() const
-{
-	const AActor* OwnerActor = GetOwner();
-	const FVector Start = OwnerActor->GetActorLocation() + OwnerActor->GetActorForwardVector() * DropDistance;
-	const FVector End = Start - FVector(0.0, 0.0, 500.0);
-
-	FHitResult Hit;
-	const FCollisionQueryParams Params(SCENE_QUERY_STAT(HadesDropItem), false, OwnerActor);
-	const bool bHitFloor = GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Params);
-	return FTransform(OwnerActor->GetActorRotation(), bHitFloor ? FVector(Hit.ImpactPoint) : Start);
+	return Super::CanDropItem(Item) && !IsKeyItem(Item);
 }
 
 bool UHadesInventoryComponent::CanCombine(FInventoryItemHandle Item) const

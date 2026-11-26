@@ -8,8 +8,10 @@
 
 
 /**
- * The Hades inventory screen's item menu. Its Actions start as every Hades item action, each on the button placed for it under its Button
- * Name, such as UseButton, or else on one made in Action Panel. Edit, reorder or remove them in Class Defaults.
+ * The Hades inventory screen's item menu. Its Actions start as every item action the game offers, each on the button placed for it under
+ * its Button Name, such as UseButton, or else on one made in Action Panel. Edit, reorder or remove them in Class Defaults.
+ * As in the console games it follows, the right mouse button goes back, as Escape does: out of a prompt to the actions, then out of the
+ * menu. A click off the menu closes it, and an action's question is asked in place of the actions.
  */
 UCLASS(Abstract, Blueprintable)
 class HADES_API UHadesItemMenu : public UInventoryItemMenuWidget

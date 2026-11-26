@@ -1,90 +1,25 @@
 ﻿#include "HadesQuickSlotWidget.h"
 
 #include "Components/TextBlock.h"
-#include "GameFramework/Pawn.h"
-#include "GameFramework/PlayerController.h"
-#include "InputCoreTypes.h"
 
 #include "Hades/Inventory/HadesInventoryComponent.h"
-#include "Hades/Inventory/HadesQuickSlotComponent.h"
 #include "Hades/Player/HadesPlayerController.h"
-#include "Hades/UI/Foundation/HadesInputKeyWidget.h"
 
-#include "InventoryUISubsystem.h"
-#include "Widgets/InventoryDragDropOperation.h"
-#include "Widgets/InventoryItemWidget.h"
+#include "Shortcuts/InventoryShortcutComponent.h"
 
 #define LOCTEXT_NAMESPACE "HadesQuickSlotWidget"
 
-void UHadesQuickSlotWidget::NativeOnInitialized()
+bool UHadesQuickSlotWidget::ShouldRefreshFor(const FInventoryChangeSet& Changes) const
 {
-	Super::NativeOnInitialized();
-
-	OnClicked().AddUObject(this, &ThisClass::HandleClicked);
+	// A gun's spare rounds are in other items, so any change can change them.
+	return true;
 }
 
-void UHadesQuickSlotWidget::NativeConstruct()
+void UHadesQuickSlotWidget::NativeOnRefresh(FInventoryItemHandle Item)
 {
-	Super::NativeConstruct();
+	Super::NativeOnRefresh(Item);
 
-	if (NumberText)
-	{
-		NumberText->SetText(FText::AsNumber(SlotIndex + 1));
-	}
-	if (APlayerController* Player = GetOwningPlayer())
-	{
-		Player->OnPossessedPawnChanged.AddUniqueDynamic(this, &ThisClass::HandlePawnChanged);
-	}
-	HandlePawnChanged(nullptr, GetOwningPlayerPawn());
-	RegistryListener.Bind(this, FOnInventoryRegistryChanged::FDelegate::CreateWeakLambda(this, [this](const FInventoryChangeSet&) { Refresh(); }));
-}
-
-void UHadesQuickSlotWidget::NativeDestruct()
-{
-	if (APlayerController* Player = GetOwningPlayer())
-	{
-		Player->OnPossessedPawnChanged.RemoveDynamic(this, &ThisClass::HandlePawnChanged);
-	}
-	if (UHadesQuickSlotComponent* Component = QuickSlots.Get())
-	{
-		Component->OnChanged.RemoveDynamic(this, &ThisClass::Refresh);
-	}
-	QuickSlots.Reset();
-	RegistryListener.Unbind();
-
-	Super::NativeDestruct();
-}
-
-void UHadesQuickSlotWidget::HandlePawnChanged(APawn* OldPawn, APawn* NewPawn)
-{
-	if (UHadesQuickSlotComponent* Previous = QuickSlots.Get())
-	{
-		Previous->OnChanged.RemoveDynamic(this, &ThisClass::Refresh);
-	}
-
-	QuickSlots = NewPawn ? NewPawn->FindComponentByClass<UHadesQuickSlotComponent>() : nullptr;
-	if (UHadesQuickSlotComponent* Current = QuickSlots.Get())
-	{
-		Current->OnChanged.AddUniqueDynamic(this, &ThisClass::Refresh);
-	}
-	Refresh();
-}
-
-void UHadesQuickSlotWidget::Refresh()
-{
-	const UHadesQuickSlotComponent* Component = QuickSlots.Get();
-	const FInventoryItemHandle Item = Component ? Component->GetSlotItem(SlotIndex) : FInventoryItemHandle();
-	if (KeyWidget)
-	{
-		KeyWidget->SetInputAction(Component ? Component->GetSlotInputAction(SlotIndex) : nullptr);
-	}
-	if (ItemWidget)
-	{
-		// Hidden, not collapsed, so a Size Box around it keeps its size while the slot is empty.
-		ItemWidget->SetItem(Item);
-		ItemWidget->SetVisibility(Item.IsSet() ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
-	}
-
+	const UInventoryShortcutComponent* Component = GetShortcuts();
 	const UHadesInventoryComponent* Inventory = Component ? Cast<UHadesInventoryComponent>(UInventoryComponent::FindInventoryComponent(Component->GetOwner())) : nullptr;
 	const int32 Capacity = Inventory ? Inventory->GetCapacity(Item) : 0;
 	const ESlateVisibility AmmoVisibility = Capacity > 0 ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed;
@@ -115,53 +50,11 @@ void UHadesQuickSlotWidget::Refresh()
 	}
 }
 
-void UHadesQuickSlotWidget::HandleClicked()
+void UHadesQuickSlotWidget::NativeOnAssignRefused(FInventoryItemHandle Item)
 {
-	AssignHeldItem();
-}
+	Super::NativeOnAssignRefused(Item);
 
-bool UHadesQuickSlotWidget::AssignHeldItem()
-{
-	UInventoryUISubsystem* Interaction = UInventoryUISubsystem::Get(GetOwningLocalPlayer());
-	UHadesQuickSlotComponent* Component = QuickSlots.Get();
-	if (!Interaction || !Component || !Interaction->IsHolding())
-	{
-		return false;
-	}
-
-	if (!Component->CanAssign(Interaction->GetHeldItem()))
-	{
-		if (AHadesPlayerController* Controller = Cast<AHadesPlayerController>(GetOwningPlayer()))
-		{
-			Controller->ShowMessage(LOCTEXT("CantAssign", "Only things to hold or use go in quick slots."));
-		}
-		return false;
-	}
-
-	// The slot only points at the item, so the item stays where it is.
-	Component->AssignItem(SlotIndex, Interaction->GetHeldItem());
-	Interaction->CancelHold();
-	return true;
-}
-
-bool UHadesQuickSlotWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
-{
-	if (Cast<UInventoryDragDropOperation>(InOperation) && AssignHeldItem())
-	{
-		return true;
-	}
-	return Super::NativeOnDrop(InGeometry, InDragDropEvent, InOperation);
-}
-
-FReply UHadesQuickSlotWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
-{
-	UHadesQuickSlotComponent* Component = QuickSlots.Get();
-	if (Component && InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton)
-	{
-		Component->ClearSlot(SlotIndex);
-		return FReply::Handled();
-	}
-	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+	AHadesPlayerController::ShowMessageTo(GetOwningPlayerPawn(), LOCTEXT("CantAssign", "Only things to hold or use go in quick slots."));
 }
 
 #undef LOCTEXT_NAMESPACE

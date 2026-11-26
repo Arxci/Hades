@@ -142,6 +142,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory|Equipment")
 	FInventoryItemHandle FindEquippedItemFor(FInventoryItemHandle Item) const;
 
+	/**
+	 * A slot to equip the item to, such as for an Equip button: the first slot its equip rules allow that's empty, or else the first they
+	 * allow, whose item it would replace. None when it has no equip rules, or the owner doesn't meet their requirements.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Equipment")
+	FGameplayTag FindSlotFor(FInventoryItemHandle Item) const;
+
 	/** The actors and components the item's pieces spawned. Empty until its cosmetics finish loading. */
 	UFUNCTION(BlueprintPure, Category = "Inventory|Equipment")
 	TArray<UObject*> GetSpawnedPieces(FInventoryItemHandle Item) const;

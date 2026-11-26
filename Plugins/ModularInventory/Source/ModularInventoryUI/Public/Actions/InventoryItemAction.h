@@ -135,15 +135,19 @@ public:
 	EInventoryActionUnavailable WhenUnavailable = EInventoryActionUnavailable::Hide;
 
 	/**
-	 * What a menu asks before running the action. Prompts need the menu's Prompt Panel and Confirm Button; without them, it runs straight
-	 * away, with the count Get Quantity Range starts at. Default actions never prompt.
+	 * What a menu asks before running the action, where its Prompt Presentation says: in place of its actions, over the menu, or in a
+	 * dialog. A menu with nowhere to ask runs it straight away, with the count Get Quantity Range starts at. Default actions never prompt.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action|Prompt")
 	EInventoryActionPrompt Prompt = EInventoryActionPrompt::None;
 
-	/** What the prompt asks. {Item} is the item's name, and {Count} the count chosen so far. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action", meta = (EditCondition = "Prompt != EInventoryActionPrompt::None"))
+	/** What the prompt asks. {Item} is the item's name, {Count} the count chosen so far, and {Max} the most there is to choose. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action|Prompt", meta = (EditCondition = "Prompt != EInventoryActionPrompt::None"))
 	FText PromptText;
+
+	/** The prompt's confirm button's label, such as Discard, on buttons that are Modular Buttons. Empty keeps the button's own, such as Yes. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action|Prompt", meta = (EditCondition = "Prompt != EInventoryActionPrompt::None"))
+	FText PromptConfirmLabel;
 
 	/**
 	 * The menu stays open after the action runs, and lists the actions again for the item as it's left, such as for Equip and Unequip.

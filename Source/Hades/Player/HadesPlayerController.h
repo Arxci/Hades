@@ -3,13 +3,14 @@
 #include "CoreMinimal.h"
 
 #include "CommonPlayerController.h"
+#include "GameplayTagContainer.h"
 
 #include "HadesPlayerController.generated.h"
 
 class UCommonActivatableWidget;
 class UInputMappingContext;
 class UInventoryComponent;
-class UHadesWorldMarkerManagerComponent;
+class UModularWorldMarkerManagerComponent;
 
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FHadesMessageSignature, const FText&, Message);
@@ -25,7 +26,10 @@ public:
 	
 	virtual void ReceivedPlayer() override;
 
-	/** Shown by every Hades Message widget, such as "It's locked." */
+	/**
+	 * Tells the player something, such as "It's locked.": a message on Message Channel, which the message feeds showing that channel show,
+	 * such as a banner across the screen. On Message fires too.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "UI")
 	void ShowMessage(const FText& Message);
 
@@ -34,6 +38,7 @@ public:
 
 	UInventoryComponent* GetItemBoxInventory() const { return ItemBoxInventory; }
 
+	/** Show Message was called, for anything else that shows messages its own way. */
 	UPROPERTY(BlueprintAssignable, Category = "UI")
 	FHadesMessageSignature OnMessage;
 
@@ -54,7 +59,11 @@ protected:
 	bool bRegisterMappingsWithSettings = true;
 	
 	UPROPERTY(VisibleAnywhere, Category = "UI")
-	TObjectPtr<UHadesWorldMarkerManagerComponent> WorldMarkerManager;
+	TObjectPtr<UModularWorldMarkerManagerComponent> WorldMarkerManager;
+
+	/** The Modular UI message channel Show Message sends to, such as UI.Message.Hint. */
+	UPROPERTY(EditDefaultsOnly, Category = "UI", meta = (Categories = "UI.Message"))
+	FGameplayTag MessageChannel;
 
 	/** Pushed onto the Game layer for the local player. Place a World Marker Layer in it to draw world markers. */
 	UPROPERTY(EditDefaultsOnly, Category = "UI")

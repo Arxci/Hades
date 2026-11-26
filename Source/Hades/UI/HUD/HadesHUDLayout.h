@@ -2,7 +2,8 @@
 
 #include "CoreMinimal.h"
 
-#include "Hades/UI/Foundation/HadesActivatableWidget.h"
+#include "InventoryTypes.h"
+#include "ModularActivatableWidget.h"
 
 #include "HadesHUDLayout.generated.h"
 
@@ -12,11 +13,12 @@ class UHadesQuickSlotComponent;
 class UWidgetAnimation;
 
 /**
- * The player's HUD, pushed onto the Game layer by the player controller. Escape opens EscapeMenuClass on the Menu layer, and Inventory opens InventoryScreenClass on the GameMenu layer.
+ * The player's HUD, pushed onto the Game layer by the player controller. Escape opens Escape Menu Class on the Menu layer, and Inventory opens
+ * Inventory Screen Class on the GameMenu layer.
  * Its input config defaults to Game and Menu: with Game alone, Common UI ignores those two actions.
  */
 UCLASS(Abstract, BlueprintType, Blueprintable)
-class HADES_API UHadesHUDLayout : public UHadesActivatableWidget
+class HADES_API UHadesHUDLayout : public UModularActivatableWidget
 {
 	GENERATED_BODY()
 
@@ -49,7 +51,7 @@ private:
 	void HandlePawnChanged(APawn* OldPawn, APawn* NewPawn);
 
 	UFUNCTION()
-	void HandleQuickSlotActivated(int32 SlotIndex);
+	void HandleQuickSlotActivated(int32 SlotIndex, FInventoryItemHandle Item);
 
 	TWeakObjectPtr<UHadesQuickSlotComponent> QuickSlots;
 };

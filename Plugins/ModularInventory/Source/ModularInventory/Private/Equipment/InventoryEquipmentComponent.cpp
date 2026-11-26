@@ -221,6 +221,50 @@ FInventoryItemHandle UInventoryEquipmentComponent::FindEquippedItemFor(FInventor
 	return Entry ? Entry->Item : FInventoryItemHandle();
 }
 
+FGameplayTag UInventoryEquipmentComponent::FindSlotFor(FInventoryItemHandle Item) const
+{
+	const UInventorySubsystem* InventorySubsystem = Subsystem.Get();
+	const UInventoryItemDefinition* Definition = InventorySubsystem ? InventorySubsystem->GetItemDefinition(Item) : nullptr;
+	const UInventoryEquipRules* Rules = Definition ? Definition->EquipRules.Get() : nullptr;
+	if (!Rules || !Rules->MeetsOwnerRequirements(GetOwner()))
+	{
+		return FGameplayTag();
+	}
+
+	// The slots of the owner's equipment containers the rules allow, in order. Without any, the rules' own slots, for equipping in place.
+	TArray<FGameplayTag> Candidates;
+	for (const FInventoryContainerHandle& Container : Inventory ? Inventory->GetEquipmentContainers() : TArray<FInventoryContainerHandle>())
+	{
+		const UInventoryContainerLayout* Layout = InventorySubsystem->GetContainerLayout(Container);
+		for (const FInventorySlotDefinition& SlotDefinition : Layout ? Layout->Slots : TArray<FInventorySlotDefinition>())
+		{
+			if (Rules->AllowsSlot(SlotDefinition.Tag))
+			{
+				Candidates.AddUnique(SlotDefinition.Tag);
+			}
+		}
+	}
+	if (Candidates.IsEmpty())
+	{
+		Candidates = Rules->Slots.GetGameplayTagArray();
+	}
+
+	FGameplayTag FirstAllowed;
+	for (const FGameplayTag& Slot : Candidates)
+	{
+		const FInventoryItemHandle InSlot = GetEquippedItem(Slot);
+		if (!InSlot.IsSet() || InSlot == Item)
+		{
+			return Slot;
+		}
+		if (!FirstAllowed.IsValid())
+		{
+			FirstAllowed = Slot;
+		}
+	}
+	return FirstAllowed;
+}
+
 FInventoryItemHandle UInventoryEquipmentComponent::GetItemForAbility(FGameplayAbilitySpecHandle Ability) const
 {
 	const FInventoryEquippedItem* Entry = Equipped.FindByPredicate([&Ability](const FInventoryEquippedItem& Candidate) { return Candidate.Abilities.Contains(Ability); });

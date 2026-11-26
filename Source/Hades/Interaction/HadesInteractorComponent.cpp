@@ -15,10 +15,16 @@
 #include "TimerManager.h"
 
 #include "Hades/HadesCollisionChannels.h"
+#include "Hades/HadesGameplayTags.h"
 #include "Hades/Camera/HadesCameraLibrary.h"
+#include "Hades/Character/Hero/HadesHeroCharacter.h"
+#include "Hades/Input/HadesInputConfig.h"
 #include "Hades/Interaction/HadesInteractableComponent.h"
-#include "Hades/UI/WorldMarker/HadesWorldMarker.h"
-#include "Hades/UI/WorldMarker/HadesWorldMarkerManagerComponent.h"
+
+#include "Messages/ModularMessageSubsystem.h"
+#include "ModularUIGameplayTags.h"
+#include "WorldMarkers/ModularWorldMarker.h"
+#include "WorldMarkers/ModularWorldMarkerManagerComponent.h"
 
 namespace
 {
@@ -65,7 +71,7 @@ namespace
 	// Through the marker rather than the controller's manager, which may already be gone when the pawn is unpossessed.
 	void UnregisterWorldMarker(const UHadesInteractableComponent& Interactable)
 	{
-		if (UHadesWorldMarker* Marker = Interactable.GetWorldMarker())
+		if (UModularWorldMarker* Marker = Interactable.GetWorldMarker())
 		{
 			Marker->Unregister();
 		}
@@ -76,6 +82,8 @@ UHadesInteractorComponent::UHadesInteractorComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = false;
+
+	PromptChannel = ModularUIGameplayTags::UI_Message_Prompt;
 }
 
 void UHadesInteractorComponent::BeginPlay()
@@ -169,7 +177,7 @@ void UHadesInteractorComponent::UpdateNearbyInteractables()
 		return;
 	}
 
-	UHadesWorldMarkerManagerComponent* MarkerManager = UHadesWorldMarkerManagerComponent::Get(Pawn->GetController());
+	UModularWorldMarkerManagerComponent* MarkerManager = UModularWorldMarkerManagerComponent::Get(Pawn->GetController());
 
 	const float Radius = NearbyRadiusOverride >= 0.0f ? NearbyRadiusOverride : NearbyRadius;
 	const FVector Location = Pawn->GetActorLocation();
@@ -304,8 +312,10 @@ void UHadesInteractorComponent::SetFocusedInteractable(UHadesInteractableCompone
 
 	FocusedInteractable = NewFocused;
 
+	HidePrompt();
 	if (OldFocused)
 	{
+		OldFocused->OnPromptChanged.RemoveAll(this);
 		OldFocused->TryStopInteraction(GetOwner());
 		OldFocused->OnFocusEnd();
 	}
@@ -313,9 +323,77 @@ void UHadesInteractorComponent::SetFocusedInteractable(UHadesInteractableCompone
 	if (NewFocused)
 	{
 		NewFocused->OnFocusBegin();
+		NewFocused->OnPromptChanged.AddUObject(this, &ThisClass::HandleFocusedPromptChanged);
+		ShowPrompt(*NewFocused);
 	}
 
 	OnFocusedInteractableChanged.Broadcast(NewFocused);
+}
+
+// Prompt
+namespace
+{
+	/** Tells one interactable's prompt from another's, so a newer one replaces it and only its own is hidden. */
+	FName MakePromptKey(const UHadesInteractableComponent& Interactable)
+	{
+		return FName(*FString::Printf(TEXT("Interactable_%u"), Interactable.GetUniqueID()));
+	}
+}
+
+void UHadesInteractorComponent::ShowPrompt(UHadesInteractableComponent& Interactable)
+{
+	const APawn* Pawn = GetOwner<APawn>();
+	APlayerController* Viewer = Pawn ? Pawn->GetController<APlayerController>() : nullptr;
+	UModularMessageSubsystem* Messages = PromptChannel.IsValid() ? UModularMessageSubsystem::GetForPlayer(Viewer) : nullptr;
+	if (!Messages)
+	{
+		return;
+	}
+
+	// The key shown is the one the player has bound to interacting, which follows rebinding.
+	const AHadesHeroCharacter* Hero = Cast<AHadesHeroCharacter>(Pawn);
+	const UHadesInputConfig* InputConfig = Hero ? Hero->GetInputConfig() : nullptr;
+
+	FModularMessage Prompt;
+	Prompt.Channel = PromptChannel;
+	Prompt.Key = MakePromptKey(Interactable);
+	Prompt.Title = Interactable.GetPromptTitle();
+	Prompt.Body = Interactable.GetPromptText();
+	Prompt.Icon = Interactable.GetPromptIcon();
+	Prompt.InputAction = Interactable.IsInteractionEnabled() && InputConfig ? InputConfig->FindInputActionForTag(HadesGameplayTags::Input_Interact, false) : nullptr;
+	Prompt.Duration = 0.0f;
+	Prompt.Payload = Interactable.GetOwner();
+	if (Prompt.Title.IsEmpty() && Prompt.Body.IsEmpty())
+	{
+		HidePrompt();
+		return;
+	}
+	Messages->ShowMessage(Prompt);
+	ShownPromptKey = Prompt.Key;
+	PromptViewer = Viewer;
+}
+
+void UHadesInteractorComponent::HidePrompt()
+{
+	if (ShownPromptKey.IsNone())
+	{
+		return;
+	}
+
+	if (UModularMessageSubsystem* Messages = UModularMessageSubsystem::GetForPlayer(PromptViewer.Get()))
+	{
+		Messages->HideMessage(PromptChannel, ShownPromptKey);
+	}
+	ShownPromptKey = NAME_None;
+	PromptViewer.Reset();
+}
+
+void UHadesInteractorComponent::HandleFocusedPromptChanged()
+{
+	if (UHadesInteractableComponent* Interactable = FocusedInteractable.Get())
+	{
+		ShowPrompt(*Interactable);
+	}
 }
 
 void UHadesInteractorComponent::ClearInteractables()

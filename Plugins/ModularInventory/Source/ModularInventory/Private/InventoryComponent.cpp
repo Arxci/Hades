@@ -1,16 +1,20 @@
 #include "InventoryComponent.h"
 
+#include "AbilitySystemBlueprintLibrary.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
 #include "Algo/AllOf.h"
 #include "Engine/AssetManager.h"
+#include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "GameplayEffect.h"
 
 #include "Crafting/InventoryRecipe.h"
 #include "Data/InventoryCapacityUpgrade.h"
 #include "Data/InventoryContainerLayout.h"
 #include "Data/InventoryItemCosmetics.h"
 #include "Data/InventoryItemDefinition.h"
+#include "Data/InventoryItemUse.h"
 #include "InventorySubsystem.h"
 #include "Loot/InventoryLootTable.h"
 #include "ModularInventory.h"
@@ -579,6 +583,138 @@ bool UInventoryComponent::CanApplyCapacityUpgrade(FInventoryItemHandle Item) con
 		ApplyUpgrade(Registry, *Upgrade, Container, 1, false, Error);
 		return Error;
 	}) == EInventoryError::None;
+}
+
+// Using
+bool UInventoryComponent::CanUseItem(FInventoryItemHandle Item) const
+{
+	const UInventorySubsystem* InventorySubsystem = GetSubsystem();
+	const UInventoryItemDefinition* Definition = InventorySubsystem ? InventorySubsystem->GetItemDefinition(Item) : nullptr;
+	const FInventoryItemUse* Use = Definition ? Definition->FindFragment<FInventoryItemUse>() : nullptr;
+	if (!Use || !OwnsItem(Item) || InventorySubsystem->GetItemCount(Item) < Use->CountUsed)
+	{
+		return false;
+	}
+	if (Use->UserRequirements.IsEmpty())
+	{
+		return true;
+	}
+
+	FGameplayTagContainer OwnerTags;
+	if (const UAbilitySystemComponent* AbilitySystem = UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(GetOwner()))
+	{
+		AbilitySystem->GetOwnedGameplayTags(OwnerTags);
+	}
+	return Use->UserRequirements.RequirementsMet(OwnerTags);
+}
+
+bool UInventoryComponent::UseItem(FInventoryItemHandle Item)
+{
+	UInventorySubsystem* InventorySubsystem = GetSubsystem();
+	if (!InventorySubsystem || !CanUseItem(Item))
+	{
+		return false;
+	}
+
+	// Copied, as what using it does can change the item.
+	const UInventoryItemDefinition* Definition = InventorySubsystem->GetItemDefinition(Item);
+	const FInventoryItemUse Use = *Definition->FindFragment<FInventoryItemUse>();
+
+	UAbilitySystemComponent* AbilitySystem = UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(GetOwner());
+	if (AbilitySystem && Use.Effect)
+	{
+		FGameplayEffectContextHandle Context = AbilitySystem->MakeEffectContext();
+		Context.AddSourceObject(this);
+		const FGameplayEffectSpecHandle Spec = AbilitySystem->MakeOutgoingSpec(Use.Effect, Use.EffectLevel, Context);
+		if (Spec.IsValid())
+		{
+			AbilitySystem->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
+		}
+	}
+	if (Use.EventTag.IsValid())
+	{
+		FGameplayEventData Payload;
+		Payload.EventTag = Use.EventTag;
+		Payload.Instigator = GetOwner();
+		Payload.Target = GetOwner();
+		Payload.OptionalObject = Definition;
+		UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(GetOwner(), Use.EventTag, Payload);
+	}
+	if (Use.CountUsed > 0)
+	{
+		InventorySubsystem->RemoveItem(Item, Use.CountUsed);
+	}
+
+	OnItemUsed.Broadcast(this, Item, Definition);
+	return true;
+}
+
+// Dropping
+bool UInventoryComponent::CanDropItem(FInventoryItemHandle Item) const
+{
+	const UInventorySubsystem* InventorySubsystem = GetSubsystem();
+	return InventorySubsystem && OwnsItem(Item) && !InventorySubsystem->GetItemTags(Item).HasAny(UndroppableTags);
+}
+
+bool UInventoryComponent::DropItem(FInventoryItemHandle Item, int32 Count)
+{
+	UInventorySubsystem* InventorySubsystem = GetSubsystem();
+	if (!InventorySubsystem || !CanDropItem(Item))
+	{
+		return false;
+	}
+
+	const UInventoryItemDefinition* Definition = InventorySubsystem->GetItemDefinition(Item);
+	const int32 StackCount = InventorySubsystem->GetItemCount(Item);
+	const int32 Dropped = Count > 0 ? FMath::Min(Count, StackCount) : StackCount;
+	if (!DroppedItemClass)
+	{
+		if (InventorySubsystem->RemoveItem(Item, Dropped) <= 0)
+		{
+			return false;
+		}
+		OnItemDropped.Broadcast(this, Definition, Dropped, nullptr);
+		return true;
+	}
+
+	UWorld* World = GetWorld();
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AActor* DroppedActor = World ? World->SpawnActor<AActor>(DroppedItemClass, GetDropTransform(), SpawnParameters) : nullptr;
+
+	// The dropped actor's Inventory Component made its containers as it began play, during the spawn.
+	UInventoryComponent* DroppedInventory = FindInventoryComponent(DroppedActor);
+	EInventoryError Error = EInventoryError::None;
+	if (DroppedInventory && TransferItem(Item, DroppedInventory, Dropped == StackCount ? 0 : Dropped, false, Error))
+	{
+		OnItemDropped.Broadcast(this, Definition, Dropped, DroppedActor);
+		return true;
+	}
+
+	UE_CLOG(DroppedActor && !DroppedInventory, LogInventory, Warning, TEXT("[Inventory] %s: Dropped Item Class %s has no Inventory Component to drop items into."),
+		*GetPathNameSafe(this), *GetNameSafe(DroppedItemClass));
+	if (DroppedActor)
+	{
+		DroppedActor->Destroy();
+	}
+	return false;
+}
+
+FTransform UInventoryComponent::GetDropTransform() const
+{
+	const AActor* OwnerActor = GetOwner();
+	const UWorld* World = GetWorld();
+	if (!OwnerActor || !World)
+	{
+		return FTransform::Identity;
+	}
+
+	const FVector Start = OwnerActor->GetActorLocation() + OwnerActor->GetActorForwardVector() * DropDistance;
+	const FVector End = Start - FVector(0.0, 0.0, 500.0);
+	FHitResult Hit;
+	const FCollisionQueryParams Params(SCENE_QUERY_STAT(InventoryDropItem), false, OwnerActor);
+	const bool bHitFloor = World->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Params);
+	return FTransform(FRotator(0.0, OwnerActor->GetActorRotation().Yaw, 0.0), bHitFloor ? FVector(Hit.ImpactPoint) : Start);
 }
 
 const FInventoryCapacityUpgrade* UInventoryComponent::FindUpgradeAppliedWhenTaken(const UInventoryItemDefinition* Definition, FInventoryContainerHandle& OutContainer) const

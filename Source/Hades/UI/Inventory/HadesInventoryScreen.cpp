@@ -1,18 +1,13 @@
 #include "HadesInventoryScreen.h"
 
-#include "CommonAnimatedSwitcher.h"
-#include "Engine/LocalPlayer.h"
 #include "GameFramework/Pawn.h"
 #include "Input/CommonUIInputTypes.h"
-#include "PrimaryGameLayout.h"
 
 #include "Hades/HadesGameplayTags.h"
 #include "Hades/Inventory/HadesInventoryComponent.h"
 #include "Hades/Player/HadesPlayerController.h"
-#include "Hades/UI/Foundation/HadesTabListWidget.h"
 
 #include "InventoryUISubsystem.h"
-#include "Widgets/InventoryItemMenuWidget.h"
 #include "Widgets/InventoryListWidget.h"
 
 #define LOCTEXT_NAMESPACE "HadesInventoryScreen"
@@ -32,6 +27,13 @@ UHadesInventoryScreen::UHadesInventoryScreen(const FObjectInitializer& ObjectIni
 	bStartOnLastItem = true;
 	bPauseGame = true;
 
+	// Item menus open on the Modal layer, above the screen, so the screen stays drawn behind them.
+	ItemMenuLayer = HadesGameplayTags::UI_Layer_Modal;
+
+	// The items are the second page, after the map, and the tab keys turn a held item.
+	ItemsPage = 1;
+	bTabKeysTurnHeldItem = true;
+
 	MoveHint = LOCTEXT("MoveHint", "Select an area to place this item.");
 	ChooseHint = LOCTEXT("CombineHint", "Select an item to combine with.");
 	InvalidHint = LOCTEXT("InvalidHint", "That can't go there.");
@@ -45,24 +47,9 @@ void UHadesInventoryScreen::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 
+	// The key that opens the inventory closes it too.
 	RegisterUIActionBinding(FBindUIActionArgs(FUIActionTag::ConvertChecked(HadesGameplayTags::UI_Action_Inventory), false,
 		FSimpleDelegate::CreateUObject(this, &ThisClass::HandleCloseAction)));
-
-	if (TabList)
-	{
-		TabList->OnTabSelected.AddUniqueDynamic(this, &ThisClass::HandleTabSelected);
-	}
-}
-
-void UHadesInventoryScreen::NativeConstruct()
-{
-	Super::NativeConstruct();
-
-	// The tab list is built by now, so it makes its tabs as it's linked.
-	if (TabList && Pages && TabList->GetLinkedSwitcher() != Pages)
-	{
-		TabList->SetLinkedSwitcher(Pages);
-	}
 }
 
 void UHadesInventoryScreen::NativeOnActivated()
@@ -77,13 +64,6 @@ void UHadesInventoryScreen::NativeOnActivated()
 	{
 		ItemBoxList->SetContainer(GetItemBox());
 	}
-
-	const bool bItemsTabOpened = TabList && TabList->OpenTabAtIndex(ItemsPage, /*bSuppressClickFeedback*/ true);
-	if (!bItemsTabOpened && Pages)
-	{
-		Pages->SetActiveWidgetIndex(ItemsPage);
-	}
-	SetInventoryShown(IsItemsPageOpen());
 }
 
 void UHadesInventoryScreen::NativeOnDeactivated()
@@ -96,12 +76,6 @@ void UHadesInventoryScreen::NativeOnDeactivated()
 	Super::NativeOnDeactivated();
 }
 
-UInventoryItemMenuWidget* UHadesInventoryScreen::PushItemMenu(TSubclassOf<UInventoryItemMenuWidget> MenuClass, TFunctionRef<void(UInventoryItemMenuWidget&)> InitMenu)
-{
-	UPrimaryGameLayout* Layout = UPrimaryGameLayout::GetPrimaryGameLayout(GetOwningLocalPlayer());
-	return Layout ? Layout->PushWidgetToLayerStack<UInventoryItemMenuWidget>(HadesGameplayTags::UI_Layer_Modal, MenuClass.Get(), InitMenu) : nullptr;
-}
-
 void UHadesInventoryScreen::HandleItemChosen(FInventoryItemHandle Item, FInventoryItemHandle Chosen)
 {
 	// Only the Combine action has the player choose an item.
@@ -112,61 +86,11 @@ void UHadesInventoryScreen::HandleItemChosen(FInventoryItemHandle Item, FInvento
 	}
 }
 
-// Pages
-bool UHadesInventoryScreen::IsItemsPageOpen() const
+void UHadesInventoryScreen::NativeOnSorted(bool bSorted)
 {
-	const int32 OpenTab = TabList ? TabList->GetOpenTabIndex() : INDEX_NONE;
-	if (OpenTab != INDEX_NONE)
-	{
-		return OpenTab == ItemsPage;
-	}
-	return !Pages || Pages->GetActiveWidgetIndex() == ItemsPage;
-}
+	Super::NativeOnSorted(bSorted);
 
-void UHadesInventoryScreen::HandleTabSelected(FName TabId)
-{
-	SetInventoryShown(TabList->GetTabIndexOf(TabId) == ItemsPage);
-}
-
-// Actions
-void UHadesInventoryScreen::RefreshActions()
-{
-	Super::RefreshActions();
-
-	const bool bScreenClosing = IsClosing();
-	SetActionBound(OrganizeHandle, OrganizeAction, IsInventoryShown() && !bScreenClosing, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleOrganizeAction));
-
-	// While an item is held, the tab keys turn it instead of changing tabs. Neither works while the screen closes.
-	if (TabList)
-	{
-		const UInventoryUISubsystem* Interaction = GetInteraction();
-		const bool bHolding = Interaction && Interaction->IsHolding();
-		const FSimpleDelegate Rotate = FSimpleDelegate::CreateUObject(this, &ThisClass::HandleRotateAction);
-		TabList->SetListeningForInput(!bHolding && !bScreenClosing);
-		SetActionBound(PreviousTabRotateHandle, TabList->GetPreviousTabAction(), bHolding && !bScreenClosing, Rotate, /*bShowInActionBar*/ false);
-		SetActionBound(NextTabRotateHandle, TabList->GetNextTabAction(), bHolding && !bScreenClosing, Rotate, /*bShowInActionBar*/ false);
-	}
-}
-
-void UHadesInventoryScreen::HandleRotateAction()
-{
-	if (UInventoryUISubsystem* Interaction = GetInteraction())
-	{
-		Interaction->RotateHeld();
-	}
-}
-
-void UHadesInventoryScreen::HandleOrganizeAction()
-{
-	UInventoryUISubsystem* Interaction = GetInteraction();
-	UHadesInventoryComponent* Inventory = GetPlayerInventory();
-	if (!Interaction || !Inventory || Interaction->IsChoosingItem())
-	{
-		return;
-	}
-
-	Interaction->CancelHold();
-	if (!Inventory->OrganizeInventory())
+	if (!bSorted)
 	{
 		AHadesPlayerController::ShowMessageTo(GetOwningPlayerPawn(), LOCTEXT("CantOrganize", "Couldn't organize your inventory."));
 	}

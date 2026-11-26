@@ -7,7 +7,6 @@
 #include "HadesItemActions.generated.h"
 
 class UHadesInventoryComponent;
-class UHadesQuickSlotMenu;
 
 
 /** An item action on the player's Hades Inventory Component. */
@@ -18,20 +17,6 @@ class HADES_API UHadesItemAction : public UInventoryItemAction
 
 protected:
 	static UHadesInventoryComponent* GetPlayerInventory(const FInventoryItemActionContext& Context);
-};
-
-
-UCLASS(meta = (DisplayName = "Use"))
-class HADES_API UHadesItemAction_Use : public UHadesItemAction
-{
-	GENERATED_BODY()
-
-public:
-	UHadesItemAction_Use();
-
-protected:
-	virtual bool CanRun_Implementation(const FInventoryItemActionContext& Context) const override;
-	virtual void Run_Implementation(const FInventoryItemActionContext& Context) override;
 };
 
 
@@ -80,21 +65,6 @@ protected:
 };
 
 
-/** Drops the item where the player stands. Asks to confirm first. */
-UCLASS(meta = (DisplayName = "Discard"))
-class HADES_API UHadesItemAction_Discard : public UHadesItemAction
-{
-	GENERATED_BODY()
-
-public:
-	UHadesItemAction_Discard();
-
-protected:
-	virtual bool CanRun_Implementation(const FInventoryItemActionContext& Context) const override;
-	virtual void Run_Implementation(const FInventoryItemActionContext& Context) override;
-};
-
-
 /** Puts the item in the item box, on an inventory screen that shows it. Key items stay with the player. */
 UCLASS(meta = (DisplayName = "Store"))
 class HADES_API UHadesItemAction_Store : public UHadesItemAction
@@ -122,25 +92,4 @@ public:
 protected:
 	virtual bool CanRun_Implementation(const FInventoryItemActionContext& Context) const override;
 	virtual void Run_Implementation(const FInventoryItemActionContext& Context) override;
-};
-
-
-/** Opens Menu Class beside the item, to put it on one of the player's quick slots. */
-UCLASS(meta = (DisplayName = "Assign Quick Slot"))
-class HADES_API UHadesItemAction_AssignQuickSlot : public UHadesItemAction
-{
-	GENERATED_BODY()
-
-public:
-	UHadesItemAction_AssignQuickSlot();
-
-	TSubclassOf<UHadesQuickSlotMenu> GetMenuClass() const { return MenuClass; }
-
-protected:
-	virtual bool CanRun_Implementation(const FInventoryItemActionContext& Context) const override;
-	virtual void Run_Implementation(const FInventoryItemActionContext& Context) override;
-
-	/** The menu that lists the quick slots. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action")
-	TSubclassOf<UHadesQuickSlotMenu> MenuClass;
 };

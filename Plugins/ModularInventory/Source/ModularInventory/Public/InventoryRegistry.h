@@ -283,6 +283,8 @@ public:
 	 * together. A grid puts each on the first spot that fits. All or nothing.
 	 */
 	EInventoryError SortContainer(FInventoryContainerHandle Container);
+	/** Sorts a grid or list as Settings say, such as by category, then by name. A grid puts each item on the first spot that fits. All or nothing. */
+	EInventoryError SortContainer(FInventoryContainerHandle Container, const FInventorySortSettings& Settings);
 
 	// Operations. An unset Placement means "find a free spot".
 	/** Fills compatible stacks first, then free spots. With an explicit placement, adds a single stack there or onto the stack already there. */

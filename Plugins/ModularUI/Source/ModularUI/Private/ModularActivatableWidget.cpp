@@ -1,10 +1,19 @@
 ﻿#include "ModularActivatableWidget.h"
 
 #include "Animation/WidgetAnimation.h"
+#include "Input/CommonUIInputTypes.h"
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundBase.h"
 
+#if WITH_EDITOR
+#include "Blueprint/WidgetTree.h"
+#include "Editor/WidgetCompilerLog.h"
+#endif
+
+#include "ModularUIFocus.h"
 #include "ModularUIPauseSubsystem.h"
+
+#define LOCTEXT_NAMESPACE "ModularActivatableWidget"
 
 UModularActivatableWidget::UModularActivatableWidget(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
@@ -13,12 +22,69 @@ UModularActivatableWidget::UModularActivatableWidget(const FObjectInitializer& O
 	CloseTransition.bSlide = false;
 }
 
+TOptional<FUIInputConfig> UModularActivatableWidget::GetDesiredInputConfig() const
+{
+	switch (InputConfig)
+	{
+	case EModularUIInputMode::GameAndMenu:
+		return FUIInputConfig(ECommonInputMode::All, GameMouseCaptureMode);
+	case EModularUIInputMode::Game:
+		return FUIInputConfig(ECommonInputMode::Game, GameMouseCaptureMode);
+	case EModularUIInputMode::Menu:
+		return FUIInputConfig(ECommonInputMode::Menu, EMouseCaptureMode::NoCapture);
+	case EModularUIInputMode::Default:
+		break;
+	}
+	return TOptional<FUIInputConfig>();
+}
+
+#if WITH_EDITOR
+void UModularActivatableWidget::ValidateCompiledWidgetTree(const UWidgetTree& BlueprintWidgetTree, IWidgetCompilerLog& CompileLog) const
+{
+	Super::ValidateCompiledWidgetTree(BlueprintWidgetTree, CompileLog);
+
+	// Only menus need somewhere for gamepad focus to start. Subclasses in C++, such as context menus, usually find it themselves.
+	if (InputConfig != EModularUIInputMode::Menu || GetClass()->IsFunctionImplementedInScript(GET_FUNCTION_NAME_CHECKED(UModularActivatableWidget, BP_GetDesiredFocusTarget)))
+	{
+		return;
+	}
+
+	const FText Message = LOCTEXT("NoFocusTarget", "Get Desired Focus Target isn't implemented, so gamepad focus has nowhere to start on this menu. If its C++ parent finds one, ignore this.");
+	if (GetParentNativeClass(GetClass()) == UModularActivatableWidget::StaticClass())
+	{
+		CompileLog.Warning(Message);
+	}
+	else
+	{
+		CompileLog.Note(Message);
+	}
+}
+#endif
+
 void UModularActivatableWidget::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 
 	// The reveal adds to the render opacity and transform the parts have now, as set in the designer.
 	Reveal.Init(*this, OpenReveal);
+	AddRevealParts(Reveal);
+
+	RegisterConfirmAction();
+	if (CloseAction.IsValid())
+	{
+		RegisterUIActionBinding(FBindUIActionArgs(CloseAction, false, FSimpleDelegate::CreateUObject(this, &ThisClass::CloseWidget)));
+	}
+}
+
+void UModularActivatableWidget::RegisterConfirmAction()
+{
+	if (!ConfirmAction.IsNull())
+	{
+		// Not consuming it lets Accept reach the focused button.
+		FBindUIActionArgs ConfirmArgs(ConfirmAction, true, FSimpleDelegate::CreateWeakLambda(this, [] {}));
+		ConfirmArgs.bConsumeInput = false;
+		RegisterUIActionBinding(ConfirmArgs);
+	}
 }
 
 void UModularActivatableWidget::NativeOnActivated()
@@ -27,6 +93,7 @@ void UModularActivatableWidget::NativeOnActivated()
 
 	bClosing = false;
 	AwaitedAnimation.Reset();
+	AfterClosing = TFunction<void()>();
 	SetPauseRequested(bPauseGame);
 	if (OpenSound)
 	{
@@ -47,6 +114,7 @@ void UModularActivatableWidget::NativeOnDeactivated()
 	// The reveal stops where it got to: hidden after a close, and cut short by anything else. The next opening starts it afresh.
 	FTSTicker::GetCoreTicker().RemoveTicker(TickHandle);
 	TickHandle = FTSTicker::FDelegateHandle();
+	ModularUI::CancelCallWhenDrawn(DrawnHandle);
 	Reveal.Stop();
 	if (const UWidgetAnimation* Awaited = AwaitedAnimation.Get())
 	{
@@ -54,8 +122,10 @@ void UModularActivatableWidget::NativeOnDeactivated()
 	}
 	AwaitedAnimation.Reset();
 
+	// Closed some other way while closing, such as at once: what was to happen after the close doesn't.
 	const bool bWasClosing = bClosing;
 	bClosing = false;
+	AfterClosing = TFunction<void()>();
 	SetPauseRequested(false);
 
 	// A close that played made its sound as it started.
@@ -84,6 +154,11 @@ bool UModularActivatableWidget::NativeOnHandleBackAction()
 
 void UModularActivatableWidget::CloseWidget()
 {
+	CloseWidgetThen(TFunction<void()>());
+}
+
+void UModularActivatableWidget::CloseWidgetThen(TFunction<void()>&& AfterClose)
+{
 	if (bClosing || !IsActivated())
 	{
 		return;
@@ -91,6 +166,8 @@ void UModularActivatableWidget::CloseWidget()
 
 	// From here it takes no more input, and the world starts again, so it comes back while this goes.
 	bClosing = true;
+	AfterClosing = MoveTemp(AfterClose);
+	ModularUI::CancelCallWhenDrawn(DrawnHandle);
 	SetPauseRequested(false);
 	if (CloseSound)
 	{
@@ -141,6 +218,30 @@ void UModularActivatableWidget::CloseWidgetNow()
 	}
 }
 
+void UModularActivatableWidget::FocusWhenDrawn(UWidget* Target)
+{
+	CallWhenDrawn(Target, [](UWidget& Drawn)
+	{
+		Drawn.SetFocus();
+	});
+}
+
+void UModularActivatableWidget::CallWhenDrawn(UWidget* Target, TFunction<void(UWidget&)>&& Callback)
+{
+	ModularUI::CallWhenDrawn(DrawnHandle, *this, Target, [this, Callback = MoveTemp(Callback)](UWidget& Drawn)
+	{
+		if (IsActivated() && !bClosing)
+		{
+			Callback(Drawn);
+		}
+	});
+}
+
+void UModularActivatableWidget::SetTransitionOrigin(const FVector2D& Away, const FVector2D& Corner)
+{
+	Reveal.SetOrigin(Away, Corner);
+}
+
 void UModularActivatableWidget::StartTicker()
 {
 	if (TickHandle.IsValid() || (!Reveal.IsPlaying() && !AwaitedAnimation.IsValid()))
@@ -172,7 +273,19 @@ void UModularActivatableWidget::FinishClosingWhenDone()
 {
 	if (bClosing && !Reveal.IsPlaying() && !AwaitedAnimation.IsValid())
 	{
-		DeactivateWidget();
+		FinishClosing();
+	}
+}
+
+void UModularActivatableWidget::FinishClosing()
+{
+	// Deactivating forgets what was to happen after, so it's taken first.
+	TFunction<void()> AfterClose = MoveTemp(AfterClosing);
+	AfterClosing = TFunction<void()>();
+	DeactivateWidget();
+	if (AfterClose)
+	{
+		AfterClose();
 	}
 }
 
@@ -215,3 +328,5 @@ FReply UModularActivatableWidget::NativeOnPreviewKeyDown(const FGeometry& InGeom
 	}
 	return Super::NativeOnPreviewKeyDown(InGeometry, InKeyEvent);
 }
+
+#undef LOCTEXT_NAMESPACE

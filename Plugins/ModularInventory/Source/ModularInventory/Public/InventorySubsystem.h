@@ -270,6 +270,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
 	bool SortContainer(FInventoryContainerHandle Container, EInventoryError& OutError);
 
+	/** Sorts a grid or list as Settings say, such as by category, then by name. A grid puts each item on the first spot that fits. All or nothing. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Containers")
+	bool SortContainerBy(FInventoryContainerHandle Container, const FInventorySortSettings& Settings, EInventoryError& OutError);
+
 	// Operations
 	/** Fills compatible stacks first, then free spots. With Allow Partial, adds what fits; otherwise all or nothing. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Operations")

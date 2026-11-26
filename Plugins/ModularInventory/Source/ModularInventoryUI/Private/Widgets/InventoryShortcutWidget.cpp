@@ -10,6 +10,7 @@
 #include "Shortcuts/InventoryShortcutComponent.h"
 #include "Widgets/InventoryDragDropOperation.h"
 #include "Widgets/InventoryItemWidget.h"
+#include "Widgets/ModularInputKeyWidget.h"
 
 void UInventoryShortcutWidget::NativeOnInitialized()
 {
@@ -29,8 +30,7 @@ void UInventoryShortcutWidget::NativeConstruct()
 	}
 	RegistryListener.Bind(this, FOnInventoryRegistryChanged::FDelegate::CreateWeakLambda(this, [this](const FInventoryChangeSet& Changes)
 	{
-		const FInventoryItemHandle Item = GetSlotItem();
-		if (Item.IsSet() && Changes.Items.Contains(Item))
+		if (ShouldRefreshFor(Changes))
 		{
 			Refresh();
 		}
@@ -51,6 +51,7 @@ void UInventoryShortcutWidget::NativeDestruct()
 	{
 		Previous->OnShortcutsChanged.RemoveDynamic(this, &ThisClass::HandleShortcutsChanged);
 		Previous->OnShortcutActivated.RemoveDynamic(this, &ThisClass::HandleShortcutActivated);
+		Previous->OnShortcutSelected.RemoveDynamic(this, &ThisClass::HandleShortcutSelected);
 	}
 	Shortcuts.Reset();
 
@@ -68,6 +69,7 @@ void UInventoryShortcutWidget::BindShortcuts(UInventoryShortcutComponent* NewSho
 	{
 		Previous->OnShortcutsChanged.RemoveDynamic(this, &ThisClass::HandleShortcutsChanged);
 		Previous->OnShortcutActivated.RemoveDynamic(this, &ThisClass::HandleShortcutActivated);
+		Previous->OnShortcutSelected.RemoveDynamic(this, &ThisClass::HandleShortcutSelected);
 	}
 
 	Shortcuts = NewShortcuts;
@@ -75,6 +77,7 @@ void UInventoryShortcutWidget::BindShortcuts(UInventoryShortcutComponent* NewSho
 	{
 		NewShortcuts->OnShortcutsChanged.AddUniqueDynamic(this, &ThisClass::HandleShortcutsChanged);
 		NewShortcuts->OnShortcutActivated.AddUniqueDynamic(this, &ThisClass::HandleShortcutActivated);
+		NewShortcuts->OnShortcutSelected.AddUniqueDynamic(this, &ThisClass::HandleShortcutSelected);
 	}
 	Refresh();
 }
@@ -114,6 +117,17 @@ void UInventoryShortcutWidget::HandleShortcutActivated(int32 ActivatedSlot, FInv
 	}
 }
 
+void UInventoryShortcutWidget::HandleShortcutSelected(int32 SelectedSlot, FInventoryItemHandle Item)
+{
+	Refresh();
+}
+
+bool UInventoryShortcutWidget::ShouldRefreshFor(const FInventoryChangeSet& Changes) const
+{
+	const FInventoryItemHandle Item = GetSlotItem();
+	return Item.IsSet() && Changes.Items.Contains(Item);
+}
+
 void UInventoryShortcutWidget::Refresh()
 {
 	const UInventoryShortcutComponent* Component = Shortcuts.Get();
@@ -139,12 +153,28 @@ void UInventoryShortcutWidget::Refresh()
 	{
 		EmptyMarker->SetVisibility(Item.IsSet() ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
 	}
+	if (KeyWidget)
+	{
+		KeyWidget->SetInputAction(Component && ShownSlot != INDEX_NONE ? Component->GetSlotInputAction(ShownSlot) : nullptr);
+	}
 
+	const bool bShouldSelect = Component && ShownSlot != INDEX_NONE && Component->GetSelectedSlot() == ShownSlot;
+	if (SelectedMarker)
+	{
+		SelectedMarker->SetVisibility(bShouldSelect ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+
+	NativeOnRefresh(Item);
 	if (Item != ShownItem || !bShownOnce)
 	{
 		ShownItem = Item;
 		bShownOnce = true;
 		OnShortcutChanged(Item);
+	}
+	if (bShouldSelect != bShownSelected)
+	{
+		bShownSelected = bShouldSelect;
+		OnSelectedChanged(bShouldSelect);
 	}
 }
 
@@ -165,6 +195,7 @@ bool UInventoryShortcutWidget::AssignHeldItem()
 	const FInventoryItemHandle Held = Interaction->GetHeldItem();
 	if (!Component->AssignItem(GetSlotIndex(), Held))
 	{
+		NativeOnAssignRefused(Held);
 		OnAssignRefused(Held);
 		return false;
 	}

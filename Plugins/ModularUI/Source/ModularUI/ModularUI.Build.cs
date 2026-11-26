@@ -6,6 +6,8 @@ public class ModularUI : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "Slate", "SlateCore", "UMG", "CommonUI", "DeveloperSettings" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "Slate", "SlateCore", "UMG", "CommonUI", "CommonInput", "DeveloperSettings", "GameplayTags", "EnhancedInput" });
+
+		PrivateDependencyModuleNames.AddRange(new string[] { "ApplicationCore" });
 	}
 }

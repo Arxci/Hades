@@ -4,10 +4,16 @@
 #include "GameFramework/PlayerController.h"
 
 #include "Data/InventoryCapacityUpgrade.h"
+#include "Data/InventoryEquipRules.h"
 #include "Data/InventoryItemDefinition.h"
+#include "Data/InventoryItemUse.h"
+#include "Equipment/InventoryEquipmentComponent.h"
 #include "InventoryComponent.h"
 #include "InventorySubsystem.h"
 #include "InventoryUISubsystem.h"
+#include "Shortcuts/InventoryShortcutComponent.h"
+#include "Widgets/InventoryScreenWidget.h"
+#include "Widgets/InventoryShortcutMenuWidget.h"
 
 #define LOCTEXT_NAMESPACE "InventoryItemActions"
 
@@ -17,6 +23,17 @@ namespace
 	UInventoryComponent* FindPlayerInventory(const FInventoryItemActionContext& Context)
 	{
 		return Context.Player ? UInventoryComponent::FindInventoryComponent(Context.Player->GetPawn()) : nullptr;
+	}
+
+	UInventoryEquipmentComponent* FindPlayerEquipment(const FInventoryItemActionContext& Context)
+	{
+		return Context.Player ? UInventoryEquipmentComponent::FindEquipmentComponent(Context.Player->GetPawn()) : nullptr;
+	}
+
+	const UInventoryItemDefinition* FindDefinition(const UObject* ContextObject, FInventoryItemHandle Item)
+	{
+		const UInventorySubsystem* Inventory = UInventorySubsystem::Get(ContextObject);
+		return Inventory ? Inventory->GetItemDefinition(Item) : nullptr;
 	}
 }
 
@@ -145,6 +162,146 @@ void UInventoryItemAction_ApplyCapacityUpgrade::Run_Implementation(const FInvent
 	{
 		EInventoryError Error = EInventoryError::None;
 		Inventory->ApplyCapacityUpgrade(Context.Item, Error);
+	}
+}
+
+// Use
+UInventoryItemAction_Use::UInventoryItemAction_Use()
+{
+	DisplayName = LOCTEXT("UseName", "Use");
+	Description = LOCTEXT("UseDescription", "Use the item.");
+}
+
+bool UInventoryItemAction_Use::AppliesTo(const FInventoryItemActionContext& Context) const
+{
+	const UInventoryItemDefinition* Definition = FindDefinition(GetContextObject(Context), Context.Item);
+	return Super::AppliesTo(Context) && Definition && Definition->FindFragment<FInventoryItemUse>();
+}
+
+bool UInventoryItemAction_Use::CanRun_Implementation(const FInventoryItemActionContext& Context) const
+{
+	const UInventoryComponent* Inventory = FindPlayerInventory(Context);
+	return Inventory && Inventory->CanUseItem(Context.Item);
+}
+
+void UInventoryItemAction_Use::Run_Implementation(const FInventoryItemActionContext& Context)
+{
+	if (UInventoryComponent* Inventory = FindPlayerInventory(Context))
+	{
+		Inventory->UseItem(Context.Item);
+	}
+}
+
+// Drop
+UInventoryItemAction_Drop::UInventoryItemAction_Drop()
+{
+	DisplayName = LOCTEXT("DropName", "Drop");
+	Description = LOCTEXT("DropDescription", "Drop the item here.");
+	Prompt = EInventoryActionPrompt::Confirm;
+	PromptText = LOCTEXT("DropPrompt", "Drop {Item}?");
+}
+
+bool UInventoryItemAction_Drop::CanRun_Implementation(const FInventoryItemActionContext& Context) const
+{
+	const UInventoryComponent* Inventory = FindPlayerInventory(Context);
+	return Inventory && Inventory->CanDropItem(Context.Item);
+}
+
+void UInventoryItemAction_Drop::Run_Implementation(const FInventoryItemActionContext& Context)
+{
+	// A count only when the prompt asked how many; otherwise the whole stack.
+	if (UInventoryComponent* Inventory = FindPlayerInventory(Context))
+	{
+		Inventory->DropItem(Context.Item, Prompt == EInventoryActionPrompt::Quantity ? Context.Count : 0);
+	}
+}
+
+// Equip
+UInventoryItemAction_Equip::UInventoryItemAction_Equip()
+{
+	DisplayName = LOCTEXT("EquipName", "Equip");
+	Description = LOCTEXT("EquipDescription", "Equip the item.");
+	bKeepsMenuOpen = true;
+}
+
+bool UInventoryItemAction_Equip::AppliesTo(const FInventoryItemActionContext& Context) const
+{
+	const UInventoryItemDefinition* Definition = FindDefinition(GetContextObject(Context), Context.Item);
+	return Super::AppliesTo(Context) && Definition && Definition->EquipRules;
+}
+
+FGameplayTag UInventoryItemAction_Equip::ChooseSlot(const FInventoryItemActionContext& Context) const
+{
+	const UInventoryEquipmentComponent* Equipment = FindPlayerEquipment(Context);
+	return Slot.IsValid() || !Equipment ? Slot : Equipment->FindSlotFor(Context.Item);
+}
+
+bool UInventoryItemAction_Equip::CanRun_Implementation(const FInventoryItemActionContext& Context) const
+{
+	const UInventoryEquipmentComponent* Equipment = FindPlayerEquipment(Context);
+	const UInventoryComponent* Inventory = FindPlayerInventory(Context);
+	const UInventoryItemDefinition* Definition = FindDefinition(GetContextObject(Context), Context.Item);
+	const UInventoryEquipRules* Rules = Definition ? Definition->EquipRules.Get() : nullptr;
+	const FGameplayTag ChosenSlot = ChooseSlot(Context);
+	return Equipment && Inventory && Rules && Inventory->OwnsItem(Context.Item) && !Equipment->IsEquipped(Context.Item) && ChosenSlot.IsValid() && Rules->AllowsSlot(ChosenSlot);
+}
+
+void UInventoryItemAction_Equip::Run_Implementation(const FInventoryItemActionContext& Context)
+{
+	UInventoryEquipmentComponent* Equipment = FindPlayerEquipment(Context);
+	const FGameplayTag ChosenSlot = ChooseSlot(Context);
+	EInventoryError Error = EInventoryError::None;
+	if (Equipment && bEquipInPlace)
+	{
+		Equipment->EquipInPlace(Context.Item, ChosenSlot, Error);
+	}
+	else if (Equipment)
+	{
+		Equipment->EquipItem(Context.Item, ChosenSlot, Error);
+	}
+}
+
+// Unequip
+UInventoryItemAction_Unequip::UInventoryItemAction_Unequip()
+{
+	DisplayName = LOCTEXT("UnequipName", "Unequip");
+	Description = LOCTEXT("UnequipDescription", "Take the item off.");
+	bKeepsMenuOpen = true;
+}
+
+bool UInventoryItemAction_Unequip::CanRun_Implementation(const FInventoryItemActionContext& Context) const
+{
+	const UInventoryEquipmentComponent* Equipment = FindPlayerEquipment(Context);
+	return Equipment && Equipment->IsEquipped(Context.Item);
+}
+
+void UInventoryItemAction_Unequip::Run_Implementation(const FInventoryItemActionContext& Context)
+{
+	EInventoryError Error = EInventoryError::None;
+	if (UInventoryEquipmentComponent* Equipment = FindPlayerEquipment(Context))
+	{
+		Equipment->UnequipItem(Context.Item, Error);
+	}
+}
+
+// Assign Shortcut
+UInventoryItemAction_AssignShortcut::UInventoryItemAction_AssignShortcut()
+{
+	DisplayName = LOCTEXT("AssignShortcutName", "Shortcut");
+	Description = LOCTEXT("AssignShortcutDescription", "Put the item on a shortcut.");
+}
+
+bool UInventoryItemAction_AssignShortcut::CanRun_Implementation(const FInventoryItemActionContext& Context) const
+{
+	const UInventoryShortcutMenuWidget* MenuDefaults = MenuClass ? GetDefault<UInventoryShortcutMenuWidget>(MenuClass) : nullptr;
+	return MenuDefaults && Context.Screen && MenuDefaults->CanOpenFor(Context);
+}
+
+void UInventoryItemAction_AssignShortcut::Run_Implementation(const FInventoryItemActionContext& Context)
+{
+	if (Context.Screen)
+	{
+		Context.Screen->OpenItemMenu(Context.Item, MenuClass);
 	}
 }
 

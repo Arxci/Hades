@@ -2,37 +2,25 @@
 
 #include "CommonLocalPlayer.h"
 #include "Engine/GameInstance.h"
-#include "Framework/Application/NavigationConfig.h"
-#include "Framework/Application/SlateApplication.h"
 #include "GameFramework/HUD.h"
 #include "GameFramework/PlayerController.h"
 #include "GameUIPolicy.h"
 #include "PrimaryGameLayout.h"
 
+#include "Layers/ModularUISubsystem.h"
+
 namespace
 {
-	/**
-	 * By default Space presses the focused button like Enter, which would beat any UI action bound to it, and Tab and the arrow keys
-	 * move focus. Hades doesn't do keyboard navigation: Tab is a game key, such as for the inventory, and only the gamepad's D-pad and
-	 * stick move focus.
-	 */
-	class FHadesNavigationConfig : public FNavigationConfig
+	/** The layer of CommonGame's root layout with the tag, for Modular UI, for any game instance's player. */
+	UCommonActivatableWidgetContainerBase* FindRootLayoutLayer(const ULocalPlayer* LocalPlayer, FGameplayTag LayerTag)
 	{
-	public:
-		FHadesNavigationConfig()
-		{
-			bTabNavigation = false;
-			for (const FKey& ArrowKey : { EKeys::Left, EKeys::Right, EKeys::Up, EKeys::Down })
-			{
-				KeyEventRules.Remove(ArrowKey);
-			}
-		}
-
-		virtual EUINavigationAction GetNavigationActionFromKey(const FKeyEvent& InKeyEvent) const override
-		{
-			return InKeyEvent.GetKey() == EKeys::SpaceBar ? EUINavigationAction::Invalid : FNavigationConfig::GetNavigationActionFromKey(InKeyEvent);
-		}
-	};
+		const UCommonLocalPlayer* CommonPlayer = Cast<UCommonLocalPlayer>(LocalPlayer);
+		const UGameInstance* GameInstance = CommonPlayer ? CommonPlayer->GetGameInstance() : nullptr;
+		const UGameUIManagerSubsystem* Manager = GameInstance ? GameInstance->GetSubsystem<UGameUIManagerSubsystem>() : nullptr;
+		const UGameUIPolicy* Policy = Manager ? Manager->GetCurrentUIPolicy() : nullptr;
+		UPrimaryGameLayout* Layout = Policy ? Policy->GetRootLayout(CommonPlayer) : nullptr;
+		return Layout ? Layout->GetLayerWidget(LayerTag) : nullptr;
+	}
 }
 
 void UHadesUIManagerSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -41,10 +29,10 @@ void UHadesUIManagerSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 	TickHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateUObject(this, &ThisClass::Tick), 0.0f);
 
-	if (FSlateApplication::IsInitialized())
+	// It finds each player's own root layout, so it's bound once and serves every game instance, such as several in Play In Editor.
+	if (!UModularUISubsystem::OnFindLayer().IsBound())
 	{
-		PreviousNavigationConfig = FSlateApplication::Get().GetNavigationConfig();
-		FSlateApplication::Get().SetNavigationConfig(MakeShared<FHadesNavigationConfig>());
+		UModularUISubsystem::OnFindLayer().BindStatic(&FindRootLayoutLayer);
 	}
 }
 
@@ -53,12 +41,6 @@ void UHadesUIManagerSubsystem::Deinitialize()
 	Super::Deinitialize();
 
 	FTSTicker::GetCoreTicker().RemoveTicker(TickHandle);
-
-	if (FSlateApplication::IsInitialized() && PreviousNavigationConfig)
-	{
-		FSlateApplication::Get().SetNavigationConfig(PreviousNavigationConfig.ToSharedRef());
-	}
-	PreviousNavigationConfig.Reset();
 }
 
 bool UHadesUIManagerSubsystem::Tick(float DeltaTime)

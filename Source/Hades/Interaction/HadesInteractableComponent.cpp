@@ -8,7 +8,7 @@
 #include "Hades/Hades.h"
 #include "Hades/HadesCollisionChannels.h"
 #include "Hades/HadesGameplayTags.h"
-#include "Hades/UI/WorldMarker/HadesWorldMarker.h"
+#include "WorldMarkers/ModularWorldMarker.h"
 
 UHadesInteractableComponent::UHadesInteractableComponent()
 {
@@ -104,6 +104,7 @@ void UHadesInteractableComponent::SetInteractionEnabled(bool bEnabled)
 	{
 		CancelInteraction();
 	}
+	OnPromptChanged.Broadcast();
 }
 
 float UHadesInteractableComponent::GetElapsedTime() const
@@ -119,6 +120,7 @@ void UHadesInteractableComponent::SetInteractionText(const FText& NewText)
 	{
 		WorldMarker->RefreshWidget();
 	}
+	OnPromptChanged.Broadcast();
 }
 
 void UHadesInteractableComponent::SetDisabledText(const FText& NewText)
@@ -129,6 +131,24 @@ void UHadesInteractableComponent::SetDisabledText(const FText& NewText)
 	{
 		WorldMarker->RefreshWidget();
 	}
+	OnPromptChanged.Broadcast();
+}
+
+void UHadesInteractableComponent::SetPromptTitle(const FText& NewTitle)
+{
+	PromptTitle = NewTitle;
+	OnPromptChanged.Broadcast();
+}
+
+void UHadesInteractableComponent::SetPromptIcon(TSoftObjectPtr<UTexture2D> NewIcon)
+{
+	PromptIcon = NewIcon;
+	OnPromptChanged.Broadcast();
+}
+
+FText UHadesInteractableComponent::GetPromptText() const
+{
+	return !bInteractionEnabled && !DisabledText.IsEmpty() ? DisabledText : InteractionText;
 }
 
 void UHadesInteractableComponent::CompleteInteraction()
@@ -262,7 +282,7 @@ void UHadesInteractableComponent::InitializeWorldMarker()
 	}
 
 	// Registered with the player's marker manager by the interactor while nearby.
-	WorldMarker = NewObject<UHadesWorldMarker>(this);
+	WorldMarker = NewObject<UModularWorldMarker>(this);
 	WorldMarker->SetAnchor(MarkerAnchor);
 	WorldMarker->SetWidgetClass(MarkerWidgetClass);
 	WorldMarker->SetContextObject(this);

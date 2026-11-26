@@ -13,14 +13,17 @@
 class APawn;
 class UInventoryItemWidget;
 class UInventoryShortcutComponent;
+class UModularInputKeyWidget;
 class UTextBlock;
+struct FInventoryChangeSet;
 
 
 /**
  * One slot of the owning player's Inventory Shortcut Component, such as on a HUD's shortcut bar or an inventory screen: the slot's item,
- * its name and number, and a way to fill it. While an item is held, clicking the slot or pressing Accept on it puts the item on the slot
- * and puts the held item back where it was, as the slot only points at it; dropping a dragged item on the slot does the same. A right-click
- * empties the slot. It's a Common UI button: style it like the cells.
+ * its name, number and key, whether it's the selected slot, and a way to fill it. While an item is held, clicking the slot or pressing
+ * Accept on it puts the item on the slot and puts the held item back where it was, as the slot only points at it; dropping a dragged item
+ * on the slot does the same. A right-click empties the slot. It's a Common UI button: style it like the cells.
+ * Subclass it in C++ to show more of the slot's item, such as a gun's rounds, with Native On Refresh.
  */
 UCLASS(Abstract)
 class MODULARINVENTORYUI_API UInventoryShortcutWidget : public UCommonButtonBase
@@ -65,6 +68,19 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Shortcut")
 	void OnAssignRefused(FInventoryItemHandle Item);
 
+	/** The slot became the selected one, or stopped being it, such as to light it on a hotbar. */
+	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Shortcut")
+	void OnSelectedChanged(bool bIsSelected);
+
+	/** After the slot was shown again, for C++ subclasses to show more of its item. */
+	virtual void NativeOnRefresh(FInventoryItemHandle Item) {}
+
+	/** Before On Assign Refused, for C++ subclasses. */
+	virtual void NativeOnAssignRefused(FInventoryItemHandle Item) {}
+
+	/** Whether a change in the inventory changes what the slot shows. By default, only a change to the slot's own item does. */
+	virtual bool ShouldRefreshFor(const FInventoryChangeSet& Changes) const;
+
 	/** Which slot of the component it shows, 0 for the first. */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Shortcut", meta = (ClampMin = "0"))
 	int32 SlotIndex = 0;
@@ -93,6 +109,14 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Shortcut", meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> EmptyMarker;
 
+	/** The key the player has mapped to the slot's input action, which follows rebinding. */
+	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Shortcut", meta = (BindWidgetOptional))
+	TObjectPtr<UModularInputKeyWidget> KeyWidget;
+
+	/** Shown only while the slot is the selected one, such as a frame around a hotbar's slot. */
+	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Shortcut", meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> SelectedMarker;
+
 private:
 	UFUNCTION()
 	void HandlePawnChanged(APawn* OldPawn, APawn* NewPawn);
@@ -103,17 +127,26 @@ private:
 	UFUNCTION()
 	void HandleShortcutActivated(int32 ActivatedSlot, FInventoryItemHandle Item);
 
+	UFUNCTION()
+	void HandleShortcutSelected(int32 SelectedSlot, FInventoryItemHandle Item);
+
 	void HandleClicked();
 
 	/** Puts the held item on the slot and puts it back where it was. False when nothing is held or the slot doesn't take it. */
 	bool AssignHeldItem();
 
 	void BindShortcuts(UInventoryShortcutComponent* NewShortcuts);
+
+protected:
+	/** Shows the slot as it is now. */
 	void Refresh();
+
+private:
 
 	TWeakObjectPtr<UInventoryShortcutComponent> Shortcuts;
 	FInventoryItemHandle ShownItem;
 	bool bShownOnce = false;
+	bool bShownSelected = false;
 
 	/** The item's state, such as ammo, changes without the slots changing. */
 	FInventoryRegistryListener RegistryListener;

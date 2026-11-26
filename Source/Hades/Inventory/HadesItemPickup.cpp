@@ -10,6 +10,7 @@
 #include "Hades/Hades.h"
 #include "Hades/HadesGameplayTags.h"
 #include "Hades/Interaction/HadesInteractableComponent.h"
+#include "Hades/Inventory/HadesInventoryComponent.h"
 #include "Hades/Inventory/HadesQuickSlotComponent.h"
 #include "Hades/Player/HadesPlayerController.h"
 
@@ -86,11 +87,13 @@ void AHadesItemPickup::HandleInteractionCompleted(AActor* Interactor)
 	}
 
 	// A pouch is a capacity upgrade the taker applies as it's taken: it grows the inventory and is used up, so it never needs room.
+	// New things to hold go on a free quick slot, as weapons do when they're found.
 	UHadesQuickSlotComponent* QuickSlots = Interactor->FindComponentByClass<UHadesQuickSlotComponent>();
+	const UHadesInventoryComponent* HadesTaker = Cast<UHadesInventoryComponent>(Taker);
 	for (const FInventoryItemHandle& Item : GetItems())
 	{
 		EInventoryError Error;
-		if (Taker->TakeItem(Item, 0, true, Error) && QuickSlots)
+		if (Taker->TakeItem(Item, 0, true, Error) && QuickSlots && HadesTaker && HadesTaker->CanDraw(Item))
 		{
 			QuickSlots->AssignToFreeSlot(Item);
 		}
@@ -187,12 +190,18 @@ void AHadesItemPickup::ShowFirstItem()
 		return;
 	}
 
+	// The prompt names the item and shows its icon, as the player looks at it.
+	const UInventoryItemCosmetics* Cosmetics = Definition->Cosmetics;
 	if (!Definition->DisplayName.IsEmpty())
 	{
-		Interactable->SetInteractionText(FText::Format(LOCTEXT("TakePrompt", "Take {0}"), Definition->DisplayName));
+		Interactable->SetInteractionText(LOCTEXT("TakePrompt", "Take"));
+		Interactable->SetPromptTitle(Definition->DisplayName);
+	}
+	if (Cosmetics && !Cosmetics->Icon.IsNull())
+	{
+		Interactable->SetPromptIcon(Cosmetics->Icon);
 	}
 
-	const UInventoryItemCosmetics* Cosmetics = Definition->Cosmetics;
 	if (Mesh->GetStaticMesh() || !Cosmetics || Cosmetics->WorldMesh.IsNull())
 	{
 		return;

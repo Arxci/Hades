@@ -10,8 +10,9 @@
 
 class UPrimitiveComponent;
 class USceneComponent;
-class UHadesWorldMarker;
-class UHadesWorldMarkerWidget;
+class UModularWorldMarker;
+class UModularWorldMarkerWidget;
+class UTexture2D;
 
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FHadesInteractableStateTagChangedSignature, FGameplayTag, Tag, bool, bAdded);
@@ -19,7 +20,11 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FHadesInteractionProgressedSignature
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FHadesInteractionSignature, AActor*, Interactor);
 
 
-/** Makes its actor interactable and shows a world marker while the player is nearby. */
+/**
+ * Makes its actor interactable and shows a world marker while the player is nearby. While the player looks at it, the interactor shows its
+ * prompt, its Prompt Title, Prompt Icon and interaction text, as a message on the interactor's Prompt Channel, such as a banner near the
+ * bottom of the screen naming the item the player can pick up.
+ */
 UCLASS(Blueprintable, ClassGroup = (Interaction), meta = (BlueprintSpawnableComponent))
 class HADES_API UHadesInteractableComponent : public UActorComponent
 {
@@ -67,6 +72,27 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Interaction")
 	FText GetDisabledText() const { return DisabledText; }
 
+	/** What the prompt names, such as the item a pickup holds. */
+	UFUNCTION(BlueprintCallable, Category = "Interaction")
+	void SetPromptTitle(const FText& NewTitle);
+
+	UFUNCTION(BlueprintPure, Category = "Interaction")
+	FText GetPromptTitle() const { return PromptTitle; }
+
+	/** What the prompt shows beside its title, such as the icon of the item a pickup holds. */
+	UFUNCTION(BlueprintCallable, Category = "Interaction")
+	void SetPromptIcon(TSoftObjectPtr<UTexture2D> NewIcon);
+
+	UFUNCTION(BlueprintPure, Category = "Interaction")
+	TSoftObjectPtr<UTexture2D> GetPromptIcon() const { return PromptIcon; }
+
+	/** What the prompt says it does: the interaction text, or the disabled text while interaction is off and there is one. */
+	UFUNCTION(BlueprintPure, Category = "Interaction")
+	FText GetPromptText() const;
+
+	/** The prompt's title, icon or text changed, or interaction was turned on or off, so a prompt showing it shows it again. */
+	FSimpleMulticastDelegate OnPromptChanged;
+
 	// Nearby and focus
 	UFUNCTION(BlueprintNativeEvent, Category = "Interaction")
 	void OnNearbyBegin();
@@ -89,7 +115,7 @@ public:
 
 	/** Null when there is no marker widget class. */
 	UFUNCTION(BlueprintPure, Category = "Interaction")
-	UHadesWorldMarker* GetWorldMarker() const { return WorldMarker; }
+	UModularWorldMarker* GetWorldMarker() const { return WorldMarker; }
 
 	UFUNCTION(BlueprintPure, Category = "Interaction")
 	UPrimitiveComponent* GetFocusTarget() const { return FocusTarget; }
@@ -141,6 +167,14 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Interaction|Prompt")
 	FText DisabledText;
 
+	/** What the prompt names while the player looks at it, such as "Green Herb". A pickup sets it to the item it holds. */
+	UPROPERTY(EditAnywhere, Category = "Interaction|Prompt")
+	FText PromptTitle;
+
+	/** Shown beside Prompt Title, such as the item's icon. A pickup sets it to the item it holds. */
+	UPROPERTY(EditAnywhere, Category = "Interaction|Prompt")
+	TSoftObjectPtr<UTexture2D> PromptIcon;
+
 	/** The collision the player looks at to focus this. Defaults to the actor's root. */
 	UPROPERTY(EditAnywhere, Category = "Interaction")
 	FComponentPicker FocusComponent;
@@ -150,7 +184,7 @@ protected:
 	FComponentPicker MarkerComponent;
 
 	UPROPERTY(EditAnywhere, Category = "Interaction|Marker")
-	TSoftClassPtr<UHadesWorldMarkerWidget> MarkerWidgetClass;
+	TSoftClassPtr<UModularWorldMarkerWidget> MarkerWidgetClass;
 
 	/** When false, the marker only shows while this is focused. */
 	UPROPERTY(EditAnywhere, Category = "Interaction|Marker")
@@ -190,6 +224,6 @@ private:
 	void ResolveMarkerComponent();
 
 	UPROPERTY(Transient)
-	TObjectPtr<UHadesWorldMarker> WorldMarker;
+	TObjectPtr<UModularWorldMarker> WorldMarker;
 	void InitializeWorldMarker();
 };

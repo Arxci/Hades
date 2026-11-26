@@ -7,6 +7,8 @@
 
 #include "ModularUISettings.generated.h"
 
+class UModularRootLayout;
+
 
 /** Project-wide Modular UI settings, under Project Settings > Plugins > Modular UI. Saved to DefaultGame.ini. */
 UCLASS(config = Game, defaultconfig, meta = (DisplayName = "Modular UI"))
@@ -20,6 +22,41 @@ public:
 	/** Whether Paused Look changes anything: at least one of its settings is ticked, or it has a blendable such as a post process material. */
 	bool HasPausedLook() const;
 
+	/** Whether any navigation setting differs from Unreal's own, so Modular UI sets the navigation up while the game runs. */
+	bool ChangesNavigation() const { return !bTabNavigation || !bArrowKeyNavigation || !bSpaceBarAccepts; }
+
+	// Layers
+	/**
+	 * The widget each local player's UI is laid out in, made and added to their screen once they have a player controller: a Widget
+	 * Blueprint whose parent is Modular Root Layout, holding a Modular Layer Stack for each layer, such as Game, Game Menu, Menu and Modal.
+	 * None makes no root layout, such as when another plugin, like Common Game, makes one; register its layers with the Modular UI
+	 * Subsystem, or place Modular Layer Stacks in it, so Modular UI can push onto them.
+	 */
+	UPROPERTY(config, EditAnywhere, Category = "Layers")
+	TSoftClassPtr<UModularRootLayout> RootLayoutClass;
+
+	/** The Z Order the root layout is added to the player's screen with. Above whatever else the game adds, so menus cover it. */
+	UPROPERTY(config, EditAnywhere, Category = "Layers")
+	int32 RootLayoutZOrder = 1000;
+
+	/** The root layout is collapsed while the player's HUD is hidden, such as with the ShowHUD console command or for a cinematic. */
+	UPROPERTY(config, EditAnywhere, Category = "Layers")
+	bool bHideRootLayoutWithHUD = true;
+
+	// Navigation. Unreal's defaults are all on; turning any off replaces the navigation setup while the game runs, and puts it back after.
+	/** Tab and Shift+Tab move focus between widgets. Off, the Tab key is free for the game, such as to open an inventory. */
+	UPROPERTY(config, EditAnywhere, Category = "Navigation")
+	bool bTabNavigation = true;
+
+	/** The arrow keys move focus between widgets. Off, only the gamepad, and the keys the game binds, move it. */
+	UPROPERTY(config, EditAnywhere, Category = "Navigation")
+	bool bArrowKeyNavigation = true;
+
+	/** The space bar presses the focused button, as Enter does. Off, the space bar is free for UI actions bound to it. */
+	UPROPERTY(config, EditAnywhere, Category = "Navigation")
+	bool bSpaceBarAccepts = true;
+
+	// Pause
 	/**
 	 * The look the world fades to while a menu pauses it, such as Color Grading > Global > Saturation at 0 to grey it out. Tick only the
 	 * settings it should change. The Pause Subsystem shows it with a post process volume of its own, so nothing needs adding to an actor.

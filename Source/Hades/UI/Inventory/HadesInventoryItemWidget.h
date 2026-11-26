@@ -6,8 +6,8 @@
 
 #include "HadesInventoryItemWidget.generated.h"
 
-class UHadesInputKeyWidget;
 class UHadesQuickSlotComponent;
+class UModularInputKeyWidget;
 class UTextBlock;
 
 
@@ -37,7 +37,7 @@ protected:
 
 	/** The key the player has bound to the item's quick slot, which follows rebinding. It collapses itself while the item has no quick slot. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))
-	TObjectPtr<UHadesInputKeyWidget> QuickSlotKeyWidget;
+	TObjectPtr<UModularInputKeyWidget> QuickSlotKeyWidget;
 
 	/** The number of the quick slot the item is on, 1 for the first, such as on a badge in the corner. Collapsed while it has none. */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item", meta = (BindWidgetOptional))

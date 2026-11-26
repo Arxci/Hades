@@ -6,7 +6,8 @@
 #include "Hades/HadesGameplayTags.h"
 #include "Hades/Inventory/HadesInventoryComponent.h"
 #include "Hades/Inventory/HadesQuickSlotComponent.h"
-#include "Hades/UI/Foundation/HadesInputKeyWidget.h"
+
+#include "Widgets/ModularInputKeyWidget.h"
 
 void UHadesInventoryItemWidget::NativeConstruct()
 {
@@ -14,7 +15,7 @@ void UHadesInventoryItemWidget::NativeConstruct()
 	QuickSlots = Pawn ? Pawn->FindComponentByClass<UHadesQuickSlotComponent>() : nullptr;
 	if (UHadesQuickSlotComponent* Component = QuickSlots.Get())
 	{
-		Component->OnChanged.AddUniqueDynamic(this, &ThisClass::RefreshMarks);
+		Component->OnShortcutsChanged.AddUniqueDynamic(this, &ThisClass::RefreshMarks);
 	}
 
 	Super::NativeConstruct();
@@ -24,7 +25,7 @@ void UHadesInventoryItemWidget::NativeDestruct()
 {
 	if (UHadesQuickSlotComponent* Component = QuickSlots.Get())
 	{
-		Component->OnChanged.RemoveDynamic(this, &ThisClass::RefreshMarks);
+		Component->OnShortcutsChanged.RemoveDynamic(this, &ThisClass::RefreshMarks);
 	}
 	QuickSlots.Reset();
 
@@ -53,7 +54,7 @@ void UHadesInventoryItemWidget::RefreshMarks()
 	else
 	{
 		const UHadesInventoryComponent* Inventory = Cast<UHadesInventoryComponent>(UInventoryComponent::FindInventoryComponent(GetOwningPlayerPawn()));
-		SlotIndex = Component ? Component->FindSlot(GetItem()) : INDEX_NONE;
+		SlotIndex = Component ? Component->FindSlotOfItem(GetItem()) : INDEX_NONE;
 		bInHand = Inventory && Inventory->IsInHand(GetItem());
 	}
 

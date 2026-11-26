@@ -4,10 +4,8 @@
 #include "GameFramework/PlayerController.h"
 
 #include "Hades/Inventory/HadesInventoryComponent.h"
-#include "Hades/Inventory/HadesQuickSlotComponent.h"
 #include "Hades/Player/HadesPlayerController.h"
 #include "Hades/UI/Inventory/HadesInventoryScreen.h"
-#include "Hades/UI/Inventory/HadesQuickSlotMenu.h"
 
 #include "InventorySubsystem.h"
 #include "InventoryUISubsystem.h"
@@ -35,27 +33,6 @@ UHadesInventoryComponent* UHadesItemAction::GetPlayerInventory(const FInventoryI
 {
 	const APawn* Pawn = Context.Player ? Context.Player->GetPawn() : nullptr;
 	return Cast<UHadesInventoryComponent>(UInventoryComponent::FindInventoryComponent(Pawn));
-}
-
-// Use
-UHadesItemAction_Use::UHadesItemAction_Use()
-{
-	DisplayName = LOCTEXT("UseName", "Use");
-	Description = LOCTEXT("UseDescription", "Use the item.");
-}
-
-bool UHadesItemAction_Use::CanRun_Implementation(const FInventoryItemActionContext& Context) const
-{
-	const UHadesInventoryComponent* Inventory = GetPlayerInventory(Context);
-	return Inventory && Inventory->CanUseItem(Context.Item);
-}
-
-void UHadesItemAction_Use::Run_Implementation(const FInventoryItemActionContext& Context)
-{
-	if (UHadesInventoryComponent* Inventory = GetPlayerInventory(Context))
-	{
-		Inventory->UseItem(Context.Item);
-	}
 }
 
 // Equip
@@ -121,29 +98,6 @@ void UHadesItemAction_Combine::Run_Implementation(const FInventoryItemActionCont
 	}
 }
 
-// Discard
-UHadesItemAction_Discard::UHadesItemAction_Discard()
-{
-	DisplayName = LOCTEXT("DiscardName", "Discard");
-	Description = LOCTEXT("DiscardDescription", "Drop the item here.");
-	Prompt = EInventoryActionPrompt::Confirm;
-	PromptText = LOCTEXT("DiscardPrompt", "Discard {Item}?");
-}
-
-bool UHadesItemAction_Discard::CanRun_Implementation(const FInventoryItemActionContext& Context) const
-{
-	const UHadesInventoryComponent* Inventory = GetPlayerInventory(Context);
-	return Inventory && Inventory->CanDiscardItem(Context.Item);
-}
-
-void UHadesItemAction_Discard::Run_Implementation(const FInventoryItemActionContext& Context)
-{
-	if (UHadesInventoryComponent* Inventory = GetPlayerInventory(Context))
-	{
-		Inventory->DiscardItem(Context.Item);
-	}
-}
-
 // Store
 UHadesItemAction_Store::UHadesItemAction_Store()
 {
@@ -188,28 +142,6 @@ void UHadesItemAction_Take::Run_Implementation(const FInventoryItemActionContext
 	if (Inventory && !Inventory->TakeItem(Context.Item, 0, true, Error))
 	{
 		ShowMessage(Context, LOCTEXT("NoRoomToTake", "Not enough space."));
-	}
-}
-
-// Assign Quick Slot
-UHadesItemAction_AssignQuickSlot::UHadesItemAction_AssignQuickSlot()
-{
-	DisplayName = LOCTEXT("AssignQuickSlotName", "Quick Slot");
-	Description = LOCTEXT("AssignQuickSlotDescription", "Put the item on a quick slot key.");
-}
-
-bool UHadesItemAction_AssignQuickSlot::CanRun_Implementation(const FInventoryItemActionContext& Context) const
-{
-	const APawn* Pawn = Context.Player ? Context.Player->GetPawn() : nullptr;
-	const UHadesQuickSlotComponent* QuickSlots = Pawn ? Pawn->FindComponentByClass<UHadesQuickSlotComponent>() : nullptr;
-	return MenuClass && Context.Screen && QuickSlots && QuickSlots->CanAssign(Context.Item);
-}
-
-void UHadesItemAction_AssignQuickSlot::Run_Implementation(const FInventoryItemActionContext& Context)
-{
-	if (Context.Screen)
-	{
-		Context.Screen->OpenItemMenu(Context.Item, MenuClass);
 	}
 }
 

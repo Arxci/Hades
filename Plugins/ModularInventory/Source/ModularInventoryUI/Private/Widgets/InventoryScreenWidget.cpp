@@ -1,6 +1,7 @@
 ﻿#include "Widgets/InventoryScreenWidget.h"
 
 #include "Blueprint/WidgetTree.h"
+#include "CommonAnimatedSwitcher.h"
 #include "CommonInputSubsystem.h"
 #include "CommonInputTypeEnum.h"
 #include "Components/TextBlock.h"
@@ -20,6 +21,7 @@
 #include "Actions/InventoryItemAction.h"
 #include "InventorySubsystem.h"
 #include "InventoryUISubsystem.h"
+#include "Layers/ModularUISubsystem.h"
 #include "ModularInventory.h"
 #include "Widgets/InventoryCellWidget.h"
 #include "Widgets/InventoryGridWidget.h"
@@ -27,6 +29,7 @@
 #include "Widgets/InventoryItemWidget.h"
 #include "Widgets/InventoryListWidget.h"
 #include "Widgets/InventorySlotWidget.h"
+#include "Widgets/ModularTabListWidget.h"
 
 #define LOCTEXT_NAMESPACE "InventoryScreenWidget"
 
@@ -160,11 +163,49 @@ namespace
 UInventoryScreenWidget::UInventoryScreenWidget(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
 	bIsBackHandler = true;
+	InputConfig = EModularUIInputMode::Menu;
+	GameMouseCaptureMode = EMouseCaptureMode::NoCapture;
 }
 
-TOptional<FUIInputConfig> UInventoryScreenWidget::GetDesiredInputConfig() const
+void UInventoryScreenWidget::PostLoad()
 {
-	return FUIInputConfig(bGameKeepsInput ? ECommonInputMode::All : ECommonInputMode::Menu, EMouseCaptureMode::NoCapture);
+	Super::PostLoad();
+
+#if WITH_EDITORONLY_DATA
+	// Screens saved before Input Config replaced Game Keeps Input.
+	if (bGameKeepsInput_DEPRECATED)
+	{
+		InputConfig = EModularUIInputMode::GameAndMenu;
+		GameMouseCaptureMode = EMouseCaptureMode::NoCapture;
+		bGameKeepsInput_DEPRECATED = false;
+	}
+#endif
+}
+
+void UInventoryScreenWidget::NativeOnInitialized()
+{
+	Super::NativeOnInitialized();
+
+	if (TabList)
+	{
+		TabList->OnTabSelected.AddUniqueDynamic(this, &ThisClass::HandleTabSelected);
+	}
+}
+
+void UInventoryScreenWidget::NativeConstruct()
+{
+	Super::NativeConstruct();
+
+	// The tab list is built by now, so it makes its tabs as it's linked.
+	if (TabList && Pages && TabList->GetLinkedSwitcher() != Pages)
+	{
+		TabList->SetLinkedSwitcher(Pages);
+	}
+}
+
+void UInventoryScreenWidget::RegisterConfirmAction()
+{
+	// Confirm is bound as the input method changes, by Refresh Actions.
 }
 
 #if WITH_EDITOR
@@ -215,9 +256,17 @@ UInventoryItemMenuWidget* UInventoryScreenWidget::OpenItemMenu(FInventoryItemHan
 
 UInventoryItemMenuWidget* UInventoryScreenWidget::PushItemMenu(TSubclassOf<UInventoryItemMenuWidget> MenuClass, TFunctionRef<void(UInventoryItemMenuWidget&)> InitMenu)
 {
+	if (ItemMenuLayer.IsValid())
+	{
+		UModularUISubsystem* UI = UModularUISubsystem::Get(GetOwningLocalPlayer());
+		if (UInventoryItemMenuWidget* Pushed = UI ? UI->PushWidgetToLayer<UInventoryItemMenuWidget>(ItemMenuLayer, MenuClass.Get(), InitMenu) : nullptr)
+		{
+			return Pushed;
+		}
+	}
 	if (!ItemMenuStack)
 	{
-		UE_LOG(LogInventory, Warning, TEXT("[Inventory UI] %s: nowhere to open %s. Add a Common Activatable Widget Stack named ItemMenuStack."),
+		UE_LOG(LogInventory, Warning, TEXT("[Inventory UI] %s: nowhere to open %s. Set Item Menu Layer to a Modular UI layer, or add a Common Activatable Widget Stack named ItemMenuStack."),
 			*GetPathNameSafe(this), *GetNameSafe(MenuClass));
 		return nullptr;
 	}
@@ -252,16 +301,67 @@ void UInventoryScreenWidget::SetInventoryShown(bool bShown)
 
 void UInventoryScreenWidget::ReturnToItems()
 {
-	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
+	// Once the items are drawn: a page just switched to isn't yet, and a cell can't take focus until it is.
 	UWidget* FocusTarget = GetDesiredFocusTarget();
-	if (FocusTarget && Input && Input->GetCurrentInputType() == ECommonInputType::Gamepad)
+	if (!FocusTarget)
 	{
-		FocusTarget->SetFocus();
+		if (bAimOnOpen)
+		{
+			AimAtStart();
+		}
+		return;
 	}
-	else if (bAimOnOpen)
+
+	CallWhenDrawn(FocusTarget, [this](UWidget&)
 	{
-		AimAtStart();
+		if (!IsInventoryShown())
+		{
+			return;
+		}
+		const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
+		UWidget* Target = GetDesiredFocusTarget();
+		if (Target && Input && Input->GetCurrentInputType() == ECommonInputType::Gamepad)
+		{
+			Target->SetFocus();
+		}
+		else if (bAimOnOpen)
+		{
+			AimAtStart();
+		}
+	});
+}
+
+// Pages
+void UInventoryScreenWidget::OpenPage(int32 PageIndex)
+{
+	const bool bOpenedByTab = TabList && TabList->OpenTabAtIndex(PageIndex, /*bSuppressClickFeedback*/ true);
+	if (!bOpenedByTab && Pages)
+	{
+		Pages->SetActiveWidgetIndex(PageIndex);
 	}
+	SetInventoryShown(IsItemsPageOpen());
+}
+
+int32 UInventoryScreenWidget::GetOpenPage() const
+{
+	const int32 OpenTab = TabList ? TabList->GetOpenTabIndex() : INDEX_NONE;
+	if (OpenTab != INDEX_NONE)
+	{
+		return OpenTab;
+	}
+	return Pages ? Pages->GetActiveWidgetIndex() : INDEX_NONE;
+}
+
+bool UInventoryScreenWidget::IsItemsPageOpen() const
+{
+	const int32 OpenPage = GetOpenPage();
+	return OpenPage == INDEX_NONE || OpenPage == ItemsPage;
+}
+
+void UInventoryScreenWidget::HandleTabSelected(FName TabId)
+{
+	// Left at once, so what was held is put back. Shown again once the page is drawn, as Return To Items waits for it.
+	SetInventoryShown(TabList && TabList->GetTabIndexOf(TabId) == ItemsPage);
 }
 
 void UInventoryScreenWidget::SetTransferContainer(FInventoryContainerHandle Container)
@@ -347,6 +447,12 @@ void UInventoryScreenWidget::NativeOnActivated()
 	if (UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer()))
 	{
 		Input->OnInputMethodChangedNative.AddUObject(this, &ThisClass::HandleInputMethodChanged);
+	}
+
+	// The screen opens on the items, whichever page it closed on.
+	if (Pages || TabList)
+	{
+		OpenPage(ItemsPage);
 	}
 	if (bAimOnOpen)
 	{
@@ -500,6 +606,17 @@ void UInventoryScreenWidget::RefreshActions()
 	const bool bCanTransfer = bUsable && !Interaction->IsHolding() && Interaction->CanTransferItem(Interaction->GetHoveredItem());
 	SetActionBound(TransferHandle, TransferAction, bCanTransfer, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleTransferAction));
 	SetActionBound(TakeAllHandle, TakeAllAction, bUsable && Interaction->CanTakeAll(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleTakeAllAction));
+	SetActionBound(SortHandle, SortAction, bUsable && !Interaction->IsChoosingItem() && GetSortContainer().IsSet(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleSortAction));
+
+	// While an item is held, the tab keys can turn it instead of changing pages. Neither works while the screen closes.
+	if (TabList)
+	{
+		const bool bTurnHeld = bTabKeysTurnHeldItem && bUsable && Interaction->IsHolding();
+		const FSimpleDelegate Rotate = FSimpleDelegate::CreateUObject(this, &ThisClass::HandleRotateAction);
+		TabList->SetListeningForInput(!bTurnHeld && !IsClosing());
+		SetActionBound(PreviousTabRotateHandle, TabList->GetPreviousTabAction(), bTurnHeld, Rotate, /*bShowInActionBar*/ false);
+		SetActionBound(NextTabRotateHandle, TabList->GetNextTabAction(), bTurnHeld, Rotate, /*bShowInActionBar*/ false);
+	}
 }
 
 void UInventoryScreenWidget::SetActionBound(FUIActionBindingHandle& Handle, const FDataTableRowHandle& Row, bool bBound, const FSimpleDelegate& Handler, bool bShowInActionBar)
@@ -734,6 +851,40 @@ void UInventoryScreenWidget::HandleTransferAction()
 		Interaction->TransferItem(Interaction->GetHoveredItem());
 		RefreshActions();
 	}
+}
+
+void UInventoryScreenWidget::HandleSortAction()
+{
+	SortItems();
+	RefreshActions();
+}
+
+// Sorting
+FInventoryContainerHandle UInventoryScreenWidget::GetSortContainer() const
+{
+	return MainGrid ? MainGrid->GetContainer() : FInventoryContainerHandle();
+}
+
+bool UInventoryScreenWidget::SortItems()
+{
+	UInventoryUISubsystem* Interaction = GetInteraction();
+	UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
+	const FInventoryContainerHandle Container = GetSortContainer();
+	if (!Inventory || !Container.IsSet() || (Interaction && Interaction->IsChoosingItem()))
+	{
+		return false;
+	}
+
+	// The held item goes back first, so it's sorted with the rest.
+	if (Interaction)
+	{
+		Interaction->CancelHold();
+	}
+	EInventoryError Error = EInventoryError::None;
+	const bool bSorted = Inventory->SortContainerBy(Container, SortSettings, Error);
+	NativeOnSorted(bSorted);
+	OnSorted(bSorted);
+	return bSorted;
 }
 
 void UInventoryScreenWidget::HandleTakeAllAction()

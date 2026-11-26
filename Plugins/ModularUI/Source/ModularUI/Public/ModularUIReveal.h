@@ -39,6 +39,18 @@ struct MODULARUI_API FModularUIReveal
 	/** Adds a part: Target comes in with Transition. A widget that's already a part stays as it was added. */
 	void Add(UWidget& Target, const FModularUITransition& Transition);
 
+	/**
+	 * Adds a part that fades one widget and slides and grows another, such as a whole menu, backdrop included, fading while only its panel
+	 * moves out from what it opened beside.
+	 */
+	void Add(UWidget& FadeTarget, UWidget& MoveTarget, const FModularUITransition& Transition);
+
+	/**
+	 * Where every part's transitions From Origin come from, such as away from what a menu opened beside. See FModularUITransitionPlayer's
+	 * Set Origin. Takes effect at once, even mid-way.
+	 */
+	void SetOrigin(const FVector2D& Away, const FVector2D& Corner);
+
 	void Reset();
 
 	/** Every part comes in, each once its delay has passed. */
@@ -61,7 +73,8 @@ struct MODULARUI_API FModularUIReveal
 private:
 	struct FPart
 	{
-		TWeakObjectPtr<UWidget> Widget;
+		TWeakObjectPtr<UWidget> FadeWidget;
+		TWeakObjectPtr<UWidget> MoveWidget;
 		FModularUITransition Transition;
 		FModularUITransitionPlayer Player;
 	};

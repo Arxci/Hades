@@ -3,7 +3,6 @@
 #include "Hades/Hades.h"
 #include "Hades/HadesGameplayTags.h"
 #include "Hades/Camera/HadesPlayerCameraManager.h"
-#include "Hades/UI/WorldMarker/HadesWorldMarkerManagerComponent.h"
 
 #include "CommonActivatableWidget.h"
 #include "CommonUIExtensions.h"
@@ -17,13 +16,17 @@
 #include "UserSettings/EnhancedInputUserSettings.h"
 
 #include "InventoryComponent.h"
+#include "Messages/ModularMessageSubsystem.h"
+#include "ModularUIGameplayTags.h"
 #include "ModularUIPauseSubsystem.h"
+#include "WorldMarkers/ModularWorldMarkerManagerComponent.h"
 
 AHadesPlayerController::AHadesPlayerController()
 {
 	PlayerCameraManagerClass = AHadesPlayerCameraManager::StaticClass();
 
-	WorldMarkerManager = CreateDefaultSubobject<UHadesWorldMarkerManagerComponent>(TEXT("WorldMarkerManager"));
+	WorldMarkerManager = CreateDefaultSubobject<UModularWorldMarkerManagerComponent>(TEXT("WorldMarkerManager"));
+	MessageChannel = ModularUIGameplayTags::UI_Message_Hint;
 	ItemBoxInventory = CreateDefaultSubobject<UInventoryComponent>(TEXT("ItemBoxInventory"));
 }
 
@@ -131,6 +134,10 @@ bool AHadesPlayerController::RegisterMappingContextsWithSettings()
 
 void AHadesPlayerController::ShowMessage(const FText& Message)
 {
+	if (UModularMessageSubsystem* Messages = UModularMessageSubsystem::GetForPlayer(this))
+	{
+		Messages->ShowText(MessageChannel, Message);
+	}
 	OnMessage.Broadcast(Message);
 }
 

@@ -525,6 +525,37 @@ void FInventoryFeatureSpec::Define()
 			TestTrue(TEXT("Ammo first"), Sorted.Num() == 2 && Registry->FindItem(Sorted[0])->Definition.Get() == Data->Ammo);
 			TestTrue(TEXT("Stone last"), Sorted.Num() == 2 && Sorted[1] == Stone);
 		});
+
+		It("sort by the keys and order its settings give", [this]()
+		{
+			Data->Stone->DisplayName = FText::FromString(TEXT("Stone"));
+			Data->Ammo->DisplayName = FText::FromString(TEXT("Ammo"));
+			UInventoryContainerLayout* ListLayout = Data->Make<UInventoryContainerLayout>();
+			ListLayout->Type = EInventoryContainerType::List;
+			const FInventoryContainerHandle List = Registry->CreateContainer(ListLayout, FGameplayTag(), nullptr);
+
+			const FInventoryItemHandle Ammo = AddTestItem(*Registry, Data->Ammo, List, 10);
+			const FInventoryItemHandle MoreAmmo = AddTestItem(*Registry, Data->Ammo, List, 5, FInventoryPlacement::AtIndex(1));
+			const FInventoryItemHandle Stone = AddTestItem(*Registry, Data->Stone, List, 1, FInventoryPlacement::AtIndex(2));
+
+			// Reversed and unmerged: Z to A, the two ammo stacks kept apart in their order.
+			FInventorySortSettings Settings;
+			Settings.Keys = { EInventorySortKey::Name };
+			Settings.bReverse = true;
+			Settings.bMergeStacks = false;
+			TestTrue(TEXT("Sorted Z to A"), Registry->SortContainer(List, Settings) == EInventoryError::None);
+			const TArray<FInventoryItemHandle>& Reversed = Registry->FindContainer(List)->Items;
+			TestEqual(TEXT("Nothing merged"), Reversed.Num(), 3);
+			TestTrue(TEXT("Stone first"), Reversed.Num() == 3 && Reversed[0] == Stone);
+			TestTrue(TEXT("Ammo stacks after, in their order"), Reversed.Num() == 3 && Reversed[1] == Ammo && Reversed[2] == MoreAmmo);
+
+			// By count, biggest stack first, as the names tie.
+			Settings.Keys = { EInventorySortKey::Name, EInventorySortKey::Count };
+			Settings.bReverse = false;
+			TestTrue(TEXT("Sorted by name, then count"), Registry->SortContainer(List, Settings) == EInventoryError::None);
+			const TArray<FInventoryItemHandle>& ByCount = Registry->FindContainer(List)->Items;
+			TestTrue(TEXT("Bigger ammo stack first"), ByCount.Num() == 3 && ByCount[0] == Ammo && ByCount[1] == MoreAmmo && ByCount[2] == Stone);
+		});
 	});
 
 	Describe("Batches", [this]()

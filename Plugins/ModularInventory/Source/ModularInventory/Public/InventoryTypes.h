@@ -314,3 +314,50 @@ struct MODULARINVENTORY_API FInventoryBatchResult
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory")
 	int32 FailedOperation = INDEX_NONE;
 };
+
+
+/** What sorting a container orders its items by. */
+UENUM(BlueprintType)
+enum class EInventorySortKey : uint8
+{
+	/** Biggest first, by how many cells it takes, so big items find room in a grid. Lists ignore it. */
+	Size,
+	/** By display name, A to Z. */
+	Name,
+	/** By the definition's Category, A to Z, such as weapons together and healing together. */
+	Category,
+	/** By the first of Tag Order the item has, such as weapons, then ammo, then healing. Items with none of them come last. */
+	TagOrder,
+	/** By the item's Value Tag value, highest first, such as its price or its weight. Items without one come last. */
+	TagValue,
+	/** Biggest stack first. */
+	Count
+};
+
+
+/** How sorting a container orders its items. */
+USTRUCT(BlueprintType)
+struct MODULARINVENTORY_API FInventorySortSettings
+{
+	GENERATED_BODY()
+
+	/** Compared in order: two items are ordered by the first key they differ by, and keep their order if none. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sorting")
+	TArray<EInventorySortKey> Keys = { EInventorySortKey::Size, EInventorySortKey::Name };
+
+	/** For the Tag Order key: item tags in the order their items go, such as Item.Type.Weapon, then Item.Type.Ammo. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sorting")
+	TArray<FGameplayTag> TagOrder;
+
+	/** For the Tag Value key: the tag value items are ordered by, such as Item.Stat.Value. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sorting")
+	FGameplayTag ValueTag;
+
+	/** Reverses the whole order, such as smallest first, or Z to A. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sorting")
+	bool bReverse = false;
+
+	/** Partial stacks of the same kind are merged first, so fewer spots are taken. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sorting")
+	bool bMergeStacks = true;
+};

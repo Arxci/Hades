@@ -8,6 +8,6 @@ public class ModularInventoryUI : ModuleRules
 
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "GameplayTags", "Slate", "SlateCore", "UMG", "CommonUI", "ModularInventory", "ModularUI" });
 
-		PrivateDependencyModuleNames.AddRange(new string[] { "CommonInput" });
+		PrivateDependencyModuleNames.AddRange(new string[] { "CommonInput", "EnhancedInput" });
 	}
 }

@@ -71,6 +71,19 @@ void FInventoryShortcutSpec::Define()
 		TestEqual(TEXT("A free slot that takes it"), Slots.AssignToFreeSlot(*Registry, OwnerRoots(), Rules, AddTestItem(*Registry, Data->Stone, Pockets)), 2);
 	});
 
+	It("ask its slot filter, on top of the rules' filters", [this]()
+	{
+		// As a component's Accepts Item would: here, nothing goes on the first slot.
+		Slots.SetSlotFilter([](int32 SlotIndex, FInventoryItemHandle Item)
+		{
+			return SlotIndex != 0;
+		});
+		const FInventoryItemHandle Knife = AddTestItem(*Registry, Data->Knife, Pockets);
+		TestFalse(TEXT("Refused by the filter"), Slots.Assign(*Registry, OwnerRoots(), Rules, 0, Knife));
+		TestTrue(TEXT("Any slot takes it"), Slots.CanAssign(*Registry, OwnerRoots(), Rules, Knife, INDEX_NONE));
+		TestEqual(TEXT("The first free slot the filter allows"), Slots.AssignToFreeSlot(*Registry, OwnerRoots(), Rules, Knife), 1);
+	});
+
 	It("follow an item as it moves, and empty when it leaves", [this]()
 	{
 		const FInventoryItemHandle Knife = AddTestItem(*Registry, Data->Knife, Pockets);

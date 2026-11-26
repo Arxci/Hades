@@ -7,22 +7,8 @@
 
 #include "HadesInventoryComponent.generated.h"
 
-class AHadesItemPickup;
-class UGameplayEffect;
 class UInventoryItemDefinition;
 class UInventoryRecipeBook;
-
-
-/** Add to an item definition's Fragments to make it usable from the item menu or a quick slot, such as a herb that heals. */
-USTRUCT(BlueprintType)
-struct FHadesItemUse
-{
-	GENERATED_BODY()
-
-	/** Applied to the player. Using the item uses up one of the stack. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Use")
-	TSubclassOf<UGameplayEffect> Effect;
-};
 
 
 /**
@@ -77,21 +63,17 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory|Hands")
 	FInventoryItemHandle GetItemInHand() const;
 
-	// Item actions
+	// Item actions. Using items is the plugin's: items with an Inventory Item Use fragment, such as a herb that heals.
+	/** Key items can't be dropped; they go away by themselves once used up. */
+	virtual bool CanDropItem(FInventoryItemHandle Item) const override;
+
+	/** Whether Discard Item would work: Can Drop Item. */
 	UFUNCTION(BlueprintPure, Category = "Inventory|Actions")
-	bool CanUseItem(FInventoryItemHandle Item) const;
+	bool CanDiscardItem(FInventoryItemHandle Item) const { return CanDropItem(Item); }
 
-	/** Applies the item's Hades Item Use effect to the owner and uses one up. */
+	/** Drops the whole stack at the owner's feet, in a Dropped Item Class pickup, or destroys it without one. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Actions")
-	bool UseItem(FInventoryItemHandle Item);
-
-	/** Key items can't be discarded; they go away by themselves once used up. */
-	UFUNCTION(BlueprintPure, Category = "Inventory|Actions")
-	bool CanDiscardItem(FInventoryItemHandle Item) const;
-
-	/** Drops the item at the owner's feet, or destroys it when Dropped Pickup Class is empty. */
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Actions")
-	bool DiscardItem(FInventoryItemHandle Item);
+	bool DiscardItem(FInventoryItemHandle Item) { return DropItem(Item, 0); }
 
 	/** Whether any of Combine Recipes uses the item, or it's a gun or ammo whose partner is in the inventory. */
 	UFUNCTION(BlueprintPure, Category = "Inventory|Actions")
@@ -142,10 +124,6 @@ protected:
 	virtual void BeginPlay() override;
 	//~ End UActorComponent Interface
 
-	/** Spawned with a discarded item inside, so it can be picked up again. Empty destroys discarded items. */
-	UPROPERTY(EditAnywhere, Category = "Inventory|Hades")
-	TSubclassOf<AHadesItemPickup> DroppedPickupClass;
-
 	/** What Combine can make. Each recipe takes one or two ingredients, such as two green herbs or a green and a red. */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Hades")
 	TObjectPtr<UInventoryRecipeBook> CombineRecipes;
@@ -163,5 +141,4 @@ private:
 
 	/** Whichever of the two is a gun the other one loads. */
 	FInventoryItemHandle FindGunLoadedBy(FInventoryItemHandle Item, FInventoryItemHandle Other) const;
-	FTransform FindDropTransform() const;
 };

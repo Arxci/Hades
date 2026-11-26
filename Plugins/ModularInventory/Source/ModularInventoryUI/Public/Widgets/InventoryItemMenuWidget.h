@@ -2,15 +2,10 @@
 
 #include "CoreMinimal.h"
 
-#include "CommonActivatableWidget.h"
-#include "Containers/Ticker.h"
-#include "Engine/DataTable.h"
-#include "Input/UIActionBindingHandle.h"
-
 #include "Actions/InventoryItemAction.h"
 #include "InventoryTypes.h"
 #include "InventoryUITypes.h"
-#include "ModularUITransition.h"
+#include "Widgets/ModularContextMenuWidget.h"
 
 #include "InventoryItemMenuWidget.generated.h"
 
@@ -20,56 +15,8 @@ class UInventoryItemWidget;
 class UInventoryScreenWidget;
 class UInventoryUISubsystem;
 class UPanelWidget;
-class USlider;
-class USoundBase;
 class UTextBlock;
-class UWidgetAnimation;
 struct FInventoryChangeSet;
-struct FUIInputConfig;
-enum class ECommonInputType : uint8;
-
-
-/** Where an item menu opens. Each but As Designed then moves in as far as it takes to stay on screen. */
-UENUM(BlueprintType)
-enum class EInventoryMenuPlacement : uint8
-{
-	/**
-	 * Beside the item, on the side toward the middle of the screen: level with the item's top in the upper half, and with its bottom in
-	 * the lower half.
-	 */
-	TowardCenter,
-	/** On the item's right, level with its top. It goes to the left where only that side has room. */
-	Right,
-	/** On the item's left, level with its top. It goes to the right where only that side has room. */
-	Left,
-	/** Wherever Menu Panel is in the designer, such as a fixed spot for a menu that isn't laid out around the item. */
-	AsDesigned,
-	/**
-	 * At the cursor, down and to the right of it as desktop context menus open, or up or to the left where only that side has room. Without
-	 * the mouse, such as on a gamepad, it opens as Toward Center does.
-	 */
-	AtCursor
-};
-
-
-/** What a press outside an open item menu does: close it, close it and reach the item under it, or nothing at all. */
-UENUM(BlueprintType)
-enum class EInventoryMenuOutsidePress : uint8
-{
-	/** Only closes the menu, wherever the press is, even on an item. */
-	Close,
-	/**
-	 * Closes the menu and goes on to the item under the press, as if the menu weren't open: a click or right-click does what it does there,
-	 * and a drag picks the item up. A press that would open a menu for this menu's own item only closes it, as pressing what opened a menu
-	 * again does. Presses only pass through to items on the screen the menu's item is on.
-	 */
-	PassThrough,
-	/**
-	 * Does nothing: the menu stays open and nothing behind it is pressed, so the player has to pick an action or go Back, as in a menu that
-	 * must be answered. Leave the player a way out with the mouse too, such as Close On Right Press, a press set to Close, or a Cancel action.
-	 */
-	Block
-};
 
 
 /** When an item menu runs an action picked in it, against its close. */
@@ -90,84 +37,53 @@ enum class EInventoryMenuActionTiming : uint8
 
 
 /**
- * A small menu for one item, such as Use, Equip and Drop, opened beside it: set it as an inventory screen's Item Menu Class, or open it
+ * A context menu for one item, such as Use, Equip and Drop, opened beside it: set it as an inventory screen's Item Menu Class, or open it
  * with the screen's Open Item Menu. While it's open the item is selected, and nothing is held.
  * It lists the item actions of its Action Set and Actions: each on the button placed in the designer under its Button Name, or else on a
- * button made for it in Action Panel. An action can ask the player to confirm, or how many, in Prompt Panel first. As the menu opens,
- * its first entry is highlighted and takes focus; the mouse and focus move the highlight, and Description Text and the screen's action
- * hint say what the highlighted one does.
- * Running an action closes the menu, unless the action keeps it open. Back closes it, and so can a right press on it. A press outside
- * Menu Panel closes it, closes it and goes on to the item under it, or does nothing, as Left Press Outside and Right Press Outside say.
- * It also closes by itself when its item leaves the inventory, such as when it's used up, and when its screen closes.
- * It comes in with Open Transition and goes with Close Transition, such as a fade and a slide out from the item and back, and plays
- * animations named OpenAnimation and CloseAnimation too.
- * Give the root a full-screen border that is hit-testable, so those presses reach the menu and nothing behind it can be hovered while it's open.
+ * button made for it in Action Panel. An action can ask first, to confirm or how many, as Prompt Presentation says: inline in place of the
+ * actions, over the menu, or in a dialog of its own. Description Text and the screen's action hint say what the highlighted action does.
+ * Running an action closes the menu, unless the action keeps it open. It also closes by itself when its item leaves the inventory, such as
+ * when it's used up, and when its screen closes. A press passed through to another item reaches that item, as if the menu weren't open.
+ * Everything else, its placement, dismissing, highlight, prompts and transitions, it gets from Modular Context Menu.
  */
 UCLASS(Abstract, Blueprintable)
-class MODULARINVENTORYUI_API UInventoryItemMenuWidget : public UCommonActivatableWidget
+class MODULARINVENTORYUI_API UInventoryItemMenuWidget : public UModularContextMenuWidget
 {
 	GENERATED_BODY()
 
 public:
-	UInventoryItemMenuWidget(const FObjectInitializer& ObjectInitializer);
-
-	//~ Begin UCommonActivatableWidget Interface
-	virtual TOptional<FUIInputConfig> GetDesiredInputConfig() const override;
-	//~ End UCommonActivatableWidget Interface
+	//~ Begin UObject Interface
+	virtual void PostLoad() override;
+	//~ End UObject Interface
 
 	/**
-	 * Opens the menu for InItem beside Item Widget, usually found with the screen's Find Item Widget, as Placement says. Without one,
-	 * it opens beside the focused widget on a gamepad, or at the cursor. The menu is placed after On Item Changed, so it's measured
-	 * with the buttons shown for this item.
+	 * Opens the menu for InItem beside Item Widget, usually found with the screen's Find Item Widget, as Placement says. Without one, it
+	 * opens beside the focused widget on a gamepad, or at the cursor. The menu is placed after On Item Changed, so it's measured with the
+	 * actions shown for this item.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Item Menu")
+	UFUNCTION(BlueprintCallable, Category = "Item Menu")
 	void SetItem(FInventoryItemHandle InItem, UInventoryItemWidget* ItemWidget);
 
-	UFUNCTION(BlueprintPure, Category = "Inventory|Item Menu")
+	UFUNCTION(BlueprintPure, Category = "Item Menu")
 	FInventoryItemHandle GetItem() const { return Item; }
 
 	/**
 	 * The inventory screen the menu is for: where its hints show, what its actions run on, and what closes it by closing. Set Item finds it
 	 * from Item Widget; set it first for a menu opened without one.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Item Menu")
+	UFUNCTION(BlueprintCallable, Category = "Item Menu")
 	void SetScreen(UInventoryScreenWidget* InScreen);
 
-	UFUNCTION(BlueprintPure, Category = "Inventory|Item Menu")
+	UFUNCTION(BlueprintPure, Category = "Item Menu")
 	UInventoryScreenWidget* GetScreen() const;
 
-	/** Closes the menu, after its close transition and Close Animation. Use it instead of Deactivate Widget so they play. */
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Item Menu")
-	void CloseMenu();
-
-	/**
-	 * Closes the menu at once, without its close transition or Close Animation, or cuts a close short. An action waiting for the menu to
-	 * close doesn't run. For something that has to happen right away, such as another menu opening in the same stack.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Item Menu")
-	void CloseMenuNow();
-
-	/**
-	 * The menu is closing: its close transition or Close Animation plays, and it closes once they end. It takes no presses or keys
-	 * meanwhile; ignore any that reach widgets of your own.
-	 */
-	UFUNCTION(BlueprintPure, Category = "Inventory|Item Menu")
-	bool IsClosing() const { return bClosing; }
-
 	/** Who and what the menu's actions run for: its item, player and screen. */
-	UFUNCTION(BlueprintPure, Category = "Inventory|Item Menu")
+	UFUNCTION(BlueprintPure, Category = "Item Menu")
 	FInventoryItemActionContext GetActionContext() const;
 
 	/** Lists the actions again, such as after something changed what can run. Set Item does it. */
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Item Menu")
+	UFUNCTION(BlueprintCallable, Category = "Item Menu")
 	void RefreshActions();
-
-	/**
-	 * The entry highlighted now: the first as the menu opens, then whichever the mouse or focus reached last. Entries are the menu's
-	 * buttons, the prompt's included.
-	 */
-	UFUNCTION(BlueprintPure, Category = "Inventory|Item Menu")
-	UCommonButtonBase* GetHighlightedEntry() const { return HighlightedEntry.Get(); }
 
 	/**
 	 * Whether the menu has anything for the item: an action it would list. A menu without actions, such as one laid out by hand for
@@ -177,24 +93,27 @@ public:
 
 protected:
 	//~ Begin UUserWidget Interface
-	virtual void NativeOnInitialized() override;
-	virtual FReply NativeOnPreviewMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	virtual FReply NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	virtual FReply NativeOnMouseButtonDoubleClick(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
-	virtual FReply NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
-	virtual FReply NativeOnPreviewKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
-	virtual void NativeOnFocusChanging(const FWeakWidgetPath& PreviousFocusPath, const FWidgetPath& NewWidgetPath, const FFocusEvent& InFocusEvent) override;
 	virtual void NativeOnDragDetected(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent, UDragDropOperation*& OutOperation) override;
-	virtual void OnAnimationFinished_Implementation(const UWidgetAnimation* Animation) override;
 	//~ End UUserWidget Interface
 
 	//~ Begin UCommonActivatableWidget Interface
 	virtual void NativeOnActivated() override;
 	virtual void NativeOnDeactivated() override;
-	virtual UWidget* NativeGetDesiredFocusTarget() const override;
-	virtual bool NativeOnHandleBackAction() override;
 	//~ End UCommonActivatableWidget Interface
+
+	//~ Begin UModularActivatableWidget Interface
+	virtual void NativeOnCloseStarted() override;
+	//~ End UModularActivatableWidget Interface
+
+	//~ Begin UModularContextMenuWidget Interface
+	virtual bool PassPressThrough(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent, FReply& OutReply) override;
+	virtual FText GetEntryDescription(UCommonButtonBase* Entry) const override;
+	virtual void NativeOnEntryHighlighted(UCommonButtonBase* Entry, const FText& Description) override;
+	virtual UWidget* GetEntriesWidget() const override;
+	//~ End UModularContextMenuWidget Interface
 
 	/** Before On Item Changed, for C++ subclasses. */
 	virtual void NativeOnItemChanged() {}
@@ -203,193 +122,50 @@ protected:
 	virtual void GatherActions(TArray<UInventoryItemAction*>& OutActions) const;
 
 	/** Set Item was called, after the actions were listed. Fill in anything else the menu shows for the item here. */
-	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Item Menu")
+	UFUNCTION(BlueprintImplementableEvent, Category = "Item Menu")
 	void OnItemChanged();
 
 	UInventoryUISubsystem* GetInteraction() const;
 
-	/**
-	 * The menu itself. Put it in a Canvas Panel that fills the screen, with Size To Content ticked, so it can be moved beside the item.
-	 * As the menu opens, its first visible button is highlighted and takes focus, unless Get Desired Focus Target is implemented.
-	 */
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item Menu", meta = (BindWidget))
-	TObjectPtr<UWidget> MenuPanel;
+	/** Says something in Description Text, and in the screen's action hint with Show Hint On Screen. Empty gives the screen its own hint back. */
+	void ShowHint(const FText& Hint);
 
-	/**
-	 * One entry is always highlighted, as console-style menus keep one: the first as the menu opens, or as a prompt asks, then whichever
-	 * the mouse or focus reached last, so Accept runs the one the player sees. It's shown with its button style's Selected look: give
-	 * Selected Base and Selected Hovered your highlight, and Selected Text Style its text, the prompt's buttons too. Only the highlighted
-	 * entry is ever selected. On a gamepad, focus alone moves the highlight. Off, an entry looks highlighted only while it's hovered, or
-	 * focused on a gamepad, though the first still takes focus.
-	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu")
-	bool bKeepEntryHighlighted = false;
-
+	// Item
 	/** The item's name. */
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item Menu", meta = (BindWidgetOptional))
+	UPROPERTY(BlueprintReadOnly, Category = "Item Menu|Item", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> ItemNameText;
-
-	/** What the highlighted entry does, or why it can't run. */
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item Menu", meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> DescriptionText;
-
-	/** Says what the highlighted entry does in the screen's action hint too. Turn it off when Description Text says it in the menu. */
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu")
-	bool bShowHintOnScreen = true;
-
-	/** Where the menu opens. */
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu")
-	EInventoryMenuPlacement Placement = EInventoryMenuPlacement::TowardCenter;
-
-	/** Space between the item, or the cursor, and the menu, in pixels. */
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu", meta = (ClampMin = "0", EditCondition = "Placement != EInventoryMenuPlacement::AsDesigned"))
-	float MenuGap = 0.0f;
-
-	/** Space kept between the menu and each edge of the screen, in pixels. */
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu", meta = (EditCondition = "Placement != EInventoryMenuPlacement::AsDesigned"))
-	FMargin ScreenPadding;
-
-	/**
-	 * What a left press outside Menu Panel does. Close suits a menu that has the player's attention, so a stray click only closes it.
-	 * Pass Through lets the player carry on as if it weren't open, such as dragging another item straight away. Block keeps the menu open
-	 * until the player picks an action or goes Back.
-	 * The other mouse buttons, such as the middle one, do as this says, except that they never pass through: with Pass Through, they
-	 * only close the menu.
-	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu")
-	EInventoryMenuOutsidePress LeftPressOutside = EInventoryMenuOutsidePress::Close;
-
-	/**
-	 * What a right press outside Menu Panel does. With Pass Through, while right-clicks open item menus, a right-click on another item opens
-	 * that item's menu in place of this one, as desktop context menus do. Block keeps the menu open.
-	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu")
-	EInventoryMenuOutsidePress RightPressOutside = EInventoryMenuOutsidePress::PassThrough;
-
-	/** A right press on Menu Panel closes the menu, as Back does. Off, it does nothing there, as on most desktop context menus. */
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu")
-	bool bCloseOnRightPress = true;
-
-	/** Played as the menu opens. Its buttons play their own hover and click sounds from their styles. */
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu")
-	TObjectPtr<USoundBase> OpenSound;
-
-	/** Played as the menu starts to close, however it closes. */
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu")
-	TObjectPtr<USoundBase> CloseSound;
-
-	// Transition
-	/**
-	 * How the menu comes in as it opens: a fade, a slide and a growth, each optional. The whole menu fades, and Menu Panel slides and grows
-	 * from wherever it opened, such as out from the item. It adds to the render opacity and transform they have in the designer. Leave
-	 * Item Menu Stack's own transition at 0, so the two don't play over each other.
-	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu|Transition")
-	FModularUITransition OpenTransition;
-
-	/**
-	 * The menu closes by playing Open Transition backwards, from wherever it has got to, as if going back where it came from. Off, it plays
-	 * Close Transition.
-	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu|Transition")
-	bool bCloseReversesOpen = true;
-
-	/** How the menu goes as it closes, from however it looks then, such as a quicker fade without a slide. */
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu|Transition", meta = (EditCondition = "!bCloseReversesOpen", EditConditionHides))
-	FModularUITransition CloseTransition;
-
-	/**
-	 * Played as the menu opens, after it's placed, along with Open Transition. Name an animation OpenAnimation to use one. Give it every
-	 * property Close Animation changes, as a menu is reused from where it last closed. Leave the menu's render opacity, and Menu Panel's
-	 * render transform, to the transitions.
-	 */
-	UPROPERTY(Transient, meta = (BindWidgetAnimOptional))
-	TObjectPtr<UWidgetAnimation> OpenAnimation;
-
-	/**
-	 * Played as the menu closes with Back, a press outside it or an action, along with its close transition. The menu closes once both
-	 * have ended, and takes no input meanwhile. A press passed through to an item, or the screen closing, closes it at once. Name an
-	 * animation CloseAnimation to use one.
-	 */
-	UPROPERTY(Transient, meta = (BindWidgetAnimOptional))
-	TObjectPtr<UWidgetAnimation> CloseAnimation;
 
 	// Actions
 	/** Actions to list, such as everything the game's item menus offer, shared with other menus. Listed before Actions. */
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu|Actions")
+	UPROPERTY(EditDefaultsOnly, Category = "Item Menu|Actions")
 	TObjectPtr<UInventoryItemActionSet> ActionSet;
 
 	/** Actions to list after Action Set's, for actions only this menu has. */
-	UPROPERTY(EditDefaultsOnly, Instanced, Category = "Inventory|Item Menu|Actions")
+	UPROPERTY(EditDefaultsOnly, Instanced, Category = "Item Menu|Actions")
 	TArray<TObjectPtr<UInventoryItemAction>> Actions;
 
 	/** Made in Action Panel for each action without a button placed for it. */
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu|Actions")
+	UPROPERTY(EditDefaultsOnly, Category = "Item Menu|Actions")
 	TSubclassOf<UInventoryItemActionButton> ActionButtonClass;
 
 	/**
 	 * When an action picked in the menu runs: at once as the menu starts to close, or once it has closed. One that keeps the menu open
 	 * runs at once.
 	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu|Actions")
+	UPROPERTY(EditDefaultsOnly, Category = "Item Menu|Actions")
 	EInventoryMenuActionTiming ActionTiming = EInventoryMenuActionTiming::AsMenuCloses;
 
 	/**
-	 * Holds the action buttons, such as a Vertical Box. Buttons made for actions go at its end, after any you placed in it. Hidden while a
-	 * prompt shows.
+	 * Holds the action buttons, such as a Vertical Box. Buttons made for actions go at its end, after any you placed in it. Collapsed while
+	 * an inline prompt asks.
 	 */
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item Menu", meta = (BindWidgetOptional))
+	UPROPERTY(BlueprintReadOnly, Category = "Item Menu|Actions", meta = (BindWidgetOptional))
 	TObjectPtr<UPanelWidget> ActionPanel;
 
-	// Prompt
-	/**
-	 * Shown in place of Action Panel while an action asks to confirm, or how many. Put Prompt Text, Confirm Button and Cancel Button inside
-	 * it, and for counts, Quantity Slider and Quantity Text. Back, or Cancel Button, goes back to the actions.
-	 */
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item Menu|Prompt", meta = (BindWidgetOptional))
-	TObjectPtr<UWidget> PromptPanel;
-
-	/** The action's Prompt Text. */
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item Menu|Prompt", meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> PromptText;
-
-	/** Runs the action. Needed for prompts. */
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item Menu|Prompt", meta = (BindWidgetOptional))
-	TObjectPtr<UCommonButtonBase> ConfirmButton;
-
-	/** Goes back to the actions, highlighting the one that asked. A confirmation can start on it, as Confirm Starts On Cancel says. */
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item Menu|Prompt", meta = (BindWidgetOptional))
-	TObjectPtr<UCommonButtonBase> CancelButton;
-
-	/** Chooses how many, for actions that ask. Gamepad focus starts on it, so left and right change the count. */
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item Menu|Prompt", meta = (BindWidgetOptional))
-	TObjectPtr<USlider> QuantitySlider;
-
-	/** The count chosen, in Quantity Format. */
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory|Item Menu|Prompt", meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> QuantityText;
-
-	/** What Quantity Text says. {Count} is the count chosen, and {Max} the most there is to choose. */
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu|Prompt")
-	FText QuantityFormat = INVTEXT("{Count}");
-
-	/**
-	 * A confirmation starts highlighted on Cancel Button, so the quick answer is the safe one, such as before discarding. Off, it starts on
-	 * the prompt's first button, as the menu starts on its first entry. A count to choose starts on Quantity Slider either way.
-	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory|Item Menu|Prompt")
-	bool bConfirmStartsOnCancel = true;
-
-	/**
-	 * What Accept does: shown in an action bar, while Accept itself goes to the focused button. With the mouse on a button, where
-	 * keyboard focus may be on another, its key clicks the button under the mouse instead.
-	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
-	FDataTableRowHandle ConfirmAction;
-
-	/** The game keeps getting input while this is open, such as to keep walking. Off, only the UI gets it. */
-	UPROPERTY(EditDefaultsOnly, Category = "Input")
-	bool bGameKeepsInput = false;
+	// Hints
+	/** Says what the highlighted action does in the screen's action hint too. Turn it off when Description Text says it in the menu. */
+	UPROPERTY(EditDefaultsOnly, Category = "Item Menu|Hints")
+	bool bShowHintOnScreen = true;
 
 private:
 	/** An action listed for the item, and the button showing it. */
@@ -401,32 +177,7 @@ private:
 		FText UnavailableReason;
 	};
 
-	FBox2D FindAnchor(const UInventoryItemWidget* ItemWidget) const;
-	void PlaceBeside(const FBox2D& Box);
-
-	/**
-	 * Places the menu beside its anchor again on the next frame. A menu is placed before it's first drawn, when its canvas's geometry
-	 * isn't known yet, so that first placement assumes the canvas covers the viewport.
-	 */
-	void PlaceNextFrame();
-
-	/**
-	 * Menu Panel's canvas's geometry, once it has been drawn. The canvas can be smaller than the viewport, or offset in it, such as within
-	 * the black bars of a constrained aspect ratio.
-	 */
-	bool GetCanvasGeometry(FGeometry& OutGeometry) const;
-
-	/** An absolute (desktop) point in the space Menu Panel's canvas positions its slots in, and that space's size. */
-	FVector2D AbsoluteToCanvas(const FVector2D& AbsolutePoint);
-	FVector2D GetCanvasSize();
-
-	/** Where the cursor is, in absolute (desktop) space, while the mouse is in use. Unset on a gamepad, where the cursor is hidden. */
-	TOptional<FVector2D> GetCursorPosition() const;
-
-	/** Menu Panel's size as it is now, with the buttons shown for this item. Lays the menu out first, as it may not have been drawn yet. */
-	FVector2D MeasureMenuPanel();
-
-	/** The item widget a press outside Menu Panel is on: the item the menu is beside, or any other item on its screen. */
+	/** The item widget a press off the menu is on: the item the menu is beside, or any other item on its screen. */
 	UInventoryItemWidget* FindItemWidgetUnder(const FVector2D& ScreenPosition) const;
 
 	/** Whether Press on the item widget's item would only open a menu for this menu's item again, so passing it through only closes this one. */
@@ -442,92 +193,16 @@ private:
 	void BindScreen(UInventoryScreenWidget* NewScreen);
 	void HandleScreenDeactivated();
 
-	// Closing
-	/** Closes the menu after its close transition and Close Animation, then calls After Close. */
-	void CloseThen(TFunction<void()>&& AfterClose);
-
-	/** Closes the menu once its close transition and Close Animation have both ended. */
-	void FinishClosingWhenDone();
-	void FinishClosing();
-	void PlayCloseSound();
-
-	// Transition
-	/**
-	 * Moves the transition on each frame while one plays, from the core ticker, so it plays whether or not the menu ticks, with the game
-	 * paused too. A close finishes once it ends.
-	 */
-	void StartTransitionTicker();
-
 	// Actions
 	void ClearActionButtons();
 	void HandleActionClicked(int32 Index);
-	void HandleActionHovered(int32 Index);
 	void RunAction(UInventoryItemAction* Action, int32 Count);
 
-	/** Says something in the screen's action hint. Empty gives the screen its own hint back. */
-	void ShowHint(const FText& Hint);
-
-	/** Says what the shown action does, or why it can't run, in the screen's action hint. */
-	void ShowHintFor(int32 Index);
-
-	// Highlight
-	/**
-	 * Highlights an entry, so the hint says what its action does, and with Keep Entry Highlighted, it's selected. With bFocus, it takes
-	 * focus too, so Accept runs it, as for the mouse. Anything but an entry leaves the highlight where it was.
-	 */
-	void HighlightEntry(UCommonButtonBase* Entry, bool bFocus);
-	void ClearHighlight();
-
-	/** Whether the button is an entry: one of the menu's buttons, the prompt's included. */
-	bool IsEntry(UCommonButtonBase* Button) const;
-
-	/** Whether the button is one of the prompt's, such as Confirm Button. */
-	bool IsPromptButton(UCommonButtonBase* Button) const;
-
-	/** Every entry, shown or not: the buttons in Menu Panel and the prompt's. */
-	void ForEachEntry(TFunctionRef<void(UCommonButtonBase&)> Callback) const;
-
-	/**
-	 * Has Slate work out again what's under the cursor on the next frame, so a button hidden or moved out from under it stops looking
-	 * hovered, such as the action whose prompt replaced the actions. Otherwise it would show hovered again, beside the highlighted entry,
-	 * the next time it shows.
-	 */
-	void RefreshHover();
-
-	// Prompt
-	bool IsPrompting() const { return PromptIndex != INDEX_NONE; }
-	void ShowPrompt(int32 Index);
-	void HidePrompt();
-	void RefreshPrompt();
-	int32 GetChosenCount() const;
-	void HandlePromptConfirmed();
-	void HandlePromptCancelled();
-
-	UFUNCTION()
-	void HandleQuantityChanged(float Value);
-
-	/** Moves focus to Get Desired Focus Target on the next frame, once what just showed is laid out and can take it. */
-	void FocusNextFrame();
-
-	void HandleInputMethodChanged(ECommonInputType InputType);
-
-	/** Binds Confirm to click the button under the mouse while there is one, with the mouse in use, and otherwise only to show it. */
-	void RefreshConfirm();
-	void HandleConfirmAction();
-
-	/** The button in Menu Panel the mouse is on, if it can be clicked. */
-	UCommonButtonBase* FindHoveredButton() const;
-
-	FUIActionBindingHandle ConfirmHandle;
-	bool bConfirmClicks = false;
+	/** What an action asks before it runs, with {Item} filled in, and {Count} and {Max} left for the prompt to fill in as the count changes. */
+	FModularPromptRequest MakePromptRequest(const UInventoryItemAction& Action, const FInventoryItemActionContext& Context) const;
+	const FShownAction* FindShownAction(const UCommonButtonBase* Button) const;
 
 	FInventoryItemHandle Item;
-	TWeakObjectPtr<UInventoryItemWidget> AnchorWidget;
-	FBox2D Anchor = FBox2D(ForceInit);
-
-	/** Where the cursor was as the menu opened, in absolute space, for At Cursor, so the menu stays there as its size changes. */
-	TOptional<FVector2D> OpeningCursor;
-
 	TWeakObjectPtr<UInventoryScreenWidget> Screen;
 
 	TWeakObjectPtr<UInventoryItemWidget> PressedItemWidget;
@@ -539,36 +214,17 @@ private:
 	TArray<FShownAction> ShownActions;
 
 	UPROPERTY(Transient)
-	TArray<TObjectPtr<UInventoryItemActionButton>> MadeButtons;
+	TArray<TObjectPtr<UInventoryItemActionButton>> MadeActionButtons;
 
-	/** The shown action a prompt asks about, or none. */
-	int32 PromptIndex = INDEX_NONE;
-	bool bPromptQuantity = false;
-	int32 PromptDefaultCount = 1;
-	int32 PromptMaxCount = 1;
+#if WITH_EDITORONLY_DATA
+	// Replaced by the context menu's Right Click and Input Config. Loaded only so PostLoad can carry a menu's settings over.
+	UPROPERTY()
+	EModularMenuOutsideClick RightPressOutside_DEPRECATED = EModularMenuOutsideClick::PassThrough;
 
-	/** How the designer left the panels, to show them again as they were. */
-	ESlateVisibility ActionPanelVisibility = ESlateVisibility::SelfHitTestInvisible;
-	ESlateVisibility PromptPanelVisibility = ESlateVisibility::SelfHitTestInvisible;
+	UPROPERTY()
+	bool bCloseOnRightPress_DEPRECATED = true;
 
-	/** The menu is closing: its close transition or Close Animation plays, and it closes once they end. */
-	bool bClosing = false;
-	TFunction<void()> AfterClosing;
-
-	/** Close Animation is playing as the menu closes, so it waits for that too. */
-	bool bWaitingForCloseAnimation = false;
-
-	/** Fades the whole menu, and slides and grows Menu Panel. */
-	FModularUITransitionPlayer TransitionPlayer;
-	FTSTicker::FDelegateHandle TransitionHandle;
-
-	FTSTicker::FDelegateHandle FocusHandle;
-	FTSTicker::FDelegateHandle PlaceHandle;
-	FTSTicker::FDelegateHandle HoverHandle;
-
-	/** The entry highlighted now. Kept as the menu closes, and cleared as Set Item lists the actions again. */
-	TWeakObjectPtr<UCommonButtonBase> HighlightedEntry;
-
-	/** The entry whose action the prompt asks about, highlighted again as the prompt goes. */
-	TWeakObjectPtr<UCommonButtonBase> PromptEntry;
+	UPROPERTY()
+	bool bGameKeepsInput_DEPRECATED = false;
+#endif
 };

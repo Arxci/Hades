@@ -4,11 +4,14 @@
 
 #include "Components/ActorComponent.h"
 #include "GameplayTagContainer.h"
+#include "InputTriggers.h"
 
 #include "InventoryTypes.h"
 
 #include "InventoryShortcutComponent.generated.h"
 
+class UEnhancedInputComponent;
+class UInputAction;
 class UInventoryComponent;
 class UInventoryItemDefinition;
 struct FInventoryRegistry;
@@ -31,6 +34,13 @@ struct MODULARINVENTORY_API FInventoryShortcutSlotDefinition
 	/** Only items that match go on this slot, on top of the component's Filter, such as only consumables on a quick-use slot. Empty takes any. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shortcut")
 	FInventoryItemQuery Filter;
+
+	/**
+	 * The input action that activates the slot, such as IA_Shortcut1. Bind Slot Inputs binds it, and shortcut widgets show the key the
+	 * player has mapped to it, so rebinding the key changes both. Optional.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shortcut")
+	TObjectPtr<const UInputAction> InputAction = nullptr;
 };
 
 
@@ -102,6 +112,9 @@ struct MODULARINVENTORY_API FInventoryShortcutSlots
 	/** Trades two slots' items, when each slot takes the other's. An empty slot can be swapped with. */
 	bool Swap(const FInventoryRegistry& Registry, const FInventoryShortcutRules& Rules, int32 SlotA, int32 SlotB);
 
+	/** A further check whether a slot takes an item, on top of the rules' filters, such as a component's Accepts Item. Unset takes what they do. */
+	void SetSlotFilter(TFunction<bool(int32 SlotIndex, FInventoryItemHandle Item)>&& InSlotFilter) { SlotFilter = MoveTemp(InSlotFilter); }
+
 	/**
 	 * Follows the inventory after it changed: a slot whose item is no longer held points at another of the same kind with Follow Same Kind,
 	 * or empties; with Auto Assign New Items, items held now that weren't at the last refresh go on free slots. True when any slot changed.
@@ -121,17 +134,22 @@ private:
 
 	/** The items held at the last refresh, to tell new finds. */
 	TSet<FInventoryItemHandle> Known;
+
+	TFunction<bool(int32, FInventoryItemHandle)> SlotFilter;
 };
 
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FInventoryShortcutsChangedSignature);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FInventoryShortcutActivatedSignature, int32, SlotIndex, FInventoryItemHandle, Item);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FInventoryShortcutSelectedSignature, int32, SlotIndex, FInventoryItemHandle, Item);
 
 
 /**
- * Shortcut slots that point at items the owner carries, without moving them: quick slots, favorites, a weapon wheel. A slot follows its
- * item wherever it moves in the owner's inventory, and when the item leaves, the slot empties, or points at another of the same kind.
- * Activating a slot only reports it, with On Shortcut Activated, so each game decides what that does: draw a weapon, use a potion, cast.
+ * Shortcut slots that point at items the owner carries, without moving them: quick slots, favorites, a weapon wheel, a hotbar. A slot
+ * follows its item wherever it moves in the owner's inventory, and when the item leaves, the slot empties, or points at another of the
+ * same kind. Activating a slot only reports it, with On Shortcut Activated, so each game decides what that does: draw a weapon, use a
+ * potion, cast. One slot can be selected, such as a hotbar's, moved with Cycle Selected Slot and activated with Activate Selected Slot.
+ * Each slot can have an input action: Bind Slot Inputs activates the slot with it, and shortcut widgets show its key.
  * Needs an Inventory Component on the same actor. For a hotbar that holds the items themselves, use a container instead.
  */
 UCLASS(Blueprintable, ClassGroup = (Inventory), meta = (BlueprintSpawnableComponent))
@@ -174,6 +192,37 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Shortcuts")
 	void ActivateSlotWithTag(FGameplayTag SlotTag);
 
+	/**
+	 * Binds each slot's input action, from Get Slot Input Action, so it activates the slot on Trigger Event, once as it's pressed by default,
+	 * such as from the pawn's Setup Player Input Component. Slots without one are left out. Bind once per input component.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Shortcuts")
+	void BindSlotInputs(UEnhancedInputComponent* InputComponent, ETriggerEvent TriggerEvent = ETriggerEvent::Started);
+
+	/** The input action that activates the slot: its definition's Input Action by default. Shortcut widgets show the key mapped to it. */
+	UFUNCTION(BlueprintNativeEvent, BlueprintPure, Category = "Inventory|Shortcuts")
+	const UInputAction* GetSlotInputAction(int32 SlotIndex) const;
+
+	// Selection: one slot can be the selected one, such as a hotbar's, which a key activates whatever it holds.
+	/** Selects the slot, or none with -1. On Shortcut Selected fires when that changes the selection. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Shortcuts")
+	void SelectSlot(int32 SlotIndex);
+
+	/**
+	 * Moves the selection Step slots on, such as 1 for the mouse wheel down and -1 for up, wrapping around the ends. With Skip Empty, empty
+	 * slots are passed over, unless every slot is empty. With nothing selected, it starts from before the first slot.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Shortcuts")
+	void CycleSelectedSlot(int32 Step = 1, bool bSkipEmpty = false);
+
+	/** The selected slot, or -1. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Shortcuts")
+	int32 GetSelectedSlot() const { return SelectedSlot; }
+
+	/** Activates the selected slot, such as with a hotbar's Use key. Nothing while no slot is selected. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Shortcuts")
+	void ActivateSelectedSlot();
+
 	/** The slot's item; unset while it's empty. */
 	UFUNCTION(BlueprintPure, Category = "Inventory|Shortcuts")
 	FInventoryItemHandle GetSlotItem(int32 SlotIndex) const;
@@ -211,6 +260,10 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Inventory|Shortcuts")
 	FInventoryShortcutActivatedSignature OnShortcutActivated;
 
+	/** Another slot was selected, or none with -1, with its item, unset for an empty slot. */
+	UPROPERTY(BlueprintAssignable, Category = "Inventory|Shortcuts")
+	FInventoryShortcutSelectedSignature OnShortcutSelected;
+
 protected:
 	//~ Begin UActorComponent Interface
 	virtual void BeginPlay() override;
@@ -219,6 +272,16 @@ protected:
 
 	/** Before On Shortcut Activated, for C++ subclasses that decide what activating a slot does. */
 	virtual void NativeOnShortcutActivated(int32 SlotIndex, FInventoryItemHandle Item) {}
+
+	/**
+	 * Whether the slot takes the item, on top of Filter and the slot's own, such as only what the owner can hold or use. True by default.
+	 * Asked of items being put on slots by hand, by Auto Assign New Items and by Follow Same Kind alike.
+	 */
+	UFUNCTION(BlueprintNativeEvent, Category = "Inventory|Shortcuts")
+	bool AcceptsItem(int32 SlotIndex, FInventoryItemHandle Item) const;
+
+	/** The owner's Inventory Component, found as play begins. */
+	UInventoryComponent* GetInventory() const { return Inventory; }
 
 	/** The slots, what they take, and how they follow the inventory. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory|Shortcuts", meta = (ShowOnlyInnerProperties))
@@ -240,4 +303,5 @@ private:
 	TObjectPtr<UInventoryComponent> Inventory;
 
 	FInventoryShortcutSlots Slots;
+	int32 SelectedSlot = INDEX_NONE;
 };

@@ -1161,6 +1161,11 @@ EInventoryError FInventoryRegistry::AddStackBonus(FInventoryContainerHandle Cont
 
 EInventoryError FInventoryRegistry::SortContainer(FInventoryContainerHandle Container)
 {
+	return SortContainer(Container, FInventorySortSettings());
+}
+
+EInventoryError FInventoryRegistry::SortContainer(FInventoryContainerHandle Container, const FInventorySortSettings& Settings)
+{
 	TRACE_CPUPROFILER_EVENT_SCOPE(Inventory_SortContainer);
 
 	const FInventoryContainerRecord* Record = FindContainer(Container);
@@ -1174,19 +1179,64 @@ EInventoryError FInventoryRegistry::SortContainer(FInventoryContainerHandle Cont
 		return EInventoryError::Rejected;
 	}
 
-	// Biggest first in a grid, so the big items find room.
-	TArray<FInventoryItemHandle> Sorted = Record->Items;
-	Sorted.StableSort([this, bGrid](const FInventoryItemHandle& A, const FInventoryItemHandle& B)
+	// Where an item's tags first appear in Tag Order, or past its end without any of them.
+	auto GetTagRank = [this, &Settings](const FInventoryItemHandle& Item)
 	{
-		const UInventoryItemDefinition& DefinitionA = *Items[A.Index].Definition;
-		const UInventoryItemDefinition& DefinitionB = *Items[B.Index].Definition;
-		const int32 AreaA = DefinitionA.Size.X * DefinitionA.Size.Y;
-		const int32 AreaB = DefinitionB.Size.X * DefinitionB.Size.Y;
-		if (bGrid && AreaA != AreaB)
+		const FGameplayTagContainer Tags = GetItemTags(Item);
+		const int32 Rank = Settings.TagOrder.IndexOfByPredicate([&Tags](const FGameplayTag& Tag) { return Tag.IsValid() && Tags.HasTag(Tag); });
+		return Rank == INDEX_NONE ? Settings.TagOrder.Num() : Rank;
+	};
+
+	// Negative when A goes first, positive when B does, by the first key they differ by.
+	auto Compare = [this, bGrid, &Settings, &GetTagRank](const FInventoryItemHandle& A, const FInventoryItemHandle& B) -> int32
+	{
+		const FInventoryItemRecord& RecordA = Items[A.Index];
+		const FInventoryItemRecord& RecordB = Items[B.Index];
+		const UInventoryItemDefinition& DefinitionA = *RecordA.Definition;
+		const UInventoryItemDefinition& DefinitionB = *RecordB.Definition;
+		for (const EInventorySortKey Key : Settings.Keys)
 		{
-			return AreaA > AreaB;
+			int32 Order = 0;
+			switch (Key)
+			{
+			case EInventorySortKey::Size:
+				Order = bGrid ? (DefinitionB.Size.X * DefinitionB.Size.Y) - (DefinitionA.Size.X * DefinitionA.Size.Y) : 0;
+				break;
+			case EInventorySortKey::Name:
+				Order = DefinitionA.DisplayName.CompareTo(DefinitionB.DisplayName);
+				break;
+			case EInventorySortKey::Category:
+				Order = DefinitionA.Category.CompareTo(DefinitionB.Category);
+				break;
+			case EInventorySortKey::TagOrder:
+				Order = GetTagRank(A) - GetTagRank(B);
+				break;
+			case EInventorySortKey::TagValue:
+				if (Settings.ValueTag.IsValid())
+				{
+					const bool bHasA = HasTagValue(A, Settings.ValueTag);
+					const bool bHasB = HasTagValue(B, Settings.ValueTag);
+					const float ValueA = bHasA ? GetTagValue(A, Settings.ValueTag) : 0.0f;
+					const float ValueB = bHasB ? GetTagValue(B, Settings.ValueTag) : 0.0f;
+					Order = bHasA != bHasB ? (bHasA ? -1 : 1) : ValueA > ValueB ? -1 : ValueA < ValueB ? 1 : 0;
+				}
+				break;
+			case EInventorySortKey::Count:
+				Order = RecordB.Count - RecordA.Count;
+				break;
+			}
+			if (Order != 0)
+			{
+				return Settings.bReverse ? -Order : Order;
+			}
 		}
-		return DefinitionA.DisplayName.CompareTo(DefinitionB.DisplayName) < 0;
+		return 0;
+	};
+
+	TArray<FInventoryItemHandle> Sorted = Record->Items;
+	Sorted.StableSort([&Compare](const FInventoryItemHandle& A, const FInventoryItemHandle& B)
+	{
+		return Compare(A, B) < 0;
 	});
 
 	return RunTransaction([&]() -> EInventoryError
@@ -1198,7 +1248,7 @@ EInventoryError FInventoryRegistry::SortContainer(FInventoryContainerHandle Cont
 
 		for (const FInventoryItemHandle& Item : Sorted)
 		{
-			if (TopUpStacks(Item.Index, Container))
+			if (Settings.bMergeStacks && TopUpStacks(Item.Index, Container))
 			{
 				continue;
 			}

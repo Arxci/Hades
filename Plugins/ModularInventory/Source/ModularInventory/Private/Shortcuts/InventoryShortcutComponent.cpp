@@ -1,6 +1,8 @@
 ﻿#include "Shortcuts/InventoryShortcutComponent.h"
 
+#include "EnhancedInputComponent.h"
 #include "GameFramework/Actor.h"
+#include "InputAction.h"
 
 #include "Data/InventoryItemDefinition.h"
 #include "InventoryComponent.h"
@@ -37,7 +39,11 @@ bool FInventoryShortcutSlots::SlotTakes(const FInventoryRegistry& Registry, cons
 	{
 		return false;
 	}
-	return !Rules.Slots.IsValidIndex(SlotIndex) || Registry.MatchesQuery(Item, Rules.Slots[SlotIndex].Filter);
+	if (Rules.Slots.IsValidIndex(SlotIndex) && !Registry.MatchesQuery(Item, Rules.Slots[SlotIndex].Filter))
+	{
+		return false;
+	}
+	return !SlotFilter || SlotFilter(SlotIndex, Item);
 }
 
 bool FInventoryShortcutSlots::HasKindOnSlot(const FInventoryRegistry& Registry, FInventoryItemHandle Item) const
@@ -211,6 +217,86 @@ UInventoryShortcutComponent::UInventoryShortcutComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
 	Rules.Slots.SetNum(4);
+
+	// The slots aren't copied from archetypes, so each component asks itself.
+	Slots.SetSlotFilter([this](int32 SlotIndex, FInventoryItemHandle Item)
+	{
+		return AcceptsItem(SlotIndex, Item);
+	});
+}
+
+bool UInventoryShortcutComponent::AcceptsItem_Implementation(int32 SlotIndex, FInventoryItemHandle Item) const
+{
+	return true;
+}
+
+const UInputAction* UInventoryShortcutComponent::GetSlotInputAction_Implementation(int32 SlotIndex) const
+{
+	return Rules.Slots.IsValidIndex(SlotIndex) ? Rules.Slots[SlotIndex].InputAction.Get() : nullptr;
+}
+
+void UInventoryShortcutComponent::BindSlotInputs(UEnhancedInputComponent* InputComponent, ETriggerEvent TriggerEvent)
+{
+	if (!InputComponent)
+	{
+		return;
+	}
+	for (int32 SlotIndex = 0; SlotIndex < GetNumSlots(); ++SlotIndex)
+	{
+		if (const UInputAction* SlotInput = GetSlotInputAction(SlotIndex))
+		{
+			InputComponent->BindAction(SlotInput, TriggerEvent, this, &ThisClass::ActivateSlot, SlotIndex);
+		}
+	}
+}
+
+// Selection
+void UInventoryShortcutComponent::SelectSlot(int32 SlotIndex)
+{
+	const int32 NewSelection = SlotIndex >= 0 && SlotIndex < GetNumSlots() ? SlotIndex : INDEX_NONE;
+	if (NewSelection != SelectedSlot)
+	{
+		SelectedSlot = NewSelection;
+		OnShortcutSelected.Broadcast(SelectedSlot, Slots.Get(SelectedSlot));
+	}
+}
+
+void UInventoryShortcutComponent::CycleSelectedSlot(int32 Step, bool bSkipEmpty)
+{
+	const int32 NumSlots = GetNumSlots();
+	if (NumSlots == 0 || Step == 0)
+	{
+		return;
+	}
+
+	// Empty slots are only passed over while some slot has an item, so the selection always lands somewhere.
+	bool bAnyFilled = false;
+	for (int32 Index = 0; Index < NumSlots && !bAnyFilled; ++Index)
+	{
+		bAnyFilled = Slots.Get(Index).IsSet();
+	}
+	const bool bSkip = bSkipEmpty && bAnyFilled;
+
+	// From before the first slot, or after the last going back, when nothing is selected.
+	const int32 Direction = Step > 0 ? 1 : -1;
+	int32 Candidate = SelectedSlot != INDEX_NONE ? SelectedSlot : (Direction > 0 ? -1 : NumSlots);
+	for (int32 Moved = 0; Moved < FMath::Abs(Step); ++Moved)
+	{
+		do
+		{
+			Candidate = (Candidate + Direction + NumSlots) % NumSlots;
+		}
+		while (bSkip && !Slots.Get(Candidate).IsSet());
+	}
+	SelectSlot(Candidate);
+}
+
+void UInventoryShortcutComponent::ActivateSelectedSlot()
+{
+	if (SelectedSlot != INDEX_NONE)
+	{
+		ActivateSlot(SelectedSlot);
+	}
 }
 
 UInventoryShortcutComponent* UInventoryShortcutComponent::FindShortcutComponent(const AActor* Actor)
