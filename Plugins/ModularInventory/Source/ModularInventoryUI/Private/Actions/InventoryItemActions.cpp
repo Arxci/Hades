@@ -3,6 +3,7 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 
+#include "Crafting/InventoryRecipe.h"
 #include "Data/InventoryCapacityUpgrade.h"
 #include "Data/InventoryEquipRules.h"
 #include "Data/InventoryItemDefinition.h"
@@ -12,6 +13,7 @@
 #include "InventorySubsystem.h"
 #include "InventoryUISubsystem.h"
 #include "Shortcuts/InventoryShortcutComponent.h"
+#include "Widgets/InventoryRecipeMenuWidget.h"
 #include "Widgets/InventoryScreenWidget.h"
 #include "Widgets/InventoryShortcutMenuWidget.h"
 
@@ -303,6 +305,62 @@ void UInventoryItemAction_AssignShortcut::Run_Implementation(const FInventoryIte
 	{
 		Context.Screen->OpenItemMenu(Context.Item, MenuClass);
 	}
+}
+
+// Craft
+UInventoryItemAction_Craft::UInventoryItemAction_Craft()
+{
+	DisplayName = LOCTEXT("CraftName", "Craft");
+	Description = LOCTEXT("CraftDescription", "Make something from this item.");
+}
+
+const UInventoryRecipeBook* UInventoryItemAction_Craft::GetRecipeBook(const FInventoryItemActionContext& Context) const
+{
+	if (RecipeBook)
+	{
+		return RecipeBook;
+	}
+	const UInventoryRecipeMenuWidget* MenuDefaults = MenuClass ? GetDefault<UInventoryRecipeMenuWidget>(MenuClass) : nullptr;
+	return MenuDefaults ? MenuDefaults->GetDefaultRecipeBook() : nullptr;
+}
+
+bool UInventoryItemAction_Craft::CanRun_Implementation(const FInventoryItemActionContext& Context) const
+{
+	const UInventoryComponent* Crafter = FindPlayerInventory(Context);
+	const UInventoryRecipeBook* Book = GetRecipeBook(Context);
+	if (!MenuClass || !Context.Screen || !Crafter || !Book)
+	{
+		return false;
+	}
+
+	const TArray<UInventoryRecipe*> Recipes = Crafter->GetRecipesUsing(Book, Context.Item);
+	if (!bOnlyWhenCraftable)
+	{
+		return !Recipes.IsEmpty();
+	}
+	return Recipes.ContainsByPredicate([this, Crafter](const UInventoryRecipe* Recipe)
+	{
+		return Crafter->GetCraftError(Recipe, ContextTags, 1) == EInventoryError::None;
+	});
+}
+
+void UInventoryItemAction_Craft::Run_Implementation(const FInventoryItemActionContext& Context)
+{
+	if (!Context.Screen)
+	{
+		return;
+	}
+
+	// The menu is given its recipes before its item, so it lists them as it's measured and placed.
+	const UInventoryRecipeBook* Book = GetRecipeBook(Context);
+	const FGameplayTagContainer& Tags = ContextTags;
+	Context.Screen->OpenItemMenuWith(Context.Item, MenuClass, [Book, &Tags](UInventoryItemMenuWidget& Menu)
+	{
+		if (UInventoryRecipeMenuWidget* RecipeMenu = Cast<UInventoryRecipeMenuWidget>(&Menu))
+		{
+			RecipeMenu->SetRecipeSource(Book, Tags);
+		}
+	});
 }
 
 #undef LOCTEXT_NAMESPACE

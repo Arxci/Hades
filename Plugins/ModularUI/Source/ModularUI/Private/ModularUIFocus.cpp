@@ -2,6 +2,7 @@
 
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/WidgetTree.h"
+#include "Components/PanelWidget.h"
 #include "Components/Widget.h"
 #include "Engine/LocalPlayer.h"
 #include "Framework/Application/SlateApplication.h"
@@ -9,6 +10,8 @@
 #include "HAL/PlatformTime.h"
 #include "Layout/WidgetPath.h"
 #include "Slate/SObjectWidget.h"
+
+#include "ModularActivatableWidget.h"
 
 bool ModularUI::IsWidgetDrawn(const UWidget& Widget)
 {
@@ -124,4 +127,37 @@ UWidget* ModularUI::FindWidgetByName(UWidget& Root, FName Name)
 		}
 	});
 	return Found;
+}
+
+UWidget* ModularUI::GetEnclosingWidget(const UWidget& Widget)
+{
+	if (UPanelWidget* Parent = Widget.GetParent())
+	{
+		return Parent;
+	}
+
+	// At the top of a user widget's designer, the widget tree's outer is that user widget.
+	return Widget.GetTypedOuter<UUserWidget>();
+}
+
+UModularActivatableWidget* ModularUI::FindDescriptionOwner(const UWidget& Widget)
+{
+	UModularActivatableWidget* Nearest = nullptr;
+	for (UWidget* Current = GetEnclosingWidget(Widget); Current; Current = GetEnclosingWidget(*Current))
+	{
+		UModularActivatableWidget* Activatable = Cast<UModularActivatableWidget>(Current);
+		if (!Activatable)
+		{
+			continue;
+		}
+		if (Activatable->HasDescriptionLine())
+		{
+			return Activatable;
+		}
+		if (!Nearest)
+		{
+			Nearest = Activatable;
+		}
+	}
+	return Nearest;
 }

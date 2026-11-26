@@ -151,6 +151,15 @@ FText UHadesInteractableComponent::GetPromptText() const
 	return !bInteractionEnabled && !DisabledText.IsEmpty() ? DisabledText : InteractionText;
 }
 
+void UHadesInteractableComponent::SetShowPromptMessage(bool bShow)
+{
+	if (bShowPromptMessage != bShow)
+	{
+		bShowPromptMessage = bShow;
+		OnPromptChanged.Broadcast();
+	}
+}
+
 void UHadesInteractableComponent::CompleteInteraction()
 {
 	AActor* Interactor = ResetInteraction(HadesGameplayTags::Interactable_Event_Completed);

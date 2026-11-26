@@ -39,7 +39,9 @@ enum class EModularMessageFeedMode : uint8
  * HUD, or in the root layout to show over menus too, and give each its Channels.
  * With an Entry Class, each message is an entry made in Entry Panel. Without one, the feed shows one message at a time in its own named
  * widgets, Title Text, Message Text, Icon Image, Count Text and Key Widget, inside Message Panel.
- * Messages time out in real time, so they go while the game is paused too.
+ * Messages time out in real time, so they go while the game is paused too. One that stays until it's hidden, with a key and no time, such as
+ * what the player is looking at, comes back after a newer message took its place and has gone, unless it was hidden meanwhile. With the log
+ * category LogModularUI at Verbose, the log says as each message shows and goes, and why it goes.
  */
 UCLASS(Abstract)
 class MODULARUI_API UModularMessageFeed : public UUserWidget
@@ -92,7 +94,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Message Feed")
 	EModularMessageFeedMode Mode = EModularMessageFeedMode::Replace;
 
-	/** How long a message shows, in seconds, when it doesn't say. 0 shows it until it's hidden or replaced. */
+	/**
+	 * How long a message shows, in seconds, when it doesn't say: one with a Duration below 0. 0 shows it until it's hidden or replaced. A
+	 * message's own Duration, such as 0 for what the player is looking at, always comes first.
+	 */
 	UPROPERTY(EditAnywhere, Category = "Message Feed", meta = (ClampMin = "0", Units = "s"))
 	float DefaultDuration = 3.0f;
 
@@ -183,20 +188,36 @@ private:
 	FShownMessage* FindRepeat(const FModularMessage& Message);
 	int32 CountShowing() const;
 
+	/** How long the message shows here: its own Duration, or Default Duration. 0 until it's hidden. */
+	float GetDuration(const FModularMessage& Message) const;
+
+	/** Whether it stays until it's hidden by its key: it has a key, and shows here with no time. */
+	bool IsLasting(const FModularMessage& Message) const;
+
 	void Show(const FModularMessage& Message);
 	void Merge(FShownMessage& Into, const FModularMessage& Repeat);
-	void Hide(int32 Id);
+
+	/** Sends the message away, for Why, which the log says. */
+	void Hide(int32 Id, const TCHAR* Why);
 	void RemoveShown(int32 Id);
 	void Wait(const FModularMessage& Message);
+
+	/** Once one has gone: the next waiting in a queue, or else one a newer message took the place of, as there's room. */
 	void ShowNextWaiting();
 	void StartExpiry(FShownMessage& Message);
 
-	/** Drops every message at once, without hiding them. */
+	/** A newer message is taking the place of one showing: one that stays until hidden comes back once there's room again. */
+	void Displace(const FShownMessage& Message);
+
+	/** Drops every message shown and waiting at once, without hiding them. Those to come back stay. */
 	void Reset();
 
 	TArray<FShownMessage> Shown;
 	TArray<FModularMessage> Waiting;
 	int32 NextId = 0;
+
+	/** Messages that stay until hidden, which newer ones took the place of, the newest last, to come back once there's room. */
+	TArray<FModularMessage> Displaced;
 
 	UPROPERTY(Transient)
 	FUserWidgetPool EntryPool;

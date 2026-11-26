@@ -27,12 +27,17 @@ namespace
 			Controller->ShowMessage(Message);
 		}
 	}
+
+	UHadesInventoryComponent* FindHadesInventory(const FInventoryItemActionContext& Context)
+	{
+		const APawn* Pawn = Context.Player ? Context.Player->GetPawn() : nullptr;
+		return Cast<UHadesInventoryComponent>(UInventoryComponent::FindInventoryComponent(Pawn));
+	}
 }
 
 UHadesInventoryComponent* UHadesItemAction::GetPlayerInventory(const FInventoryItemActionContext& Context)
 {
-	const APawn* Pawn = Context.Player ? Context.Player->GetPawn() : nullptr;
-	return Cast<UHadesInventoryComponent>(UInventoryComponent::FindInventoryComponent(Pawn));
+	return FindHadesInventory(Context);
 }
 
 // Equip
@@ -81,18 +86,33 @@ void UHadesItemAction_Unequip::Run_Implementation(const FInventoryItemActionCont
 UHadesItemAction_Combine::UHadesItemAction_Combine()
 {
 	DisplayName = LOCTEXT("CombineName", "Combine");
-	Description = LOCTEXT("CombineDescription", "Combine the item with another one.");
+	Description = LOCTEXT("CombineDescription", "Combine items to make something new.");
+}
+
+const UInventoryRecipeBook* UHadesItemAction_Combine::GetRecipeBook(const FInventoryItemActionContext& Context) const
+{
+	// The player's own Combine Recipes, which choosing the other item combines from too, so both ways make the same things.
+	const UHadesInventoryComponent* Inventory = FindHadesInventory(Context);
+	const UInventoryRecipeBook* Book = Inventory ? Inventory->GetCombineRecipes() : nullptr;
+	return Book ? Book : Super::GetRecipeBook(Context);
 }
 
 bool UHadesItemAction_Combine::CanRun_Implementation(const FInventoryItemActionContext& Context) const
 {
-	const UHadesInventoryComponent* Inventory = GetPlayerInventory(Context);
-	return Inventory && GetInteraction(Context) && Inventory->CanCombine(Context.Item);
+	// The recipe list for anything a recipe takes, with Recipe List and a Menu Class; choosing the other item for everything else, such as a
+	// gun and its ammo.
+	const UHadesInventoryComponent* Inventory = FindHadesInventory(Context);
+	const bool bCanChoose = Inventory && GetInteraction(Context) && Inventory->CanCombine(Context.Item);
+	return bCanChoose || (Style == EHadesCombineStyle::RecipeList && Super::CanRun_Implementation(Context));
 }
 
 void UHadesItemAction_Combine::Run_Implementation(const FInventoryItemActionContext& Context)
 {
-	if (UInventoryUISubsystem* Interaction = GetInteraction(Context))
+	if (Style == EHadesCombineStyle::RecipeList && Super::CanRun_Implementation(Context))
+	{
+		Super::Run_Implementation(Context);
+	}
+	else if (UInventoryUISubsystem* Interaction = GetInteraction(Context))
 	{
 		Interaction->BeginChoosingItem(Context.Item);
 	}

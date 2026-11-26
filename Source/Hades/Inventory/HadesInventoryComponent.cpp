@@ -99,16 +99,15 @@ bool UHadesInventoryComponent::CanDropItem(FInventoryItemHandle Item) const
 
 bool UHadesInventoryComponent::CanCombine(FInventoryItemHandle Item) const
 {
-	if (!OwnsItem(Item))
-	{
-		return false;
-	}
+	return OwnsItem(Item) && (HasGunPartner(Item) || !GetRecipesUsing(CombineRecipes, Item).IsEmpty());
+}
 
-	const bool bHasGunPartner = FindItems(FInventoryItemQuery()).ContainsByPredicate([&](const FInventoryItemHandle& Other)
+bool UHadesInventoryComponent::HasGunPartner(FInventoryItemHandle Item) const
+{
+	return OwnsItem(Item) && FindItems(FInventoryItemQuery()).ContainsByPredicate([&](const FInventoryItemHandle& Other)
 	{
 		return FindGunLoadedBy(Item, Other).IsSet();
 	});
-	return bHasGunPartner || !GetRecipesUsing(CombineRecipes, Item).IsEmpty();
 }
 
 bool UHadesInventoryComponent::CombineItems(FInventoryItemHandle Item, FInventoryItemHandle Other)

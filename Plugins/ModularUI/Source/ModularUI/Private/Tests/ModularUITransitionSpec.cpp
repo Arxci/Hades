@@ -206,6 +206,42 @@ void FModularUITransitionSpec::Define()
 		});
 	});
 
+	Describe("Finish", [this]()
+	{
+		It("jumps to where coming in ends, shown and in place, from partway", [this]()
+		{
+			Player.PlayIn(MakeSlide());
+			Step();
+			Step();
+			Player.Finish();
+			TestFalse(TEXT("Nothing left to play"), Player.IsPlaying());
+			TestEqual(TEXT("Shown"), GetOpacity(), 1.0f, 0.01f);
+			TestEqual(TEXT("In place"), GetOffsetX(), 0.0f, 0.01f);
+		});
+
+		It("jumps to hidden when going back the way it came", [this]()
+		{
+			Player.PlayIn(MakeSlide());
+			Step();
+			Step();
+			Player.ReverseIn();
+			Player.Finish();
+			TestFalse(TEXT("Nothing left to play"), Player.IsPlaying());
+			TestEqual(TEXT("Hidden"), GetOpacity(), 0.0f, 0.01f);
+			TestEqual(TEXT("Back toward the origin"), GetOffsetX(), -20.0f, 0.01f);
+		});
+
+		It("leaves a finished transition as it is", [this]()
+		{
+			Player.PlayIn(MakeSlide());
+			while (Step())
+			{
+			}
+			Player.Finish();
+			TestEqual(TEXT("Still shown"), GetOpacity(), 1.0f, 0.01f);
+		});
+	});
+
 	Describe("Designer values", [this]()
 	{
 		It("adds to the opacity, offset and pivot set in the designer, growing from the corner nearest the origin", [this]()

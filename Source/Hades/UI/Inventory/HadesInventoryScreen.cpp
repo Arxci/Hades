@@ -34,6 +34,8 @@ UHadesInventoryScreen::UHadesInventoryScreen(const FObjectInitializer& ObjectIni
 	ItemsPage = 1;
 	bTabKeysTurnHeldItem = true;
 
+	// The line along the bottom of the screen: what to do with a held item, or which item to choose. An item menu says what its highlighted
+	// option does there. Browsing the items, it's empty: the details panel shows what the hovered item is.
 	MoveHint = LOCTEXT("MoveHint", "Select an area to place this item.");
 	ChooseHint = LOCTEXT("CombineHint", "Select an item to combine with.");
 	InvalidHint = LOCTEXT("InvalidHint", "That can't go there.");

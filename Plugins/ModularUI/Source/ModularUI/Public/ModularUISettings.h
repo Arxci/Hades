@@ -28,9 +28,9 @@ public:
 	// Layers
 	/**
 	 * The widget each local player's UI is laid out in, made and added to their screen once they have a player controller: a Widget
-	 * Blueprint whose parent is Modular Root Layout, holding a Modular Layer Stack for each layer, such as Game, Game Menu, Menu and Modal.
-	 * None makes no root layout, such as when another plugin, like Common Game, makes one; register its layers with the Modular UI
-	 * Subsystem, or place Modular Layer Stacks in it, so Modular UI can push onto them.
+	 * Blueprint whose parent is Modular Root Layout, holding a Common Activatable Widget Stack for each layer, such as Game, Game Menu, Menu
+	 * and Modal, each named in its Layers. None makes no root layout, such as when another plugin, like Common Game, makes one; register its
+	 * layers with the Modular UI Subsystem's Register Layer, or bind its On Find Layer, so Modular UI can push onto them.
 	 */
 	UPROPERTY(config, EditAnywhere, Category = "Layers")
 	TSoftClassPtr<UModularRootLayout> RootLayoutClass;

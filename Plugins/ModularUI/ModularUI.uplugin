@@ -3,7 +3,7 @@
 	"Version": 2,
 	"VersionName": "2.0",
 	"FriendlyName": "Modular UI",
-	"Description": "A Common UI framework for any project: screens with transitions and input modes, a layer system, context menus, prompts, buttons and tabs, input key icons, a message system for toasts, banners and hints, world markers, and pausing with a paused look.",
+	"Description": "A Common UI framework for any project: screens with transitions and input modes, a layer system, context menus, prompts, buttons, tabs and pages, a description line for what's highlighted, input key icons, a message system for toasts, banners and hints, world markers, and pausing with a paused look.",
 	"Category": "UI",
 	"CreatedBy": "",
 	"CreatedByURL": "",

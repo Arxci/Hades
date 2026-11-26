@@ -107,7 +107,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action")
 	FText DisplayName;
 
-	/** What it does, shown in the inventory screen's action hint while its entry is highlighted. */
+	/** What it does, shown in Description Text, the item menu's and the inventory screen's, while its entry is highlighted. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action", meta = (MultiLine = true))
 	FText Description;
 

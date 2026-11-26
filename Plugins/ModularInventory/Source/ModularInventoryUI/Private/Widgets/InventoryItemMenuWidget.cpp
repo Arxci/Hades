@@ -69,6 +69,13 @@ void UInventoryItemMenuWidget::PostLoad()
 		GameMouseCaptureMode = EMouseCaptureMode::NoCapture;
 		bGameKeepsInput_DEPRECATED = false;
 	}
+
+	// Show Hint On Screen was renamed Show Description On Screen.
+	if (!bShowHintOnScreen_DEPRECATED)
+	{
+		bShowDescriptionOnScreen = false;
+		bShowHintOnScreen_DEPRECATED = true;
+	}
 #endif
 }
 
@@ -149,8 +156,7 @@ void UInventoryItemMenuWidget::NativeOnDeactivated()
 	PressedItem = FInventoryItemHandle();
 	RegistryListener.Unbind();
 
-	// The screen says its own hint again. It stays the menu's screen, should the menu show again from under another, but no longer closes it.
-	ShowHint(FText::GetEmpty());
+	// It stays the menu's screen, should the menu show again from under another, but no longer closes it.
 	if (UInventoryScreenWidget* ClosedOn = Screen.Get())
 	{
 		ClosedOn->OnDeactivated().RemoveAll(this);
@@ -164,13 +170,6 @@ void UInventoryItemMenuWidget::NativeOnDeactivated()
 	}
 
 	Super::NativeOnDeactivated();
-}
-
-void UInventoryItemMenuWidget::NativeOnCloseStarted()
-{
-	// The screen says its own hint again as the menu starts to go.
-	ShowHint(FText::GetEmpty());
-	Super::NativeOnCloseStarted();
 }
 
 UInventoryUISubsystem* UInventoryItemMenuWidget::GetInteraction() const
@@ -347,21 +346,16 @@ FText UInventoryItemMenuWidget::GetEntryDescription(UCommonButtonBase* Entry) co
 	return Super::GetEntryDescription(Entry);
 }
 
-void UInventoryItemMenuWidget::NativeOnEntryHighlighted(UCommonButtonBase* Entry, const FText& Description)
-{
-	Super::NativeOnEntryHighlighted(Entry, Description);
-
-	// Not while a prompt asks: the question is on screen.
-	UInventoryScreenWidget* ShownOn = Screen.Get();
-	if (ShownOn && bShowHintOnScreen && !IsPrompting())
-	{
-		ShownOn->ShowActionHint(Description);
-	}
-}
-
 UWidget* UInventoryItemMenuWidget::GetEntriesWidget() const
 {
 	return ActionPanel ? ActionPanel.Get() : Super::GetEntriesWidget();
+}
+
+UModularActivatableWidget* UInventoryItemMenuWidget::FindDescriptionScreen() const
+{
+	// The inventory screen the menu is for, wherever the menu was anchored.
+	UInventoryScreenWidget* MenuScreen = Screen.Get();
+	return MenuScreen && MenuScreen->HasDescriptionLine() ? MenuScreen : Super::FindDescriptionScreen();
 }
 
 void UInventoryItemMenuWidget::HandleActionClicked(int32 Index)
@@ -380,7 +374,7 @@ void UInventoryItemMenuWidget::HandleActionClicked(int32 Index)
 		const FText Reason = Action ? Action->GetUnavailableReasonFor(Context) : FText::GetEmpty();
 		if (!Reason.IsEmpty())
 		{
-			ShowHint(Reason);
+			DescribeHighlightedEntry(Reason);
 		}
 		return;
 	}
@@ -465,20 +459,10 @@ void UInventoryItemMenuWidget::RunAction(UInventoryItemAction* Action, int32 Cou
 		return;
 	}
 
-	// The menu starts to close first, so it takes no more input and the screen's hint is back, and a menu the action opens in the same
-	// stack replaces it at once.
+	// The menu starts to close first, so it takes no more input and the screen's description is back, and a menu the action opens in the
+	// same stack replaces it at once.
 	CloseMenu();
 	Run();
-}
-
-void UInventoryItemMenuWidget::ShowHint(const FText& Hint)
-{
-	ShowDescription(Hint);
-	UInventoryScreenWidget* ShownOn = Screen.Get();
-	if (ShownOn && bShowHintOnScreen)
-	{
-		ShownOn->ShowActionHint(Hint);
-	}
 }
 
 // Mouse: Outside Click and Right Click decide what a press off the menu does, as for any context menu. A press passed through goes on to

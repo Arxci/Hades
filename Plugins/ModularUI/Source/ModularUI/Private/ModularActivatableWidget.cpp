@@ -1,6 +1,7 @@
 ﻿#include "ModularActivatableWidget.h"
 
 #include "Animation/WidgetAnimation.h"
+#include "Components/TextBlock.h"
 #include "Input/CommonUIInputTypes.h"
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundBase.h"
@@ -12,6 +13,7 @@
 
 #include "ModularUIFocus.h"
 #include "ModularUIPauseSubsystem.h"
+#include "Widgets/ModularButton.h"
 
 #define LOCTEXT_NAMESPACE "ModularActivatableWidget"
 
@@ -74,6 +76,9 @@ void UModularActivatableWidget::NativeOnInitialized()
 	{
 		RegisterUIActionBinding(FBindUIActionArgs(CloseAction, false, FSimpleDelegate::CreateUObject(this, &ThisClass::CloseWidget)));
 	}
+
+	// Description Panel starts as it should, hidden while there's nothing to say, even for a widget shown before it's activated.
+	RefreshDescription();
 }
 
 void UModularActivatableWidget::RegisterConfirmAction()
@@ -107,6 +112,7 @@ void UModularActivatableWidget::NativeOnActivated()
 		PlayAnimation(OpenAnimation);
 	}
 	StartTicker();
+	RefreshDescription();
 }
 
 void UModularActivatableWidget::NativeOnDeactivated()
@@ -133,6 +139,12 @@ void UModularActivatableWidget::NativeOnDeactivated()
 	{
 		UGameplayStatics::PlaySound2D(this, CloseSound);
 	}
+
+	// Common UI reuses widgets, so what was said and highlighted doesn't carry over to the next opening.
+	SaidDescriptions.Reset();
+	HighlightedDescription = FText::GetEmpty();
+	HighlightedSource.Reset();
+	RefreshDescription();
 
 	Super::NativeOnDeactivated();
 }
@@ -226,7 +238,7 @@ void UModularActivatableWidget::FocusWhenDrawn(UWidget* Target)
 	});
 }
 
-void UModularActivatableWidget::CallWhenDrawn(UWidget* Target, TFunction<void(UWidget&)>&& Callback)
+void UModularActivatableWidget::CallWhenDrawn(UWidget* Target, TFunction<void(UWidget&)>&& Callback, float Timeout)
 {
 	ModularUI::CallWhenDrawn(DrawnHandle, *this, Target, [this, Callback = MoveTemp(Callback)](UWidget& Drawn)
 	{
@@ -234,7 +246,126 @@ void UModularActivatableWidget::CallWhenDrawn(UWidget* Target, TFunction<void(UW
 		{
 			Callback(Drawn);
 		}
-	});
+	}, Timeout);
+}
+
+// Description
+bool UModularActivatableWidget::HasDescriptionLine() const
+{
+	return DescriptionText != nullptr || DescriptionPanel != nullptr;
+}
+
+void UModularActivatableWidget::ShowDescription(const FText& Description)
+{
+	ShowDescriptionFrom(this, Description);
+}
+
+void UModularActivatableWidget::ShowDescriptionFrom(const UObject* Source, const FText& Description)
+{
+	if (!Source)
+	{
+		return;
+	}
+	if (Description.IsEmpty())
+	{
+		ClearDescriptionFrom(Source);
+		return;
+	}
+
+	// A source already saying something says this instead, where it is, so one that started saying something since stays first.
+	if (FSaidDescription* Said = SaidDescriptions.FindByPredicate([Source](const FSaidDescription& Other) { return Other.Source.Get() == Source; }))
+	{
+		Said->Text = Description;
+	}
+	else
+	{
+		FSaidDescription& Added = SaidDescriptions.AddDefaulted_GetRef();
+		Added.Source = Source;
+		Added.Text = Description;
+	}
+	RefreshDescription();
+}
+
+void UModularActivatableWidget::ClearDescriptionFrom(const UObject* Source)
+{
+	if (Source && SaidDescriptions.RemoveAll([Source](const FSaidDescription& Said) { return Said.Source.Get() == Source; }) > 0)
+	{
+		RefreshDescription();
+	}
+}
+
+void UModularActivatableWidget::HighlightForDescription(UWidget* Widget)
+{
+	if (Widget)
+	{
+		SetHighlightedDescription(GetDescriptionOf(*Widget), Widget);
+	}
+}
+
+void UModularActivatableWidget::UnhighlightForDescription(UWidget* Widget)
+{
+	ClearHighlightedDescription(Widget);
+}
+
+void UModularActivatableWidget::SetHighlightedDescription(const FText& Description, const UObject* Source)
+{
+	HighlightedDescription = Description;
+	HighlightedSource = Source;
+	RefreshDescription();
+}
+
+void UModularActivatableWidget::ClearHighlightedDescription(const UObject* Source, bool bEvenIfKept)
+{
+	// Only what's described now goes: another widget may have been highlighted since.
+	const bool bDescribed = Source && HighlightedSource.Get() == Source;
+	if (bDescribed && (bEvenIfKept || !bKeepLastDescription))
+	{
+		HighlightedDescription = FText::GetEmpty();
+		HighlightedSource.Reset();
+		RefreshDescription();
+	}
+}
+
+FText UModularActivatableWidget::GetDescriptionOf(const UWidget& Widget) const
+{
+	const UModularButton* Button = Cast<UModularButton>(&Widget);
+	return Button ? Button->GetDescription() : FText::GetEmpty();
+}
+
+void UModularActivatableWidget::RefreshDescription()
+{
+	// What's said on a source's behalf, the newest first, while its source is still there; then what this widget asks of the player; then
+	// what's highlighted, while it's still there; then the default.
+	SaidDescriptions.RemoveAll([](const FSaidDescription& Said) { return !Said.Source.IsValid(); });
+	FText Description = !SaidDescriptions.IsEmpty() ? SaidDescriptions.Last().Text : FText::GetEmpty();
+	if (Description.IsEmpty())
+	{
+		Description = GetHint();
+	}
+	if (Description.IsEmpty() && HighlightedSource.IsValid())
+	{
+		Description = HighlightedDescription;
+	}
+	if (Description.IsEmpty())
+	{
+		Description = DefaultDescription;
+	}
+
+	if (DescriptionText)
+	{
+		DescriptionText->SetText(Description);
+	}
+	if (DescriptionPanel)
+	{
+		// Hidden, not collapsed, so what's around it doesn't move.
+		DescriptionPanel->SetVisibility(Description.IsEmpty() ? ESlateVisibility::Hidden : ESlateVisibility::HitTestInvisible);
+	}
+	if (!Description.EqualTo(ShownDescription))
+	{
+		ShownDescription = Description;
+		NativeOnDescriptionChanged(ShownDescription);
+		OnDescriptionChanged(ShownDescription);
+	}
 }
 
 void UModularActivatableWidget::SetTransitionOrigin(const FVector2D& Away, const FVector2D& Corner)

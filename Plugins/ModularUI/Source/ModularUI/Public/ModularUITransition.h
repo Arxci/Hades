@@ -150,6 +150,9 @@ struct MODULARUI_API FModularUITransitionPlayer
 	/** Stops where it is. */
 	void Stop();
 
+	/** Jumps to where the transition playing ends, at once: shown after Play In, hidden after Play Out or Reverse In. */
+	void Finish();
+
 	/** Whether a transition is still playing, so Advance has more to do. */
 	bool IsPlaying() const { return Rate != 0.0f; }
 

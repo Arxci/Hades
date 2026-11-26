@@ -1025,3 +1025,96 @@ bool UInventoryComponent::CraftFromItems(const UInventoryRecipe* Recipe, const T
 	OutError = InventorySubsystem->GetRegistry().CraftFromItems(*Recipe, Items, GetStorageContainers(), GatherContextTags(ContextTags), 1, Stream, &OutItems);
 	return OutError == EInventoryError::None;
 }
+
+TArray<FInventoryItemHandle> UInventoryComponent::GatherCraftCandidates(TConstArrayView<FInventoryItemHandle> PreferredItems) const
+{
+	TArray<FInventoryItemHandle> Candidates;
+	const UInventorySubsystem* InventorySubsystem = GetSubsystem();
+	if (!InventorySubsystem)
+	{
+		return Candidates;
+	}
+
+	// The same items Craft takes from, those preferred moved to the front, so each ingredient takes from them before any other.
+	InventorySubsystem->GetRegistry().FindItems(GetStorageContainers(), FInventoryItemQuery(), true, Candidates);
+	int32 Front = 0;
+	for (const FInventoryItemHandle& Preferred : PreferredItems)
+	{
+		const int32 Index = Candidates.IndexOfByKey(Preferred);
+		if (Index >= Front)
+		{
+			Candidates.RemoveAt(Index);
+			Candidates.Insert(Preferred, Front++);
+		}
+	}
+	return Candidates;
+}
+
+bool UInventoryComponent::CraftPreferring(const UInventoryRecipe* Recipe, const TArray<FInventoryItemHandle>& PreferredItems, const FGameplayTagContainer& ContextTags,
+	int32 Times, TArray<FInventoryItemHandle>& OutItems, EInventoryError& OutError)
+{
+	OutItems.Reset();
+	UInventorySubsystem* InventorySubsystem = GetSubsystem();
+	if (!Recipe || !InventorySubsystem)
+	{
+		OutError = EInventoryError::InvalidDefinition;
+		return false;
+	}
+
+	const TArray<FInventoryItemHandle> Candidates = GatherCraftCandidates(PreferredItems);
+	FRandomStream Stream(FMath::Rand());
+	OutError = InventorySubsystem->GetRegistry().CraftFromItems(*Recipe, Candidates, GetStorageContainers(), GatherContextTags(ContextTags), Times, Stream, &OutItems);
+	return OutError == EInventoryError::None;
+}
+
+EInventoryError UInventoryComponent::GetCraftError(const UInventoryRecipe* Recipe, const FGameplayTagContainer& ContextTags, int32 Times) const
+{
+	UInventorySubsystem* InventorySubsystem = GetSubsystem();
+	if (!Recipe || !InventorySubsystem)
+	{
+		return EInventoryError::InvalidDefinition;
+	}
+
+	// The real craft, undone, so room for the results is known too. A fixed seed rolls random outputs the same way each time it's asked.
+	FInventoryRegistry& Registry = InventorySubsystem->GetRegistry();
+	const TArray<FInventoryContainerHandle> Storage = GetStorageContainers();
+	const FGameplayTagContainer AllContextTags = GatherContextTags(ContextTags);
+	FRandomStream Stream(0);
+	return Registry.DryRun([&]() { return Registry.Craft(*Recipe, Storage, Storage, AllContextTags, Times, Stream, nullptr); });
+}
+
+int32 UInventoryComponent::GetCraftableTimes(const UInventoryRecipe* Recipe, const FGameplayTagContainer& ContextTags, int32 MaxTimes) const
+{
+	const UInventorySubsystem* InventorySubsystem = GetSubsystem();
+	if (!Recipe || !InventorySubsystem || MaxTimes < 1 || GetCraftError(Recipe, ContextTags, 1) != EInventoryError::None)
+	{
+		return 0;
+	}
+
+	// No more than the consumed ingredients held allow, then the most of those that also fits, found by halving.
+	const TArray<FInventoryContainerHandle> Storage = GetStorageContainers();
+	int32 Most = MaxTimes;
+	for (const FInventoryRecipeIngredient& Ingredient : Recipe->Ingredients)
+	{
+		if (Ingredient.bConsume && Ingredient.Count > 0)
+		{
+			Most = FMath::Min(Most, InventorySubsystem->CountItems(Storage, Ingredient.Query, true) / Ingredient.Count);
+		}
+	}
+
+	int32 Works = 1;
+	int32 High = FMath::Max(1, Most);
+	while (Works < High)
+	{
+		const int32 Tried = Works + (High - Works + 1) / 2;
+		if (GetCraftError(Recipe, ContextTags, Tried) == EInventoryError::None)
+		{
+			Works = Tried;
+		}
+		else
+		{
+			High = Tried - 1;
+		}
+	}
+	return Works;
+}

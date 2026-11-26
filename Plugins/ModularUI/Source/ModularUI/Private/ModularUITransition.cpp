@@ -123,6 +123,20 @@ void FModularUITransitionPlayer::Stop()
 	Wait = 0.0f;
 }
 
+void FModularUITransitionPlayer::Finish()
+{
+	if (!IsPlaying())
+	{
+		return;
+	}
+
+	// Coming in ends shown, at 1. Going out ends hidden, at 1 too; going back the way it came in ends hidden, at 0.
+	Position = Rate > 0.0f ? 1.0f : 0.0f;
+	Rate = 0.0f;
+	Wait = 0.0f;
+	Apply(GetLook());
+}
+
 bool FModularUITransitionPlayer::Advance(float DeltaTime)
 {
 	if (!IsPlaying())

@@ -9,6 +9,9 @@
 #include "Components/TextBlock.h"
 #include "Engine/Texture2D.h"
 
+#include "ModularActivatableWidget.h"
+#include "ModularUIFocus.h"
+
 void UModularButton::SetLabelText(const FText& InText)
 {
 	LabelText = InText;
@@ -77,6 +80,7 @@ void UModularButton::NativeOnHovered()
 	Super::NativeOnHovered();
 
 	SetHoverLit(true);
+	SetHighlightedForDescription(true);
 }
 
 void UModularButton::NativeOnUnhovered()
@@ -84,6 +88,48 @@ void UModularButton::NativeOnUnhovered()
 	Super::NativeOnUnhovered();
 
 	SetHoverLit(false);
+	SetHighlightedForDescription(false);
+}
+
+void UModularButton::NativeOnAddedToFocusPath(const FFocusEvent& InFocusEvent)
+{
+	Super::NativeOnAddedToFocusPath(InFocusEvent);
+
+	SetHighlightedForDescription(true);
+}
+
+void UModularButton::NativeOnRemovedFromFocusPath(const FFocusEvent& InFocusEvent)
+{
+	Super::NativeOnRemovedFromFocusPath(InFocusEvent);
+
+	SetHighlightedForDescription(false);
+}
+
+void UModularButton::SetDescription(const FText& InDescription)
+{
+	Description = InDescription;
+	if (IsHovered() || HasAnyUserFocus())
+	{
+		SetHighlightedForDescription(true);
+	}
+}
+
+void UModularButton::SetHighlightedForDescription(bool bHighlighted)
+{
+	// Buttons without a description leave the screen's Description Text as it is, such as the last option's while the mouse crosses them.
+	UModularActivatableWidget* Screen = !IsDesignTime() ? ModularUI::FindDescriptionOwner(*this) : nullptr;
+	if (!Screen)
+	{
+		return;
+	}
+	if (!bHighlighted)
+	{
+		Screen->UnhighlightForDescription(this);
+	}
+	else if (!Description.IsEmpty())
+	{
+		Screen->HighlightForDescription(this);
+	}
 }
 
 void UModularButton::NativeOnSelected(bool bBroadcast)

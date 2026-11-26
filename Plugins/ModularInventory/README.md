@@ -45,7 +45,7 @@ A data-driven inventory system for Unreal Engine 5.7. Items live in grid, slot o
 | Loot | Weighted pools, nested tables, tag conditions and random tag values. |
 | Crafting | Recipes with consumed ingredients and tools, tag requirements, fixed and random outputs. |
 | Safety | Every change is a transaction: it fully succeeds or is fully undone. |
-| UI | Common UI screens and widgets for mouse, keyboard, gamepad and touch: drag and drop, placement previews, item menus and actions, numbers on items, details with stat comparisons, and shortcut bars. |
+| UI | Common UI screens and widgets for mouse, keyboard, gamepad and touch: drag and drop, placement previews, item menus and actions, recipe menus listing what an item makes, a description line, tabbed pages, numbers on items, details with stat comparisons, and shortcut bars. |
 | Shortcuts | Quick slots that point at items the owner carries, follow them as they move, and move on to the next of the same kind. |
 | Editor | A Modular Inventory menu on the Level Editor toolbar with this guide and the tools, an Inventory section in the Add menu, one-click item creation, an icon generator with a live studio, icon thumbnails, a socket preview, live loot drop rates, extra validation and automatic Asset Manager setup. |
 | Debugging | A Gameplay Debugger category, Unreal Insights scopes, automation tests, and a console command to give items. |
@@ -175,7 +175,7 @@ Only needed for the widgets.
   | Item Menu | Tab; Gamepad Face Button Left |
   | Transfer | T; Gamepad Right Shoulder |
 
-Pick the rows you want on your inventory screen ([11.3](#113-building-an-inventory-screen)). Each is bound only while it can work. See [11.4](#114-input-and-interaction-style) for what they do.
+Pick the rows you want on your inventory screen ([11.3](#113-building-an-inventory-screen)). Each is bound while the player is doing something it's for, such as Rotate while an item is held, as the screen's **Action Availability** says. See [11.4](#114-input-and-interaction-style) for what they do.
 
 ---
 
@@ -609,7 +609,7 @@ Turns ingredients into items. See [10. Crafting](#10-crafting).
 | Display Name | Name for crafting menus. |
 | Tags | Tags for your own logic, such as a category. |
 | Requirements | Tag query against the context tags: the station's tags you pass, plus the crafter's. Empty always passes. |
-| Ingredients | Each has a **Query**, a **Count** and **Consume**. Consume off makes it a tool that is required but kept. |
+| Ingredients | Each has a **Query**, a **Count** and **Consume**. Consume off makes it a tool that is required but kept. **Display Item** is what recipe menus show for it, such as one item standing for a tag query; without one they show the query's first definition, or the first held item that matches. |
 | Outputs | Item specs added on every craft. |
 | Random Outputs | A loot table rolled on every craft and added to the outputs. |
 | Fragments | Anything else your game needs, such as craft time. |
@@ -714,7 +714,7 @@ Gives an actor its own containers. Use it on characters, chests, drawers and pic
 | Add Container Stack Bonus (Container Tag, Item Query, Amount) | Lets matching items stack Amount higher in the container. |
 | Apply Capacity Upgrade (Item) / Can Apply Capacity Upgrade (Item) | Applies the item's Inventory Capacity Upgrade to the container its Container Tag names and uses one of the item up, wherever it is. Upgrades with Apply When Taken apply as they're picked up, so this is for the others, such as from the Apply Capacity Upgrade item action. |
 | Get Carried / Get Max Carried / Set Max Carried / Get Carry Room / Is Over Carry Limit | The carry limit ([4.9](#49-carry-limit)). |
-| Can Craft / Craft / Get Craftable Recipes | See [10](#10-crafting). |
+| Can Craft / Craft / Craft Preferring / Get Craft Error / Get Craftable Times / Get Craftable Recipes / Get Recipes Using | See [10](#10-crafting). |
 | **On Inventory Changed** (event) | Fires once per committed change touching any of its containers, nested ones included. |
 | **On Capacity Upgraded** (event) | A capacity upgrade was applied to one of its containers: the container's tag and the upgrade's definition, once for each upgrade used up. |
 | **On Over Carry Limit Changed** (event) | It went over its carry limit, or back under it. |
@@ -883,11 +883,17 @@ Open the table and look at its **Drop Rates** section. Set **Simulation Context*
 
 | Node | Use |
 | --- | --- |
-| Can Craft (Recipe, Context Tags, Times) | Enable or disable a craft button. |
+| Can Craft (Recipe, Context Tags, Times) | Enable or disable a craft button: the requirements and ingredients. |
+| Get Craft Error (Recipe, Context Tags, Times) | Why crafting would fail now, or None: Requirements Not Met, Missing Ingredients, or No Space for what it makes. It tries the craft and undoes it, so unlike Can Craft it checks room for the results too. |
+| Get Craftable Times (Recipe, Context Tags, Max Times) | How many times it can be made at once now, such as "x3" beside a recipe. 0 when it can't be. |
 | Craft (Recipe, Context Tags, Times) | Crafts. Outputs the new items and the error. |
+| Craft Preferring (Recipe, Preferred Items, Context Tags, Times) | Crafts, taking ingredients from Preferred Items first, such as the stack the player picked the recipe for. |
 | Get Craftable Recipes (Book, Context Tags) | Lists what can be made now, such as for a workbench menu. |
+| Get Recipes Using (Book, Item) | Lists the recipes an item is an ingredient of, such as what a scrap of metal could make. |
 
 Pass the station's tags as Context Tags, such as `Station.Workbench`. Recipes requiring them won't be craftable elsewhere.
+
+For a menu listing what an item makes, see [11.15](#1115-recipe-menus-what-an-item-makes).
 
 ### 10.3 Custom availability
 
@@ -916,7 +922,7 @@ Every widget class is abstract: make a Blueprint child of each and design it. Na
 
 | Parent class | What it is |
 | --- | --- |
-| Inventory Screen Widget | The screen: binds the actions, handles Back, opens item menus, plays sounds and shows hints. |
+| Inventory Screen Widget | The screen: binds the actions, handles Back, opens item menus, plays sounds, shows its pages and says what to do in its description line. |
 | Inventory Grid Widget | A grid container: its cells, its items and where the held item would land. |
 | Inventory Cell Widget | One cell of a grid. A Common UI button. |
 | Inventory Slot Widget | One slot, such as an equipment slot, or one entry of a list. A Common UI button. |
@@ -926,6 +932,9 @@ Every widget class is abstract: make a Blueprint child of each and design it. Na
 | Inventory Stat Widget | One stat row of a details panel. |
 | Inventory Item Menu Widget | A menu of item actions beside an item ([11.8](#118-item-menus-and-item-actions)). |
 | Inventory Item Action Button | One entry of an item menu. A Common UI button. |
+| Inventory Recipe Menu Widget | An item menu listing what the item makes ([11.15](#1115-recipe-menus-what-an-item-makes)). |
+| Inventory Recipe Menu Entry | One recipe of a recipe menu: what it makes, how many the player has, what it takes. A Common UI button. |
+| Inventory Recipe Ingredient Widget | One ingredient in a recipe menu entry. |
 | Inventory Shortcut Widget | One slot of an Inventory Shortcut Component ([11.12](#1112-shortcut-widgets)). A Common UI button. |
 
 ![Inside the grid widget: three layers for cells, items and the placement preview, with the grid and item widget hierarchies](Docs/Images/ui-grid-layers.png)
@@ -980,7 +989,7 @@ Display Filter and Sort By only change what's shown, such as one tab per kind of
 | Events | On Item Changed. Stat rows: On Stat Changed |
 | Functions | Set Item, Get Item |
 
-The screen, item menu and shortcut widgets are covered in [11.3](#113-building-an-inventory-screen), [11.8](#118-item-menus-and-item-actions) and [11.12](#1112-shortcut-widgets).
+The screen, item menu, shortcut and recipe menu widgets are covered in [11.3](#113-building-an-inventory-screen), [11.8](#118-item-menus-and-item-actions), [11.12](#1112-shortcut-widgets) and [11.15](#1115-recipe-menus-what-an-item-makes).
 
 ### 11.3 Building an inventory screen
 
@@ -1009,8 +1018,14 @@ The screen, item menu and shortcut widgets are covered in [11.3](#113-building-a
 - Place `W_InventoryGrid`, named **`MainGrid`**, so gamepad focus starts on its first cell. Place your slots and `W_ItemDetails` beside it.
 - For item menus, add a **Common Activatable Widget Stack** named `ItemMenuStack` over the rest of the screen, filling it, and set **Item Menu Class** ([11.8](#118-item-menus-and-item-actions)).
 - Set **Interaction Style** ([11.4](#114-input-and-interaction-style)) and **Sounds**.
-- Under **Input**, pick the rows of a Common UI input action data table for **Move**, **Item Menu**, **Rotate**, **Split**, **Transfer**, **Take All** and **Confirm** that you want. Each is bound only while it can work, so a Common Bound Action Bar shows what works now.
-- Optionally add `ActionHint` with a Text Block `ActionHintText` inside it, and fill in the hint texts, to say what to do with the held item and why it can't go somewhere.
+- Under **Input**, pick the rows of a Common UI input action data table for **Move**, **Item Menu**, **Rotate**, **Split**, **Transfer**, **Take All** and **Confirm** that you want, and place a **Common Bound Action Bar** to show them. **Action Availability** says when each is bound, and so shown:
+
+  | Action Availability | Bound | The action bar |
+  | --- | --- | --- |
+  | By Mode, the default | The actions for what the player is doing: browsing the items, holding one, or choosing one. One that can't be done for what's aimed at does nothing, such as Move over an empty cell | Stays as it is while the cursor moves, changing only as the player picks something up, puts it down, or opens a menu, as console games keep it |
+  | By Target | Only the actions that can be done for what's aimed at now | Changes as the cursor moves from item to item. A Common Bound Action Bar rebuilds its buttons each time, which shows as a flicker |
+- Optionally add a description line along the bottom: a Text Block named `DescriptionText`, inside a `DescriptionPanel` such as a Border, and fill in the hint texts ([11.13](#1113-the-description-line)).
+- Optionally put the screen's parts on pages, such as Map, Items and Crafting, with a Tab List and a Modular Page Switcher ([11.14](#1114-pages-tabs-on-an-inventory-screen)).
 - Open the screen by pushing it onto one of your Common UI layer stacks. Close it with **Close Widget**.
 
 The screen takes menu input and shows the cursor (tick **Game Keeps Input** to keep the game's input too). Back cancels choosing an item, then puts back the held item, then closes the screen, and closing drops whatever was held or chosen.
@@ -1052,7 +1067,7 @@ Held items in a grid land as close to where they're aimed as fits, never partly 
 
 ![The four preview actions: Place, Merge, Swap and Invalid](Docs/Images/placement-preview.png)
 
-Grids and slots receive **On Placement Preview Changed** with one of: None, Place, Merge, Swap, Invalid. None means nothing is held over this widget. While it's Invalid, the Inventory UI Subsystem's **Get Target Error** says why, such as Occupied, Out Of Bounds for a locked cell, or Rejected for a container that won't take the item, and the screen can show it in its action hint with **Invalid Hints**.
+Grids and slots receive **On Placement Preview Changed** with one of: None, Place, Merge, Swap, Invalid. None means nothing is held over this widget. While it's Invalid, the Inventory UI Subsystem's **Get Target Error** says why, such as Occupied, Out Of Bounds for a locked cell, or Rejected for a container that won't take the item, and the screen can say it in its description line with **Invalid Hints** ([11.13](#1113-the-description-line)).
 
 An animation named `PlacementPreviewLoop` on the grid plays on a loop while the preview shows one of its **Preview Loop Actions**, such as a pulse.
 
@@ -1095,7 +1110,7 @@ An **item action** is something the player can do with an item, such as Use, Equ
 
 | Field | Description |
 | --- | --- |
-| Display Name, Description, Icon | What its entry shows, and what the screen's hint says while it's highlighted. |
+| Display Name, Description, Icon | What its entry shows, and what Description Text, the menu's and the screen's, says while it's highlighted. |
 | Input Action | A key that runs it while the menu is open. |
 | Item Filter | Only items that match are offered the action at all, such as Tag Query `Item.Type.Consumable` for Use, or one leaving out `Item.Trait.NoDiscard` for Discard. |
 | When Unavailable | Hide it while Can Run says no, or Show Disabled with **Get Unavailable Reason**, such as "Not enough space". |
@@ -1103,16 +1118,17 @@ An **item action** is something the player can do with an item, such as Use, Equ
 | Keeps Menu Open | The menu lists the actions again after it runs, such as for Equip and Unequip. |
 | Button Name | Use a button placed in the menu's designer instead of making one. |
 
-Built in: **Move** (picks the item up, for gamepads), **Split** (asks how many), **Transfer** (to the other side) and **Apply Capacity Upgrade** (uses a carried capacity upgrade, [5.11](#511-inventory-capacity-upgrade)). Put actions in an **Item Action Set** data asset to share them between menus, and set a set as the screen's **Default Actions**: the first one that can run is what a press set to Default Action does, such as a double-click.
+Built in: **Move** (picks the item up, for gamepads), **Split** (asks how many), **Transfer** (to the other side), **Apply Capacity Upgrade** (uses a carried capacity upgrade, [5.11](#511-inventory-capacity-upgrade)), **Use**, **Drop**, **Equip**, **Unequip**, **Assign Shortcut** (opens a shortcut menu, [11.12](#1112-shortcut-widgets)) and **Craft** (opens a recipe menu listing what the item makes, [11.15](#1115-recipe-menus-what-an-item-makes)). Put actions in an **Item Action Set** data asset to share them between menus, and set a set as the screen's **Default Actions**: the first one that can run is what a press set to Default Action does, such as a double-click.
 
 **Menus.** A Widget Blueprint with parent **Inventory Item Menu Widget**, set as the screen's **Item Menu Class**:
 - **`MenuPanel`** (required): the menu itself, inside a full-screen Canvas Panel with Size To Content ticked, so it can be moved beside the item. Give the root a full-screen, hit-testable border so presses outside the menu reach it.
 - `ActionPanel` (such as a Vertical Box) gets a button of **Action Button Class** for each action. `ItemNameText` and `DescriptionText` are optional.
 - For prompts: `PromptPanel` with `PromptText`, `ConfirmButton` and `CancelButton`, and for counts `QuantitySlider` and `QuantityText`.
-- **Placement** (Toward Center, Right, Left, As Designed or At Cursor), **Menu Gap** and **Screen Padding** decide where it opens. **Left Press Outside** and **Right Press Outside** decide what a press outside it does: **Close** only closes it, **Pass Through** closes it and goes on to the item under it, and **Block** does nothing, so the menu stays open until the player picks an action or goes Back. Other mouse buttons, such as the middle one, do as Left Press Outside says, except that they never pass through: with Pass Through, they only close the menu. With Block, leave a way out with the mouse, such as **Close On Right Press**.
-- **Open Transition** and **Close Transition** fade, slide and grow the menu, and animations named `OpenAnimation` and `CloseAnimation` play too. **Action Timing** runs a picked action as the menu starts closing, or once it has closed.
+- **Placement** (Toward Center, Right, Left, As Designed or At Cursor), **Menu Gap** and **Screen Padding** decide where it opens. **Outside Click** decides what a click off it does: **Close** only closes it, **Pass Through** closes it and goes on to the item under it, and **Block** does nothing, so the menu stays open until the player picks an action or goes Back. **Right Click** is **Back**, as in games where the right mouse button means Back, **Pass Through**, so right-clicking another item opens its menu instead, or **Ignore**. They're Modular UI context menu settings; see its guide.
+- **Open Transition** fades, slides and grows the menu out of the item, and **Close Reverses Open** sends it back the same way, or **Close Transition** plays instead; animations named `OpenAnimation` and `CloseAnimation` play too. **Action Timing** runs a picked action as the menu starts closing, or once it has closed.
+- Give it a **Confirm Action** and a Common Bound Action Bar on the screen shows Back and Confirm while it's open. They're bound once, so they don't flicker or swap places as the mouse moves over the actions.
 
-The menu closes by itself when its item leaves the inventory, and when its screen closes. **Action Button Class** is a child of **Inventory Item Action Button**, with `NameText` (a Common Text), `Icon` and `ReasonText`, and an **Unavailable Style** for actions that can't run.
+The menu closes by itself when its item leaves the inventory, and when its screen closes. **Action Button Class** is a child of **Inventory Item Action Button**, with `NameText` (a Common Text), `Icon` and `ReasonText`, and an **Unavailable Style** for actions that can't run. With **Show Description On Screen**, on by default, what the highlighted action does shows in the screen's description line too, such as along the bottom of the screen, as console inventories say it; turn it off when the menu's own `DescriptionText` says it instead. Write each action's **Description** as what it does, such as "Use the item.", not what the item is.
 
 ### 11.9 Numbers on items: value displays
 
@@ -1171,6 +1187,86 @@ An **Inventory Shortcut Widget** shows one slot of the owning player's Inventory
 | Functions | Set Slot Index, Get Slot Index, Get Slot Item, Get Shortcuts |
 
 While an item is held, clicking a shortcut, pressing Accept on it or dropping a dragged item on it puts the item on the slot and puts the held item back where it was, as the slot only points at it.
+
+### 11.13 The description line
+
+The line along the bottom of a console inventory says what the player can do right now. It never says what an item is: the details panel shows that ([11.11](#1111-item-details-stats-traits-and-comparing)), so while the player browses the items, the line is empty. An inventory screen has Modular UI's description line: a Text Block named **`DescriptionText`**, optionally inside a **`DescriptionPanel`**, which hides while there's nothing to say. It says, the first that has something:
+
+| What it says | When | From |
+| --- | --- | --- |
+| What the highlighted option of an item menu does, such as "Use the item.", or why it can't run | An item menu is open over the screen | The action's **Description**, said by the menu, with its **Show Description On Screen** |
+| What picking the highlighted recipe does, such as "Craft Handgun Ammo.", or why it can't be made | A recipe menu is open | The recipe menu's **Recipe Description**, or its Uncraftable Reasons ([11.15](#1115-recipe-menus-what-an-item-makes)) |
+| Why the held item can't go where it's aimed | An item is held over a spot it can't go | **Invalid Hints** by reason, else **Invalid Hint** |
+| Where to put the held item, such as "Select an area to place this item." | An item is held | **Move Hint** |
+| Which item to choose, such as "Select an item to combine with." | An item is being chosen for another, such as after Combine | **Choose Hint** |
+| What a highlighted button does | The mouse is over a Modular Button, or focus is on one, such as a tab or a Sort button | Its **Description** |
+| What the screen is for | Nothing else says anything | **Default Description**, empty for most inventories |
+
+Hovering an item takes the highlight from any button, so a tab's description isn't kept while the player browses. A Blueprint screen can add its own modes with Modular UI's **Show Description**, such as "Select a slot." while it waits for one, and give the line back with empty text.
+
+Descriptions and hints say what to do; details say what something is. A tooltip is a box beside the cursor, an item widget's **Tooltip Class**, and a message is something gameplay says that comes and goes, such as "Not enough space.", shown by Modular UI's message feeds. See Modular UI's guide for the description line on other screens, such as an options menu.
+
+### 11.14 Pages: tabs on an inventory screen
+
+An inventory screen can have pages, such as Map, Items and Crafting, as survival horror inventories do:
+
+1. Add a **Modular Tab List** named **`TabList`** with a Tab Button Class, and a tab for each page, in order. Give each a **Tab Id**, such as `Items` and `Crafting`, and optionally a **Description** for the description line and a **Shortcut**, a UI action that opens it directly.
+2. Add a **Modular Page Switcher** named **`Pages`** holding the pages, in the same order. A Common Activatable Widget Switcher already there can be swapped with **Replace With**.
+3. Set **Items Page** to the index of the page with the grids. The screen opens on it.
+
+The items only work while their page shows: changing page puts back whatever was held. Coming back to them, focus goes back to the cell it was on, and with the mouse the item hovered as the player left is hovered again, so the details panel and description line show it at once. The page switcher brings each page in with a quick fade and a short slide from the side it comes from, and nothing on a page lights up as it slides under the cursor. Modular UI's guide, under Pages, explains why its transition replaces the Common Animated Switcher's own.
+
+To open the screen on another page, such as a crafting key opening it on its crafting page, call **Set Start Tab** (or **Set Start Page**) as the screen is pushed, before it shows. In C++, Modular UI's `PushStreamedWidgetToLayer` takes a function that sets the widget up first:
+
+```cpp
+UI->PushStreamedWidgetToLayer(ModularUIGameplayTags::UI_Layer_GameMenu, InventoryScreenClass, /*bSuspendInput*/ true,
+	[](UCommonActivatableWidget& Widget)
+	{
+		if (UInventoryScreenWidget* Screen = Cast<UInventoryScreenWidget>(&Widget))
+		{
+			Screen->SetStartTab(TEXT("Crafting"));
+		}
+	});
+```
+
+While the screen is open, the crafting tab's **Shortcut** opens that tab, and with the tab list's **Shortcut Toggles Screen**, pressed on that tab it closes the screen, so one key opens the crafting page, switches to it and closes it, as an inventory key does for the items.
+
+### 11.15 Recipe menus: what an item makes
+
+A recipe menu lists what an item can be crafted into, as survival games' Combine does: each recipe that takes the item, with what it makes, how many of that the player has, how many times it can be made now, and what it takes. Picking one crafts it, taking from the item the menu is for first.
+
+**It's optional.** Nothing opens a recipe menu unless an item menu has a **Craft** action with a **Menu Class**. To combine the classic way instead, with the player picking the second item in the inventory, run the Inventory UI Subsystem's **Begin Choosing Item** from an action of your own, and in **On Item Chosen** craft the recipe of **Get Recipes Using** that takes both items, with the Inventory Component's **Craft Preferring** and the two items preferred. The screen's **Choose Hint** says what to do meanwhile. A game can offer both, such as the list for what recipes make and choosing for anything else, as an action that decides per item.
+
+**The action.** Add a **Craft** item action to your item menu ([11.8](#118-item-menus-and-item-actions)), and set:
+
+| Field | Description |
+| --- | --- |
+| Display Name, Description | Such as Combine, and "Combine items to make something new." |
+| Menu Class | Your recipe menu. It opens where the screen opens item menus, replacing the item menu. |
+| Recipe Book | The recipes it offers. None uses the menu's own Recipe Book. In C++, override `GetRecipeBook` to find them elsewhere, such as on the player. |
+| Context Tags | Tags the recipes are checked with, such as the station the screen is open at. |
+| Only When Craftable | Offered only while one of the item's recipes can be made now. Off, it's offered while the item takes part in any. |
+
+**The menu.** A Widget Blueprint with parent **Inventory Recipe Menu Widget**. It's an item menu ([11.8](#118-item-menus-and-item-actions)), so it has `MenuPanel` and can open beside the item, or in the middle of the screen with Placement As Designed over a dim backdrop.
+- **`RecipePanel`** (such as a Vertical Box, inside Menu Panel): gets a **Recipe Entry Class** entry for each recipe. Leave it empty.
+- `ItemNameText`: the item's name, as a header. `DescriptionText`, optional: what picking the highlighted recipe does, or why it can't be made, which the screen's description line says too.
+- `OutputItem`, `OutputIcon`, `OutputNameText`, `OutputDescriptionText`: what the highlighted recipe makes, such as a details panel beside the list.
+
+| Setting | Description |
+| --- | --- |
+| Recipe Book, Context Tags | The recipes it lists when whoever opens it gives none, and tags they're checked with on top of the action's. |
+| When Uncraftable | **Show Disabled** lists recipes that can't be made now, with why, so the player sees what the item could make; **Hide** leaves them out. |
+| Craft Prompt, Craft Prompt Text, Craft Prompt Confirm Label | What picking a recipe asks first: nothing, crafting it once; Confirm; or Quantity, how many times, from one to as many as can be made. `{Item}`, `{Count}` and `{Max}` are filled in. |
+| Close On Craft | The menu closes once a recipe is crafted. Off, it stays open with the new counts. It always closes once its item is used up. |
+| Recipe Description | What the description line says for a recipe that can be made: what picking it does, "Craft {Name}." by default. `{Name}`, `{Count}`, `{Held}` and `{Craftable}` are filled in, and `{Description}`, though what it makes belongs in `OutputDescriptionText`. |
+| Uncraftable Reasons, Uncraftable Reason | What it says for one that can't, by reason, such as "Not enough materials." for Missing Ingredients and "Not enough space." for No Space. |
+| Max Craft Times | The most times one recipe is counted, and crafted at once. |
+
+**The entry.** A Widget Blueprint with parent **Inventory Recipe Menu Entry**, a Common UI button, each named widget optional: `OutputItem` (an Inventory Item Widget showing what it makes, in a Scale Box), `OutputIcon`, `NameText` (a Common Text), `OutputCountText` (such as x10, in **Output Count Format**), `HeldText` (how many the player has, in **Held Format**), `CraftableText`, `ReasonText`, and **`IngredientPanel`** (such as a Horizontal Box) with an **Ingredient Class** widget for each ingredient and an **Ingredient Separator Class** widget, such as a plus sign, between them. **Unavailable Style** greys out recipes that can't be made; they can still be highlighted, so the player sees why.
+
+**The ingredient.** Parent **Inventory Recipe Ingredient Widget**: `ItemWidget` or `Icon`, `NameText`, `CountText` in **Count Format** (`{Count}` needed, `{Held}` held, such as `{Held}/{Count}`), tinted **Missing Color** while there isn't enough, and `ToolMarker` for tools, which are needed but kept. What it shows for an ingredient is its **Display Item** ([5.7](#57-recipe)).
+
+For example, a recipe turning scrap and gunpowder into handgun ammo: Ingredients Scrap × 1 and Gunpowder × 1, Outputs Handgun Ammo × 10. The scrap's recipe menu lists Handgun Ammo x10, how much handgun ammo the player carries, and Scrap 1 + Gunpowder 1, with every other recipe that takes scrap below it.
 
 ---
 
@@ -1438,6 +1534,7 @@ To use it:
 | What's in a slot | Equipment Component › Get Equipped Item (Slot) |
 | Hand items over | Inventory Component › Transfer Item / Take Item |
 | Fill from a loot table | Inventory Component › Add Loot |
+| What an item can make | Inventory Component › Get Recipes Using (Book, Item), then Get Craftable Times and Get Craft Error for each; or a recipe menu ([11.15](#1115-recipe-menus-what-an-item-makes)) |
 | React to changes | Inventory Component › On Inventory Changed; Equipment Component › On Item Equipped / Unequipped |
 | Struct data | Get Definition Fragment, Get Item Fragment, Set Item Fragment, Get/Set Container Fragment |
 | The item behind an ability | Get Item From Ability (Ability) |
@@ -1639,7 +1736,7 @@ An ammo case lets the player carry more ammo in each cell, instead of adding cel
 | --- | --- | --- | --- |
 | Minecraft, Terraria | A storage grid and a hotbar | Grid, Grid Growth None; the hotbar a Slots layout, or an Inventory Shortcut Component pointing into the grid | Stack Rules per item |
 | Diablo II, Escape from Tarkov | A grid, with items of different sizes; backpacks that are items | Grid, Grid Growth None; backpack items carry their own grid ([16.2](#162-a-backpack)) | Rotation, sockets |
-| Requiem, the Resident Evil games | An inventory grid, key items list, item box | Inventory: Grid Growth With Upgrades, Max Rows as far as pouches go; key items: List, Player Access Read Only ([16.11](#1611-key-items-the-player-cant-move)) | Pouches ([16.10](#1610-storage-that-grows-during-play)) |
+| Requiem, the Resident Evil games | An inventory grid, key items list, item box | Inventory: Grid Growth With Upgrades, Max Rows as far as pouches go; key items: List, Player Access Read Only ([16.11](#1611-key-items-the-player-cant-move)) | Pouches ([16.10](#1610-storage-that-grows-during-play)); Combine as a recipe menu ([11.15](#1115-recipe-menus-what-an-item-makes)); Map, Items and Crafting pages ([11.14](#1114-pages-tabs-on-an-inventory-screen)) |
 | Resident Evil 4 | An attaché case bought bigger | Grid per case size | Set Container Layout swaps the case |
 | Stardew Valley | A grid that gains whole rows | Grid Growth With Upgrades | Upgrades whose Amount is the number of columns |
 | Baldur's Gate 3, Divinity: Original Sin 2 | One grid that never fills | Grid Growth To Fit Items, Max Rows 0 ([16.12](#1612-storage-that-never-fills-up)) | Carry Limit Allow Over ([16.13](#1613-a-weight-limit)) |
@@ -1707,6 +1804,13 @@ An ammo case lets the player carry more ammo in each cell, instead of adding cel
 | Items can't be picked up or dragged out of a container | Its layout's **Player Access** is Put Only or Read Only | Set it to Full or Take Only. Code can still move the items |
 | Nothing can be put into a container through the UI | Its layout's Player Access is Take Only or Read Only | Set it to Full or Put Only |
 | A list has no empty entry to put items on | Show Empty Entry is off, the list is full, or its Player Access doesn't let the player put items in | Check the list's capacity and Player Access |
+| The description line never says anything | The screen has no Text Block named `DescriptionText`, or the hint texts, the actions' and the buttons' Descriptions are empty. Browsing the items, it says nothing by design | Name the Text Block `DescriptionText` and fill them in ([11.13](#1113-the-description-line)) |
+| The action bar flickers, or its actions swap places, as the cursor moves or a menu opens | A Common Bound Action Bar rebuilds its buttons whenever the bound actions change. With Action Availability By Target, they change as the cursor moves from item to item | Set **Action Availability** to By Mode, its default, so they change only as the player picks up, puts down or opens a menu ([11.3](#113-building-an-inventory-screen)). Item menus bind Back and Confirm once, so they stay put while open |
+| Back on the items page, nothing is focused or hovered | The switcher took longer to bring the page in than focus waits, or a Blueprint Get Desired Focus Target returns something other than a cell | Use a Modular Page Switcher ([11.14](#1114-pages-tabs-on-an-inventory-screen)); leave Get Desired Focus Target to the screen, or return a cell from it |
+| Items light up one after another as a page slides in | A Common Animated Switcher's transition moves the real widgets under the cursor | Use a Modular Page Switcher, with Block Input While Showing |
+| The screen opens on the wrong page | Set Start Tab was called after the screen showed, or the Tab Id isn't one of Tab List's | Call it as the screen is pushed, such as in the push's Init Func; the log names a Tab Id it can't find |
+| The Craft action isn't offered | It has no Menu Class, no recipe of its book takes the item, or Only When Craftable is on and none can be made now | Set Menu Class and Recipe Book, on the action or the menu |
+| A recipe menu lists no recipes | It has no Recipe Panel or Recipe Entry Class, or When Uncraftable is Hide and none can be made now | Add `RecipePanel` inside Menu Panel and set Recipe Entry Class; the log says so |
 
 ---
 
@@ -1735,5 +1839,6 @@ To be ready, mark the properties of your fragment structs `SaveGame`.
 - **Upgrades are data.** A capacity upgrade is a fragment on an item, so a pouch needs no code: the Inventory Component applies it as it's taken.
 - **Equipping is a move.** Equipping works inside batches and transactions, and a worn backpack is simply an item in the Back slot.
 - **One UI subsystem.** Mouse and gamepad call the same functions, so they can't drift apart. Common UI owns focus and Accept; UMG drag and drop is only used for the mouse.
+- **Checks that can't disagree.** A recipe menu's counts and reasons come from the real craft, tried and undone, as placement previews do, so a recipe listed as craftable has the ingredients and the room it needs.
 - **No view models.** Widgets read the registry directly through handles. Item state is cheap to look up, so view models would mostly copy it.
 - **Singleplayer.** There is no replication. The registry is per world.

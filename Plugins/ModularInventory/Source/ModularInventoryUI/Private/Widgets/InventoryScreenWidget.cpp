@@ -19,16 +19,19 @@
 #endif
 
 #include "Actions/InventoryItemAction.h"
+#include "Data/InventoryItemDefinition.h"
 #include "InventorySubsystem.h"
 #include "InventoryUISubsystem.h"
 #include "Layers/ModularUISubsystem.h"
 #include "ModularInventory.h"
+#include "ModularUIFocus.h"
 #include "Widgets/InventoryCellWidget.h"
 #include "Widgets/InventoryGridWidget.h"
 #include "Widgets/InventoryItemMenuWidget.h"
 #include "Widgets/InventoryItemWidget.h"
 #include "Widgets/InventoryListWidget.h"
 #include "Widgets/InventorySlotWidget.h"
+#include "Widgets/ModularPageSwitcher.h"
 #include "Widgets/ModularTabListWidget.h"
 
 #define LOCTEXT_NAMESPACE "InventoryScreenWidget"
@@ -179,6 +182,16 @@ void UInventoryScreenWidget::PostLoad()
 		GameMouseCaptureMode = EMouseCaptureMode::NoCapture;
 		bGameKeepsInput_DEPRECATED = false;
 	}
+
+	// Screens saved before the description line replaced the action hint's Idle Hint.
+	if (!IdleHint_DEPRECATED.IsEmpty())
+	{
+		if (DefaultDescription.IsEmpty())
+		{
+			DefaultDescription = IdleHint_DEPRECATED;
+		}
+		IdleHint_DEPRECATED = FText::GetEmpty();
+	}
 #endif
 }
 
@@ -231,6 +244,11 @@ void UInventoryScreenWidget::ValidateCompiledWidgetTree(const UWidgetTree& Bluep
 
 UInventoryItemMenuWidget* UInventoryScreenWidget::OpenItemMenu(FInventoryItemHandle Item, TSubclassOf<UInventoryItemMenuWidget> MenuClass)
 {
+	return OpenItemMenuWith(Item, MenuClass, [](UInventoryItemMenuWidget&) {});
+}
+
+UInventoryItemMenuWidget* UInventoryScreenWidget::OpenItemMenuWith(FInventoryItemHandle Item, TSubclassOf<UInventoryItemMenuWidget> MenuClass, TFunctionRef<void(UInventoryItemMenuWidget&)> InitMenu)
+{
 	const UInventoryItemMenuWidget* MenuDefaults = MenuClass ? GetDefault<UInventoryItemMenuWidget>(MenuClass) : nullptr;
 	if (!MenuDefaults || !Item.IsSet() || !IsInventoryShown() || !MenuDefaults->CanOpenFor(MakeActionContext(Item)))
 	{
@@ -245,8 +263,9 @@ UInventoryItemMenuWidget* UInventoryScreenWidget::OpenItemMenu(FInventoryItemHan
 		Previous->CloseMenuNow();
 	}
 
-	UInventoryItemMenuWidget* Opened = PushItemMenu(MenuClass, [this, Item](UInventoryItemMenuWidget& Menu)
+	UInventoryItemMenuWidget* Opened = PushItemMenu(MenuClass, [this, Item, &InitMenu](UInventoryItemMenuWidget& Menu)
 	{
+		InitMenu(Menu);
 		Menu.SetScreen(this);
 		Menu.SetItem(Item, FindItemWidget(Item));
 	});
@@ -289,10 +308,14 @@ void UInventoryScreenWidget::SetInventoryShown(bool bShown)
 	UInventoryUISubsystem* Interaction = GetInteraction();
 	if (Interaction && !bShown)
 	{
+		// The item hovered is hovered again as the items show again. Nothing else carries over: what was held goes back, and the hint goes
+		// with the items.
+		LastHoveredItem = Interaction->GetHoveredItem();
 		Interaction->ClearInteraction();
+		ClearHighlightedDescription(this, /*bEvenIfKept*/ true);
 	}
 	RefreshActions();
-	RefreshActionHint();
+	RefreshDescription();
 	if (bShown)
 	{
 		ReturnToItems();
@@ -301,34 +324,60 @@ void UInventoryScreenWidget::SetInventoryShown(bool bShown)
 
 void UInventoryScreenWidget::ReturnToItems()
 {
-	// Once the items are drawn: a page just switched to isn't yet, and a cell can't take focus until it is.
+	// Once the items are drawn: a page just switched to may not be yet, however long its switcher takes, and a cell can't take focus until
+	// it is.
 	UWidget* FocusTarget = GetDesiredFocusTarget();
-	if (!FocusTarget)
+	UWidget* DrawnCheck = FocusTarget ? FocusTarget : MainGrid.Get();
+	if (!DrawnCheck)
 	{
-		if (bAimOnOpen)
-		{
-			AimAtStart();
-		}
+		RestoreHover();
 		return;
 	}
 
-	CallWhenDrawn(FocusTarget, [this](UWidget&)
+	CallWhenDrawn(DrawnCheck, [this](UWidget&)
 	{
 		if (!IsInventoryShown())
 		{
 			return;
 		}
+
+		// Focus goes back with any input, so keys reach the items again: with a gamepad it aims at the cell, which hovers its item. The mouse
+		// aims where it points, so the item it left is hovered again instead.
 		const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
-		UWidget* Target = GetDesiredFocusTarget();
-		if (Target && Input && Input->GetCurrentInputType() == ECommonInputType::Gamepad)
+		const bool bGamepad = Input && Input->GetCurrentInputType() == ECommonInputType::Gamepad;
+		if (UWidget* Target = GetDesiredFocusTarget())
 		{
 			Target->SetFocus();
 		}
-		else if (bAimOnOpen)
+		if (!bGamepad)
 		{
-			AimAtStart();
+			RestoreHover();
 		}
-	});
+	}, ModularUI::PageDrawnTimeout);
+}
+
+void UInventoryScreenWidget::RestoreHover()
+{
+	UInventoryUISubsystem* Interaction = GetInteraction();
+	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
+	if (!Interaction || !Inventory || Interaction->IsHolding() || !IsInventoryShown())
+	{
+		return;
+	}
+
+	// The item hovered as the items were left, while it's still on the screen, as the mouse would have left it with Keep Last Hovered Item.
+	const bool bKeepsHover = Interaction->GetStyle().bKeepLastHoveredItem || bAimOnOpen;
+	const bool bOnScreen = Inventory->IsValidItem(LastHoveredItem) && FindItemWidget(LastHoveredItem) != nullptr;
+	if (bKeepsHover && bOnScreen)
+	{
+		TGuardValue<bool> Aiming(bAimingAtStart, true);
+		Interaction->SetTarget(Inventory->GetItemContainer(LastHoveredItem), Inventory->GetItemPlacement(LastHoveredItem));
+		Interaction->SetHoveredItem(LastHoveredItem);
+	}
+	else if (bAimOnOpen)
+	{
+		AimAtStart();
+	}
 }
 
 // Pages
@@ -350,6 +399,27 @@ int32 UInventoryScreenWidget::GetOpenPage() const
 		return OpenTab;
 	}
 	return Pages ? Pages->GetActiveWidgetIndex() : INDEX_NONE;
+}
+
+void UInventoryScreenWidget::SetStartPage(int32 PageIndex)
+{
+	if (IsActivated())
+	{
+		OpenPage(PageIndex == INDEX_NONE ? ItemsPage : PageIndex);
+		return;
+	}
+	StartPage = PageIndex;
+}
+
+void UInventoryScreenWidget::SetStartTab(FName TabId)
+{
+	const int32 PageIndex = TabList ? TabList->GetTabIndexOf(TabId) : INDEX_NONE;
+	if (PageIndex == INDEX_NONE)
+	{
+		UE_LOG(LogInventory, Warning, TEXT("[Inventory UI] %s: no tab %s in Tab List to open on."), *GetPathNameSafe(this), *TabId.ToString());
+		return;
+	}
+	SetStartPage(PageIndex);
 }
 
 bool UInventoryScreenWidget::IsItemsPageOpen() const
@@ -449,17 +519,29 @@ void UInventoryScreenWidget::NativeOnActivated()
 		Input->OnInputMethodChangedNative.AddUObject(this, &ThisClass::HandleInputMethodChanged);
 	}
 
-	// The screen opens on the items, whichever page it closed on.
+	// The screen opens on the items, whichever page it closed on, or on the page asked for. At once: the screen's own open brings it in.
+	const int32 OpenOn = StartPage != INDEX_NONE ? StartPage : ItemsPage;
+	StartPage = INDEX_NONE;
 	if (Pages || TabList)
 	{
-		OpenPage(ItemsPage);
+		UModularPageSwitcher* PageSwitcher = Cast<UModularPageSwitcher>(Pages);
+		const bool bPageTransitions = PageSwitcher && PageSwitcher->ArePageTransitionsEnabled();
+		if (PageSwitcher)
+		{
+			PageSwitcher->SetPageTransitionsEnabled(false);
+		}
+		OpenPage(OpenOn);
+		if (PageSwitcher)
+		{
+			PageSwitcher->SetPageTransitionsEnabled(bPageTransitions);
+		}
 	}
-	if (bAimOnOpen)
+	if (bAimOnOpen && IsInventoryShown())
 	{
 		AimAtStart();
 	}
 	RefreshActions();
-	RefreshActionHint();
+	RefreshDescription();
 }
 
 void UInventoryScreenWidget::NativeOnDeactivated()
@@ -474,7 +556,11 @@ void UInventoryScreenWidget::NativeOnDeactivated()
 		Interaction->OnSelectedItemChanged.RemoveDynamic(this, &ThisClass::HandleSelectedItemChanged);
 		Interaction->OnHoldEvent.RemoveDynamic(this, &ThisClass::HandleHoldEvent);
 
-		LastHoveredItem = Interaction->GetHoveredItem();
+		// Closed on another page, the items were left already, with the item hovered then.
+		if (IsInventoryShown())
+		{
+			LastHoveredItem = Interaction->GetHoveredItem();
+		}
 		Interaction->ClearInteraction();
 		Interaction->SetStyle(PreviousStyle);
 		Interaction->SetTransferContainer(FInventoryContainerHandle());
@@ -484,10 +570,10 @@ void UInventoryScreenWidget::NativeOnDeactivated()
 		Input->OnInputMethodChangedNative.RemoveAll(this);
 	}
 
-	// Common UI reuses closed screens, so a chest's container, the last cell aimed at and a menu's hint mustn't carry over to the next opening.
+	// Common UI reuses closed screens, so a chest's container and the last cell aimed at mustn't carry over to the next opening. Neither does
+	// what Description Text said, which the base forgets.
 	TransferContainer = FInventoryContainerHandle();
 	LastAimedContainer = FInventoryContainerHandle();
-	MenuHint = FText::GetEmpty();
 	OpenedMenu.Reset();
 
 	Super::NativeOnDeactivated();
@@ -584,26 +670,35 @@ void UInventoryScreenWidget::HandleItemMenuRequested(FInventoryItemHandle Item)
 // Actions
 void UInventoryScreenWidget::RefreshActions()
 {
+	// By Mode, what's bound changes only as the player starts or stops holding or choosing an item, so action bars, which rebuild each time
+	// it changes, stay still as the cursor moves. By Target, it follows what's aimed at.
 	const UInventoryUISubsystem* Interaction = GetInteraction();
 	const bool bUsable = Interaction && IsInventoryShown() && !IsClosing();
+	const bool bHolding = bUsable && Interaction->IsHolding();
+	const bool bBrowsing = bUsable && !bHolding && !Interaction->IsChoosingItem();
+	const bool bByTarget = ActionAvailability == EInventoryActionAvailability::ByTarget;
+	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
+	const FInventoryItemHandle Hovered = Interaction ? Interaction->GetHoveredItem() : FInventoryItemHandle();
 
 	// With a gamepad, Accept goes to the focused cell, which aims, so Confirm is only shown. With the mouse, keyboard focus isn't on what
-	// the mouse is, so Confirm's key acts on the hovered item itself, and only while it can.
+	// the mouse is, so Confirm's key acts on the hovered item itself. Which of the two is bound changes only with the input method.
 	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
 	const bool bMouse = Input && Input->GetCurrentInputType() == ECommonInputType::MouseAndKeyboard;
 	SetConfirmShown(!bMouse && !IsClosing());
-	SetActionBound(ConfirmHandle, ConfirmAction, bUsable && bMouse && Interaction->CanActivateAimed(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleConfirmAction));
+	const bool bCanConfirm = bUsable && bMouse && (!bByTarget || Interaction->CanActivateAimed());
+	SetActionBound(ConfirmHandle, ConfirmAction, bCanConfirm, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleConfirmAction));
 
-	SetActionBound(MoveHandle, MoveAction, bUsable && Interaction->CanPickUpOrPlace(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleMoveAction));
+	const bool bCanMove = bByTarget ? bUsable && Interaction->CanPickUpOrPlace() : bBrowsing || bHolding;
+	SetActionBound(MoveHandle, MoveAction, bCanMove, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleMoveAction));
 
-	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
-	const bool bCanOpenItemMenu = bUsable && Inventory && !Interaction->IsHolding() && !Interaction->IsChoosingItem() && Inventory->IsValidItem(Interaction->GetHoveredItem());
+	const bool bCanOpenItemMenu = bBrowsing && (!bByTarget || (Inventory && Inventory->IsValidItem(Hovered)));
 	SetActionBound(ItemMenuHandle, ItemMenuAction, bCanOpenItemMenu, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleItemMenuAction));
 
-	SetActionBound(RotateHandle, RotateAction, bUsable && Interaction->CanRotateHeld(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleRotateAction));
-	SetActionBound(SplitHandle, SplitAction, bUsable && Interaction->CanSplitHeld(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleSplitAction));
+	const bool bCanRotate = bHolding && (bByTarget ? Interaction->CanRotateHeld() : Interaction->CanEverRotateHeld());
+	SetActionBound(RotateHandle, RotateAction, bCanRotate, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleRotateAction));
+	SetActionBound(SplitHandle, SplitAction, bHolding && Interaction->CanSplitHeld(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleSplitAction));
 
-	const bool bCanTransfer = bUsable && !Interaction->IsHolding() && Interaction->CanTransferItem(Interaction->GetHoveredItem());
+	const bool bCanTransfer = bBrowsing && (bByTarget ? Interaction->CanTransferItem(Hovered) : TransferContainer.IsSet());
 	SetActionBound(TransferHandle, TransferAction, bCanTransfer, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleTransferAction));
 	SetActionBound(TakeAllHandle, TakeAllAction, bUsable && Interaction->CanTakeAll(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleTakeAllAction));
 	SetActionBound(SortHandle, SortAction, bUsable && !Interaction->IsChoosingItem() && GetSortContainer().IsSet(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleSortAction));
@@ -641,13 +736,13 @@ void UInventoryScreenWidget::HandleInteractionChanged()
 		LastAimedPlacement = Interaction->GetTargetPlacement();
 	}
 	RefreshActions();
-	RefreshActionHint();
+	RefreshDescription();
 }
 
 void UInventoryScreenWidget::HandleSelectedItemChanged(FInventoryItemHandle Item)
 {
 	// Choosing an item for another selects the one it's for, so the hint follows the choosing too.
-	RefreshActionHint();
+	RefreshDescription();
 }
 
 // Item actions
@@ -711,40 +806,32 @@ void UInventoryScreenWidget::HandleDefaultActionRequested(FInventoryItemHandle I
 	}
 }
 
-// Hint
-void UInventoryScreenWidget::ShowActionHint(const FText& Hint)
-{
-	MenuHint = Hint;
-	RefreshActionHint();
-}
-
-void UInventoryScreenWidget::RefreshActionHint()
+// Description: what the highlighted option of an item menu open over the screen does comes first, as the menu says it here. Then what to do
+// with the held item, or what to choose, then what a highlighted button does. Browsing the items says nothing: details panels show them.
+FText UInventoryScreenWidget::GetHint() const
 {
 	const UInventoryUISubsystem* Interaction = GetInteraction();
-	const bool bHolding = Interaction && Interaction->IsHolding();
-	const bool bAimedAtInvalid = bHolding && Interaction->GetTargetAction() == EInventoryDropAction::Invalid;
-	const FText* InvalidReason = bAimedAtInvalid ? InvalidHints.Find(Interaction->GetTargetError()) : nullptr;
-	const FText& Hint = !MenuHint.IsEmpty() ? MenuHint
-		: InvalidReason ? *InvalidReason
-		: bAimedAtInvalid && !InvalidHint.IsEmpty() ? InvalidHint
-		: bHolding ? MoveHint
-		: Interaction && Interaction->IsChoosingItem() ? ChooseHint
-		: IdleHint;
+	if (!Interaction || !IsInventoryShown())
+	{
+		return FText::GetEmpty();
+	}
 
-	if (ActionHintText)
+	if (Interaction->IsHolding())
 	{
-		ActionHintText->SetText(Hint);
+		if (Interaction->GetTargetAction() == EInventoryDropAction::Invalid)
+		{
+			if (const FText* Reason = InvalidHints.Find(Interaction->GetTargetError()))
+			{
+				return *Reason;
+			}
+			if (!InvalidHint.IsEmpty())
+			{
+				return InvalidHint;
+			}
+		}
+		return MoveHint;
 	}
-	if (ActionHint)
-	{
-		// Hidden, not collapsed, so what's around it doesn't move.
-		ActionHint->SetVisibility(Hint.IsEmpty() ? ESlateVisibility::Hidden : ESlateVisibility::HitTestInvisible);
-	}
-	if (!Hint.EqualTo(ShownHint))
-	{
-		ShownHint = Hint;
-		OnActionHintChanged(ShownHint);
-	}
+	return Interaction->IsChoosingItem() ? ChooseHint : FText::GetEmpty();
 }
 
 void UInventoryScreenWidget::HandleHoveredItemChanged(FInventoryItemHandle Item)
@@ -754,6 +841,12 @@ void UInventoryScreenWidget::HandleHoveredItemChanged(FInventoryItemHandle Item)
 	if (Item.IsSet() && Interaction && !Interaction->IsHolding() && !bAimingAtStart)
 	{
 		PlayInventorySound(Sounds.HoverItem);
+	}
+
+	// An item takes the highlight from any button, such as a tab, and says nothing, so the button's description isn't kept for it.
+	if (Item.IsSet())
+	{
+		SetHighlightedDescription(FText::GetEmpty(), this);
 	}
 	RefreshActions();
 }
@@ -806,7 +899,9 @@ void UInventoryScreenWidget::SetConfirmShown(bool bShown)
 
 void UInventoryScreenWidget::HandleConfirmAction()
 {
-	if (UInventoryUISubsystem* Interaction = GetInteraction())
+	// Bound By Mode whatever is aimed at, so it does nothing where it can't.
+	UInventoryUISubsystem* Interaction = GetInteraction();
+	if (Interaction && Interaction->CanActivateAimed())
 	{
 		Interaction->ActivateAimed();
 	}
@@ -822,7 +917,10 @@ void UInventoryScreenWidget::HandleMoveAction()
 
 void UInventoryScreenWidget::HandleItemMenuAction()
 {
-	if (UInventoryUISubsystem* Interaction = GetInteraction())
+	// Bound By Mode over empty cells too, so only an item asks for its menu.
+	UInventoryUISubsystem* Interaction = GetInteraction();
+	const UInventorySubsystem* Inventory = UInventorySubsystem::Get(this);
+	if (Interaction && Inventory && Inventory->IsValidItem(Interaction->GetHoveredItem()))
 	{
 		Interaction->RequestItemMenu(Interaction->GetHoveredItem());
 	}

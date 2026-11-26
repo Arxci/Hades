@@ -133,7 +133,7 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Shortcut Menu")
 	bool bCloseOnPick = true;
 
-	/** Said in Description Text and the screen's hint while an entry is highlighted, such as "Assign to this slot." Empty says nothing. */
+	/** Said in Description Text, the menu's and the screen's, while an entry is highlighted, such as "Assign to this slot." Empty says nothing. */
 	UPROPERTY(EditDefaultsOnly, Category = "Shortcut Menu|Hints")
 	FText AssignHint;
 

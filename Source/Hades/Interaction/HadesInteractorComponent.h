@@ -15,8 +15,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FHadesFocusedInteractableChangedSign
 
 
 /**
- * Lets a player-controlled pawn notice nearby interactables and focus the one it is looking at. While one is focused, its prompt shows as a
- * message on Prompt Channel, with the key that interacts, such as a banner naming the item the player can pick up, until focus moves on.
+ * Lets a player-controlled pawn notice nearby interactables and focus the one it is looking at. While one with Show Prompt Message is focused,
+ * its prompt shows as a message on Prompt Channel, with the key that interacts, such as a banner naming the item the player can pick up, until
+ * focus moves on. The message stays until then: it's sent with a Duration of 0.
  */
 UCLASS(ClassGroup = (Interaction), meta = (BlueprintSpawnableComponent))
 class HADES_API UHadesInteractorComponent : public UActorComponent
@@ -70,7 +71,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Interaction", meta = (ClampMin = "0.01", Units = "s"))
 	float NearbyUpdateInterval = 0.1f;
 
-	/** Where the focused interactable's prompt shows, a Modular UI message channel such as UI.Message.Prompt. None shows no prompt. */
+	/**
+	 * Where the focused interactable's prompt shows, for interactables with Show Prompt Message, a Modular UI message channel such as
+	 * UI.Message.Prompt. None shows no prompt.
+	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Interaction|Prompt", meta = (Categories = "UI.Message"))
 	FGameplayTag PromptChannel;
 

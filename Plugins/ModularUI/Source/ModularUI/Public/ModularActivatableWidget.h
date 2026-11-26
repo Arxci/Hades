@@ -13,6 +13,7 @@
 #include "ModularActivatableWidget.generated.h"
 
 class USoundBase;
+class UTextBlock;
 class UWidgetAnimation;
 struct FUIInputConfig;
 
@@ -40,6 +41,9 @@ enum class EModularUIInputMode : uint8
  * they end. Back, and Close Action, close it the same way. Use Close Widget rather than Deactivate Widget, so the close plays.
  * Transitions are for motion that depends on where and how the widget opened, or that many widgets share; widget animations are for
  * anything else, such as colors, materials and glows. Both play together, and a close waits for whichever ends last.
+ * Description Text, the line along the bottom of a console menu, says what the player can do now: what the highlighted option of a menu
+ * open over this one does, what to do in a mode the widget is in, such as "Select an item to combine with.", or what the highlighted
+ * button does. It never says what a thing is: that belongs in a details panel. With nothing to say, it's empty.
  */
 UCLASS(Abstract, Blueprintable)
 class MODULARUI_API UModularActivatableWidget : public UCommonActivatableWidget
@@ -79,6 +83,64 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Modular UI|Focus")
 	void FocusWhenDrawn(UWidget* Target);
 
+	// Description
+	/**
+	 * Says Description in Description Text instead of what's highlighted, such as what to do in a mode the widget is in, "Select an item
+	 * to combine with.", until Show Description is called again. Empty goes back to what's highlighted. Show Description From for this
+	 * widget.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Modular UI|Description")
+	void ShowDescription(const FText& Description);
+
+	/**
+	 * Says Description in Description Text on Source's behalf, such as a menu open over this widget saying what its highlighted option
+	 * does, along the bottom of the screen as console menus say it. It stays until Source says something else, or Clear Description From.
+	 * The source that started saying something last comes first, and as it stops, the one before it shows again, so a menu closing never
+	 * clears what a newer one says. Empty is Clear Description From. Context menus do this themselves, with Show Description On Screen.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Modular UI|Description")
+	void ShowDescriptionFrom(const UObject* Source, const FText& Description);
+
+	/** Source stops saying anything in Description Text, such as a menu as it starts to close. */
+	UFUNCTION(BlueprintCallable, Category = "Modular UI|Description")
+	void ClearDescriptionFrom(const UObject* Source);
+
+	/** What Description Text says now. */
+	UFUNCTION(BlueprintPure, Category = "Modular UI|Description")
+	FText GetShownDescription() const { return ShownDescription; }
+
+	/** Works out again what Description Text says, such as after what it describes changed. */
+	UFUNCTION(BlueprintCallable, Category = "Modular UI|Description")
+	void RefreshDescription();
+
+	/**
+	 * A widget inside this one was highlighted: the mouse is over it, or focus is on it. Description Text says what it does from now on, by
+	 * Get Description Of, until something else is highlighted, or with Keep Last Description off, until it isn't. Modular Buttons with a
+	 * Description call it for themselves; call it for widgets of your own.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Modular UI|Description")
+	void HighlightForDescription(UWidget* Widget);
+
+	/** The widget isn't highlighted any more: the mouse left it, or focus did. */
+	UFUNCTION(BlueprintCallable, Category = "Modular UI|Description")
+	void UnhighlightForDescription(UWidget* Widget);
+
+	/**
+	 * Describes what's highlighted with Description, for something highlighted that isn't a widget of its own, such as an entry a menu
+	 * lists. Source tells it apart, for Clear Highlighted Description. Empty describes nothing, so Default Description shows: call it
+	 * so for something that says nothing, such as an item under the cursor, so the last button's description isn't kept for it.
+	 */
+	void SetHighlightedDescription(const FText& Description, const UObject* Source);
+
+	/**
+	 * Source's highlight ended. Its description goes, unless Keep Last Description keeps it; with bEvenIfKept it goes either way, such as
+	 * once what it describes is no longer on screen.
+	 */
+	void ClearHighlightedDescription(const UObject* Source, bool bEvenIfKept = false);
+
+	/** Whether it has somewhere to show a description: Description Text or Description Panel. */
+	bool HasDescriptionLine() const;
+
 protected:
 	//~ Begin UUserWidget Interface
 	virtual void NativeOnInitialized() override;
@@ -110,12 +172,35 @@ protected:
 	/** Where the reveal's transitions coming From Origin come from, such as away from what a menu opened beside. See the reveal's Set Origin. */
 	void SetTransitionOrigin(const FVector2D& Away, const FVector2D& Corner);
 
-	/** Calls Callback once Target is drawn, while this is still open and not closing. A new call replaces the last. */
-	void CallWhenDrawn(UWidget* Target, TFunction<void(UWidget&)>&& Callback);
+	/**
+	 * Calls Callback once Target is drawn, while this is still open and not closing, giving up after Timeout seconds. A new call replaces
+	 * the last.
+	 */
+	void CallWhenDrawn(UWidget* Target, TFunction<void(UWidget&)>&& Callback, float Timeout = 1.0f);
 
 	/** Close Widget was called: the close transition and animation have started, and it closes once they end. */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Modular UI")
 	void OnCloseStarted();
+
+	/**
+	 * What a highlighted widget does, for Description Text: a Modular Button's Description. Override it for widgets of your own, such as a
+	 * menu's entries.
+	 */
+	virtual FText GetDescriptionOf(const UWidget& Widget) const;
+
+	/**
+	 * What the widget asks of the player now, such as "Select an area to place this item." while one is held, said in Description Text
+	 * ahead of what's highlighted, though after what Show Description and menus over it say. Empty, the default, lets what's highlighted
+	 * be described. Call Refresh Description as it changes.
+	 */
+	virtual FText GetHint() const { return FText::GetEmpty(); }
+
+	/** What Description Text says changed, before On Description Changed, for C++ subclasses. */
+	virtual void NativeOnDescriptionChanged(const FText& Description) {}
+
+	/** What Description Text says changed, such as to animate it. After Description Text shows it. */
+	UFUNCTION(BlueprintImplementableEvent, Category = "Modular UI|Description")
+	void OnDescriptionChanged(const FText& Description);
 
 	// Input
 	/** Whether input reaches the game, the UI or both while this is active. Default leaves it to whatever else is active. */
@@ -177,6 +262,34 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Sound")
 	TObjectPtr<USoundBase> CloseSound;
 
+	// Description
+	/**
+	 * The line along the bottom of a console menu, saying what the player can do now: what a menu open over this one, or Show Description,
+	 * says, the newest first, such as "Use the item." for a highlighted option; else what this widget asks, Get Hint, such as where to put
+	 * a held item; else what the highlighted button does, such as "Adjust mouse and keyboard control settings."; else Default Description.
+	 * Never what a thing is, such as an item's description: that goes in a details panel.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Description", meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> DescriptionText;
+
+	/** Shown while there's a description, and hidden, not collapsed, while there isn't, so nothing around it moves. Put Description Text inside it. */
+	UPROPERTY(BlueprintReadOnly, Category = "Description", meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> DescriptionPanel;
+
+	/**
+	 * What Description Text says while nothing else does, such as what the screen is for. Empty, as an inventory's line is while the
+	 * player browses it, hides Description Panel then.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Description", meta = (MultiLine = true))
+	FText DefaultDescription;
+
+	/**
+	 * Description Text keeps describing the last thing highlighted until something else is, as console menus do, so the mouse crossing a
+	 * gap leaves it as it was. Off, it goes back to Default Description as soon as the mouse or focus leaves what it describes.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Description")
+	bool bKeepLastDescription = true;
+
 private:
 	void SetPauseRequested(bool bRequested);
 
@@ -197,6 +310,20 @@ private:
 
 	/** What happens once a close started with Close Widget Then has finished. */
 	TFunction<void()> AfterClosing;
+
+	/** Something said in Description Text on a source's behalf, with Show Description From. */
+	struct FSaidDescription
+	{
+		TWeakObjectPtr<const UObject> Source;
+		FText Text;
+	};
+
+	// Description: what's said on sources' behalf, oldest first, what's highlighted and what highlighted it, and what Description Text says
+	// now.
+	TArray<FSaidDescription> SaidDescriptions;
+	FText HighlightedDescription;
+	TWeakObjectPtr<const UObject> HighlightedSource;
+	FText ShownDescription;
 
 	bool bClosing = false;
 	bool bPauseRequested = false;

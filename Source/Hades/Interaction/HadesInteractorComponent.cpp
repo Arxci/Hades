@@ -342,11 +342,13 @@ namespace
 
 void UHadesInteractorComponent::ShowPrompt(UHadesInteractableComponent& Interactable)
 {
+	// Only interactables that ask for it, such as pickups, show a message. The rest show what interacting does on their marker alone.
 	const APawn* Pawn = GetOwner<APawn>();
 	APlayerController* Viewer = Pawn ? Pawn->GetController<APlayerController>() : nullptr;
 	UModularMessageSubsystem* Messages = PromptChannel.IsValid() ? UModularMessageSubsystem::GetForPlayer(Viewer) : nullptr;
-	if (!Messages)
+	if (!Messages || !Interactable.ShowsPromptMessage())
 	{
+		HidePrompt();
 		return;
 	}
 

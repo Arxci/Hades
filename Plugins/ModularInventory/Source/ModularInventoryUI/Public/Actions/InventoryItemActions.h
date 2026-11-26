@@ -2,10 +2,14 @@
 
 #include "CoreMinimal.h"
 
+#include "GameplayTagContainer.h"
+
 #include "Actions/InventoryItemAction.h"
 
 #include "InventoryItemActions.generated.h"
 
+class UInventoryRecipeBook;
+class UInventoryRecipeMenuWidget;
 class UInventoryShortcutMenuWidget;
 
 
@@ -188,4 +192,47 @@ protected:
 	/** The menu that lists the shortcut slots. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action")
 	TSubclassOf<UInventoryShortcutMenuWidget> MenuClass;
+};
+
+
+/**
+ * Opens Menu Class for the item: the recipes of Recipe Book that take it, each with what it makes, how many of that the player has, and what
+ * it takes, to pick one and craft it, as some games' Combine does. It opens where the screen opens item menus, replacing the item menu it
+ * was picked from. Only offered while the item takes part in one of the recipes, or with Only When Craftable, while one can be made now.
+ */
+UCLASS(meta = (DisplayName = "Craft"))
+class MODULARINVENTORYUI_API UInventoryItemAction_Craft : public UInventoryItemAction
+{
+	GENERATED_BODY()
+
+public:
+	UInventoryItemAction_Craft();
+
+	TSubclassOf<UInventoryRecipeMenuWidget> GetMenuClass() const { return MenuClass; }
+
+protected:
+	virtual bool CanRun_Implementation(const FInventoryItemActionContext& Context) const override;
+	virtual void Run_Implementation(const FInventoryItemActionContext& Context) override;
+
+	/**
+	 * The recipes offered for the item: Recipe Book, or else the menu's own. Override it in C++ to find them elsewhere, such as recipes the
+	 * player has learned.
+	 */
+	virtual const UInventoryRecipeBook* GetRecipeBook(const FInventoryItemActionContext& Context) const;
+
+	/** The menu that lists the recipes. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action")
+	TSubclassOf<UInventoryRecipeMenuWidget> MenuClass;
+
+	/** The recipes to offer. None offers the menu's own Recipe Book. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action")
+	TObjectPtr<UInventoryRecipeBook> RecipeBook;
+
+	/** Context tags the recipes are checked and crafted with, such as the station the screen is open at. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action")
+	FGameplayTagContainer ContextTags;
+
+	/** Only offered while one of the item's recipes can be made now. Off, it's offered while the item takes part in any, so the player sees what it could make. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action")
+	bool bOnlyWhenCraftable = false;
 };

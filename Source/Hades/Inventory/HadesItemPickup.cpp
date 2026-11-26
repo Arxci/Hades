@@ -30,8 +30,10 @@ AHadesItemPickup::AHadesItemPickup()
 	Mesh->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
 	SetRootComponent(Mesh);
 
+	// A banner names the item while the player looks at it, along with its marker.
 	Interactable = CreateDefaultSubobject<UHadesInteractableComponent>(TEXT("Interactable"));
 	Interactable->SetDisabledText(LOCTEXT("NoRoomPrompt", "Not enough space"));
+	Interactable->SetShowPromptMessage(true);
 
 	Inventory = CreateDefaultSubobject<UInventoryComponent>(TEXT("Inventory"));
 }

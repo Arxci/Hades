@@ -41,7 +41,8 @@ enum class EInventoryMenuActionTiming : uint8
  * with the screen's Open Item Menu. While it's open the item is selected, and nothing is held.
  * It lists the item actions of its Action Set and Actions: each on the button placed in the designer under its Button Name, or else on a
  * button made for it in Action Panel. An action can ask first, to confirm or how many, as Prompt Presentation says: inline in place of the
- * actions, over the menu, or in a dialog of its own. Description Text and the screen's action hint say what the highlighted action does.
+ * actions, over the menu, or in a dialog of its own. Description Text, the menu's and the screen's, says what the highlighted action does,
+ * or why it can't run.
  * Running an action closes the menu, unless the action keeps it open. It also closes by itself when its item leaves the inventory, such as
  * when it's used up, and when its screen closes. A press passed through to another item reaches that item, as if the menu weren't open.
  * Everything else, its placement, dismissing, highlight, prompts and transitions, it gets from Modular Context Menu.
@@ -104,15 +105,11 @@ protected:
 	virtual void NativeOnDeactivated() override;
 	//~ End UCommonActivatableWidget Interface
 
-	//~ Begin UModularActivatableWidget Interface
-	virtual void NativeOnCloseStarted() override;
-	//~ End UModularActivatableWidget Interface
-
 	//~ Begin UModularContextMenuWidget Interface
 	virtual bool PassPressThrough(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent, FReply& OutReply) override;
 	virtual FText GetEntryDescription(UCommonButtonBase* Entry) const override;
-	virtual void NativeOnEntryHighlighted(UCommonButtonBase* Entry, const FText& Description) override;
 	virtual UWidget* GetEntriesWidget() const override;
+	virtual UModularActivatableWidget* FindDescriptionScreen() const override;
 	//~ End UModularContextMenuWidget Interface
 
 	/** Before On Item Changed, for C++ subclasses. */
@@ -126,9 +123,6 @@ protected:
 	void OnItemChanged();
 
 	UInventoryUISubsystem* GetInteraction() const;
-
-	/** Says something in Description Text, and in the screen's action hint with Show Hint On Screen. Empty gives the screen its own hint back. */
-	void ShowHint(const FText& Hint);
 
 	// Item
 	/** The item's name. */
@@ -161,11 +155,6 @@ protected:
 	 */
 	UPROPERTY(BlueprintReadOnly, Category = "Item Menu|Actions", meta = (BindWidgetOptional))
 	TObjectPtr<UPanelWidget> ActionPanel;
-
-	// Hints
-	/** Says what the highlighted action does in the screen's action hint too. Turn it off when Description Text says it in the menu. */
-	UPROPERTY(EditDefaultsOnly, Category = "Item Menu|Hints")
-	bool bShowHintOnScreen = true;
 
 private:
 	/** An action listed for the item, and the button showing it. */
@@ -226,5 +215,9 @@ private:
 
 	UPROPERTY()
 	bool bGameKeepsInput_DEPRECATED = false;
+
+	// Renamed Show Description On Screen, now the context menu's. Loaded only so PostLoad can carry a menu's setting over.
+	UPROPERTY()
+	bool bShowHintOnScreen_DEPRECATED = true;
 #endif
 };

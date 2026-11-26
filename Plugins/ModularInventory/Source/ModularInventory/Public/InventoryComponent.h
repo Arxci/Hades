@@ -288,6 +288,26 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Crafting")
 	bool CraftFromItems(const UInventoryRecipe* Recipe, const TArray<FInventoryItemHandle>& Items, const FGameplayTagContainer& ContextTags, TArray<FInventoryItemHandle>& OutItems, EInventoryError& OutError);
 
+	/**
+	 * Craft, taking ingredients from Preferred Items first, such as the item a player picked a recipe for, then from the rest of storage,
+	 * so the stack the player meant is the one used.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Crafting")
+	bool CraftPreferring(const UInventoryRecipe* Recipe, const TArray<FInventoryItemHandle>& PreferredItems, const FGameplayTagContainer& ContextTags, int32 Times,
+		TArray<FInventoryItemHandle>& OutItems, EInventoryError& OutError);
+
+	/**
+	 * Why crafting the recipe Times times would fail now, or None when it would work: Requirements Not Met, Missing Ingredients, or No Space
+	 * for what it makes. Unlike Can Craft, it tries the craft and undoes it, so room for the results is checked too, and it never
+	 * disagrees with Craft.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Crafting")
+	EInventoryError GetCraftError(const UInventoryRecipe* Recipe, const FGameplayTagContainer& ContextTags, int32 Times = 1) const;
+
+	/** How many times the recipe can be crafted at once now, as Get Craft Error sees it, up to Max Times, such as for a crafting menu. 0 when it can't be. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Crafting")
+	int32 GetCraftableTimes(const UInventoryRecipe* Recipe, const FGameplayTagContainer& ContextTags, int32 MaxTimes = 99) const;
+
 	/** Fires once per committed change touching any of this component's containers, nested ones included. */
 	UPROPERTY(BlueprintAssignable, Category = "Inventory")
 	FInventoryComponentChangedSignature OnInventoryChanged;
@@ -388,6 +408,9 @@ private:
 
 	UInventorySubsystem* GetSubsystem() const { return Subsystem.Get(); }
 	FGameplayTagContainer GatherContextTags(const FGameplayTagContainer& ExtraTags) const;
+
+	/** Every item in storage a recipe can take ingredients from, those of Preferred Items among them first, in their order. */
+	TArray<FInventoryItemHandle> GatherCraftCandidates(TConstArrayView<FInventoryItemHandle> PreferredItems) const;
 	void HandleRegistryChanged(const FInventoryChangeSet& Changes);
 	void RefreshCosmeticsPreload();
 

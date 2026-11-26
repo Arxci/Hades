@@ -77,6 +77,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory UI")
 	bool CanRotateHeld() const;
 
+	/** Whether the held item is one that turns at all, wherever it's aimed. Can Rotate Held also asks whether it fits turned there. */
+	UFUNCTION(BlueprintPure, Category = "Inventory UI")
+	bool CanEverRotateHeld() const;
+
 	/** Halves the held count. From one, goes back to the whole stack. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	void SplitHeld();

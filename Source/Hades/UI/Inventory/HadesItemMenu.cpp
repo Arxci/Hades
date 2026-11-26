@@ -7,6 +7,7 @@
 #include "Hades/UI/Inventory/HadesItemActions.h"
 
 #include "Actions/InventoryItemActions.h"
+#include "Widgets/InventoryRecipeMenuWidget.h"
 #include "Widgets/InventoryShortcutMenuWidget.h"
 
 #define LOCTEXT_NAMESPACE "HadesItemMenu"
@@ -72,6 +73,11 @@ void UHadesItemMenu::ValidateCompiledDefaults(IWidgetCompilerLog& CompileLog) co
 		if (AssignShortcut && !AssignShortcut->GetMenuClass())
 		{
 			CompileLog.Warning(LOCTEXT("NoQuickSlotMenu", "The Assign Shortcut action has no Menu Class, so the menu never offers it."));
+		}
+		const UHadesItemAction_Combine* Combine = Cast<UHadesItemAction_Combine>(Action);
+		if (Combine && Combine->GetStyle() == EHadesCombineStyle::RecipeList && !Combine->GetMenuClass())
+		{
+			CompileLog.Note(LOCTEXT("NoRecipeMenu", "The Combine action's Style is Recipe List, but it has no Menu Class, so it has the player choose the other item instead. Set Style to Choose Item if that's what you want."));
 		}
 	}
 }

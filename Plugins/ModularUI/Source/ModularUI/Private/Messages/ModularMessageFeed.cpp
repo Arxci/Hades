@@ -10,6 +10,24 @@
 #include "ModularUI.h"
 #include "Widgets/ModularInputKeyWidget.h"
 
+namespace
+{
+	/** What the log calls a message: its title, or else its text, or else its key. */
+	FString DescribeForLog(const FModularMessage& Message)
+	{
+		if (!Message.Title.IsEmpty())
+		{
+			return Message.Title.ToString();
+		}
+		return !Message.Body.IsEmpty() ? Message.Body.ToString() : Message.Key.ToString();
+	}
+
+	bool HasKeyOf(const FModularMessage& Message, const FModularMessage& Other)
+	{
+		return !Message.Key.IsNone() && Message.Key == Other.Key && Message.Channel == Other.Channel;
+	}
+}
+
 UModularMessageFeed::UModularMessageFeed(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 	, EntryPool(*this)
@@ -79,6 +97,9 @@ void UModularMessageFeed::NativeDestruct()
 	}
 	Reset();
 
+	// Those that stay until hidden are sent again as the feed registers again.
+	Displaced.Reset();
+
 	Super::NativeDestruct();
 }
 
@@ -110,8 +131,30 @@ void UModularMessageFeed::Reset()
 	}
 }
 
+float UModularMessageFeed::GetDuration(const FModularMessage& Message) const
+{
+	return Message.Duration < 0.0f ? DefaultDuration : Message.Duration;
+}
+
+bool UModularMessageFeed::IsLasting(const FModularMessage& Message) const
+{
+	return !Message.Key.IsNone() && GetDuration(Message) <= 0.0f;
+}
+
 void UModularMessageFeed::ReceiveMessage(const FModularMessage& Message)
 {
+	// One with the key of one waiting to come back changes it there, so it comes back as it is now, once what took its place has gone. One
+	// that no longer stays until hidden is a new message.
+	if (FModularMessage* Kept = Displaced.FindByPredicate([&Message](const FModularMessage& Other) { return HasKeyOf(Message, Other); }))
+	{
+		if (IsLasting(Message))
+		{
+			*Kept = Message;
+			return;
+		}
+		Displaced.RemoveAll([&Message](const FModularMessage& Other) { return HasKeyOf(Message, Other); });
+	}
+
 	// The same message again, or a new one with the key of one showing, changes the one showing.
 	if (FShownMessage* Repeat = FindRepeat(Message))
 	{
@@ -129,10 +172,18 @@ void UModularMessageFeed::ReceiveMessage(const FModularMessage& Message)
 		return;
 	}
 
-	// One at a time, the newest at once: the one showing goes. Without entries, there's one place to show it, so the one there, showing or
-	// going, makes way at once.
+	// One at a time, the newest at once: the one showing goes, and comes back once this one has gone if it stays until hidden. Without
+	// entries, there's one place to show it, so the one there, showing or going, makes way at once.
 	if (!UsesEntries())
 	{
+		for (const FShownMessage& Other : Shown)
+		{
+			if (!Other.bHiding)
+			{
+				UE_LOG(LogModularUI, Verbose, TEXT("[Modular UI] %s: \"%s\" goes: a newer message took its place."), *GetName(), *DescribeForLog(Other.Message));
+				Displace(Other);
+			}
+		}
 		if (!Shown.IsEmpty())
 		{
 			Reset();
@@ -143,17 +194,18 @@ void UModularMessageFeed::ReceiveMessage(const FModularMessage& Message)
 		TArray<int32> Showing;
 		for (const FShownMessage& Other : Shown)
 		{
+			Displace(Other);
 			Showing.Add(Other.Id);
 		}
 		for (const int32 Id : Showing)
 		{
-			Hide(Id);
+			Hide(Id, TEXT("a newer message took its place"));
 		}
 	}
 
 	Show(Message);
 
-	// Too many at once: the oldest of the lowest priority goes early.
+	// Too many at once: the oldest of the lowest priority goes early, and comes back once there's room if it stays until hidden.
 	while (Mode == EModularMessageFeedMode::Stack && UsesEntries() && CountShowing() > FMath::Max(1, MaxShown))
 	{
 		const FShownMessage* Oldest = nullptr;
@@ -168,49 +220,55 @@ void UModularMessageFeed::ReceiveMessage(const FModularMessage& Message)
 		{
 			break;
 		}
-		Hide(Oldest->Id);
+		Displace(*Oldest);
+		Hide(Oldest->Id, TEXT("more than Max Shown were showing"));
 	}
 }
 
 void UModularMessageFeed::ReceiveHide(const FGameplayTag& Channel, FName Key)
 {
-	Waiting.RemoveAll([&Channel, Key](const FModularMessage& Message) { return Message.Key == Key && Message.Channel == Channel; });
+	const auto Matches = [&Channel, Key](const FModularMessage& Message) { return Message.Key == Key && Message.Channel == Channel; };
+	Waiting.RemoveAll(Matches);
+	Displaced.RemoveAll(Matches);
 
 	TArray<int32> Matching;
 	for (const FShownMessage& Message : Shown)
 	{
-		if (Message.Message.Key == Key && Message.Message.Channel == Channel)
+		if (Matches(Message.Message))
 		{
 			Matching.Add(Message.Id);
 		}
 	}
 	for (const int32 Id : Matching)
 	{
-		Hide(Id);
+		Hide(Id, TEXT("Hide Message was called for its key"));
 	}
 }
 
 void UModularMessageFeed::ReceiveClear(const FGameplayTag& Channel)
 {
-	Waiting.RemoveAll([&Channel](const FModularMessage& Message) { return Message.Channel.MatchesTag(Channel); });
+	const auto Matches = [&Channel](const FModularMessage& Message) { return Message.Channel.MatchesTag(Channel); };
+	Waiting.RemoveAll(Matches);
+	Displaced.RemoveAll(Matches);
 
 	TArray<int32> Matching;
 	for (const FShownMessage& Message : Shown)
 	{
-		if (Message.Message.Channel.MatchesTag(Channel))
+		if (Matches(Message.Message))
 		{
 			Matching.Add(Message.Id);
 		}
 	}
 	for (const int32 Id : Matching)
 	{
-		Hide(Id);
+		Hide(Id, TEXT("its channel was cleared"));
 	}
 }
 
 void UModularMessageFeed::ClearMessages()
 {
 	Waiting.Reset();
+	Displaced.Reset();
 	TArray<int32> All;
 	for (const FShownMessage& Message : Shown)
 	{
@@ -218,7 +276,7 @@ void UModularMessageFeed::ClearMessages()
 	}
 	for (const int32 Id : All)
 	{
-		Hide(Id);
+		Hide(Id, TEXT("the feed was cleared"));
 	}
 }
 
@@ -273,6 +331,10 @@ void UModularMessageFeed::Show(const FModularMessage& Message)
 		New.Message = Message;
 	}
 
+	const float Duration = GetDuration(Message);
+	UE_LOG(LogModularUI, Verbose, TEXT("[Modular UI] %s shows \"%s\" %s."), *GetName(), *DescribeForLog(Message),
+		Duration > 0.0f ? *FString::Printf(TEXT("for %.2f s"), Duration) : TEXT("until it's hidden or replaced"));
+
 	StartExpiry(Shown.Last());
 	OnMessageShown(Message, /*bMerged*/ false);
 }
@@ -304,7 +366,7 @@ void UModularMessageFeed::StartExpiry(FShownMessage& Message)
 	FTSTicker::GetCoreTicker().RemoveTicker(Message.Expiry);
 	Message.Expiry = FTSTicker::FDelegateHandle();
 
-	const float Duration = Message.Message.Duration < 0.0f ? DefaultDuration : Message.Message.Duration;
+	const float Duration = GetDuration(Message.Message);
 	if (Duration <= 0.0f)
 	{
 		return;
@@ -318,12 +380,24 @@ void UModularMessageFeed::StartExpiry(FShownMessage& Message)
 		{
 			Expired->Expiry = FTSTicker::FDelegateHandle();
 		}
-		Hide(Id);
+		Hide(Id, TEXT("its time was up"));
 		return false;
 	}), Duration);
 }
 
-void UModularMessageFeed::Hide(int32 Id)
+void UModularMessageFeed::Displace(const FShownMessage& Message)
+{
+	// Only one that stays until hidden by its key comes back: one that times out has had its time, and one without a key could never go.
+	if (Message.bHiding || !IsLasting(Message.Message))
+	{
+		return;
+	}
+	const FModularMessage& Kept = Message.Message;
+	Displaced.RemoveAll([&Kept](const FModularMessage& Other) { return HasKeyOf(Kept, Other); });
+	Displaced.Add(Kept);
+}
+
+void UModularMessageFeed::Hide(int32 Id, const TCHAR* Why)
 {
 	FShownMessage* Message = FindShown(Id);
 	if (!Message || Message->bHiding)
@@ -336,6 +410,7 @@ void UModularMessageFeed::Hide(int32 Id)
 	Message->Expiry = FTSTicker::FDelegateHandle();
 	const FModularMessage Hidden = Message->Message;
 	UModularMessageEntryWidget* Entry = Message->Entry.Get();
+	UE_LOG(LogModularUI, Verbose, TEXT("[Modular UI] %s: \"%s\" goes: %s."), *GetName(), *DescribeForLog(Hidden), Why);
 
 	const TWeakObjectPtr<ThisClass> WeakThis = this;
 	TFunction<void()> OnHidden = [WeakThis, Id]()
@@ -402,10 +477,23 @@ void UModularMessageFeed::Wait(const FModularMessage& Message)
 
 void UModularMessageFeed::ShowNextWaiting()
 {
-	if (!Waiting.IsEmpty() && Shown.IsEmpty())
+	if (!Waiting.IsEmpty())
 	{
-		const FModularMessage Next = Waiting[0];
-		Waiting.RemoveAt(0);
-		Show(Next);
+		if (Shown.IsEmpty())
+		{
+			const FModularMessage Next = Waiting[0];
+			Waiting.RemoveAt(0);
+			Show(Next);
+		}
+		return;
+	}
+
+	// Then one a newer message took the place of, the newest first, once nothing shows, or in a stack, once there's room.
+	const bool bRoom = Mode == EModularMessageFeedMode::Stack && UsesEntries() ? CountShowing() < FMath::Max(1, MaxShown) : Shown.IsEmpty();
+	if (bRoom && !Displaced.IsEmpty())
+	{
+		const FModularMessage Back = Displaced.Pop();
+		UE_LOG(LogModularUI, Verbose, TEXT("[Modular UI] %s: \"%s\" comes back, as what took its place has gone."), *GetName(), *DescribeForLog(Back));
+		Show(Back);
 	}
 }

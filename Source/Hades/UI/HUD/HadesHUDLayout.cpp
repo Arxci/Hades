@@ -9,6 +9,7 @@
 #include "Hades/Inventory/HadesQuickSlotComponent.h"
 
 #include "Layers/ModularUISubsystem.h"
+#include "Widgets/InventoryScreenWidget.h"
 
 UHadesHUDLayout::UHadesHUDLayout(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
@@ -23,6 +24,8 @@ void UHadesHUDLayout::NativeOnInitialized()
 		FSimpleDelegate::CreateUObject(this, &ThisClass::HandleEscapeAction)));
 	RegisterUIActionBinding(FBindUIActionArgs(FUIActionTag::ConvertChecked(HadesGameplayTags::UI_Action_Inventory), false,
 		FSimpleDelegate::CreateUObject(this, &ThisClass::HandleInventoryAction)));
+	RegisterUIActionBinding(FBindUIActionArgs(FUIActionTag::ConvertChecked(HadesGameplayTags::UI_Action_Crafting), false,
+		FSimpleDelegate::CreateUObject(this, &ThisClass::HandleCraftingAction)));
 }
 
 void UHadesHUDLayout::NativeConstruct()
@@ -80,9 +83,29 @@ void UHadesHUDLayout::HandleEscapeAction()
 
 void UHadesHUDLayout::HandleInventoryAction()
 {
+	OpenInventory(NAME_None);
+}
+
+void UHadesHUDLayout::HandleCraftingAction()
+{
+	OpenInventory(CraftingTab);
+}
+
+void UHadesHUDLayout::OpenInventory(FName TabId)
+{
 	UModularUISubsystem* UI = UModularUISubsystem::Get(GetOwningLocalPlayer());
-	if (UI && !InventoryScreenClass.IsNull())
+	if (!UI || InventoryScreenClass.IsNull())
 	{
-		UI->K2_PushStreamedWidgetToLayer(HadesGameplayTags::UI_Layer_GameMenu, InventoryScreenClass);
+		return;
 	}
+
+	// Told its tab as it's pushed, before it shows, so it opens there rather than switching to it once open.
+	UI->PushStreamedWidgetToLayer(HadesGameplayTags::UI_Layer_GameMenu, InventoryScreenClass, /*bSuspendInput*/ true, [TabId](UCommonActivatableWidget& Widget)
+	{
+		UInventoryScreenWidget* Screen = Cast<UInventoryScreenWidget>(&Widget);
+		if (Screen && !TabId.IsNone())
+		{
+			Screen->SetStartTab(TabId);
+		}
+	});
 }

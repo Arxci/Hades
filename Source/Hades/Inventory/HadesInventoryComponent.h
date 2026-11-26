@@ -79,6 +79,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory|Actions")
 	bool CanCombine(FInventoryItemHandle Item) const;
 
+	/** Whether the item is a gun the inventory holds ammo for, or ammo for a gun it holds, so combining the two loads the gun. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Actions")
+	bool HasGunPartner(FInventoryItemHandle Item) const;
+
+	/** What Combine can make, which the item menu's Combine lists. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Actions")
+	UInventoryRecipeBook* GetCombineRecipes() const { return CombineRecipes; }
+
 	/** Loads a gun from its ammo, or crafts the first of Combine Recipes made from these two items, telling the player when it can't. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Actions")
 	bool CombineItems(FInventoryItemHandle Item, FInventoryItemHandle Other);

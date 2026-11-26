@@ -28,6 +28,13 @@ struct MODULARINVENTORY_API FInventoryRecipeIngredient
 	/** Off for tools like a knife: required, but kept. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Recipe")
 	bool bConsume = true;
+
+	/**
+	 * What crafting menus show for the ingredient, such as one item standing for a Tag Query of any ammo. None shows the first of the
+	 * query's Definitions, or else the first item the crafter holds that matches.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Recipe")
+	TObjectPtr<UInventoryItemDefinition> DisplayItem;
 };
 
 

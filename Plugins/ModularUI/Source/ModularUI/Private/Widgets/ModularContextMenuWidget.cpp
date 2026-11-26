@@ -20,6 +20,7 @@
 
 #include "Layers/ModularUISubsystem.h"
 #include "ModularUI.h"
+#include "ModularUIFocus.h"
 #include "Widgets/ModularButton.h"
 #include "Widgets/ModularPromptWidget.h"
 
@@ -187,7 +188,14 @@ void UModularContextMenuWidget::AddRevealParts(FModularUIReveal& InReveal)
 
 void UModularContextMenuWidget::RegisterConfirmAction()
 {
-	// Bound as the menu opens, and again as the mouse comes and goes over its entries.
+	// Bound once, and never changed while the menu is open, so action bars showing it stay as they are. It only shows what Accept does:
+	// not consuming it lets Accept go on to the focused entry, or with the mouse on an entry, to that one (see Native On Preview Key Down).
+	if (!ConfirmAction.IsNull())
+	{
+		FBindUIActionArgs ConfirmArgs(ConfirmAction, true, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleConfirmAction));
+		ConfirmArgs.bConsumeInput = false;
+		RegisterUIActionBinding(ConfirmArgs);
+	}
 }
 
 // Anchor
@@ -371,12 +379,6 @@ void UModularContextMenuWidget::NativeOnActivated()
 
 	Super::NativeOnActivated();
 
-	if (UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer()))
-	{
-		Input->OnInputMethodChangedNative.AddUObject(this, &ThisClass::HandleInputMethodChanged);
-	}
-	RefreshConfirm();
-
 	// The first entry is highlighted at once, and takes focus once the menu is laid out: Common UI focuses it as the menu activates, but
 	// that can be before the menu was ever drawn, when it can't take focus yet. A menu shown again from under another keeps its entry,
 	// highlighted afresh so its description shows again.
@@ -393,10 +395,10 @@ void UModularContextMenuWidget::NativeOnDeactivated()
 {
 	FTSTicker::GetCoreTicker().RemoveTicker(PlaceHandle);
 	PlaceHandle = FTSTicker::FDelegateHandle();
-	if (UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer()))
-	{
-		Input->OnInputMethodChangedNative.RemoveAll(this);
-	}
+
+	// The screen says its own description again, if it didn't as the close started, such as for a menu closed at once.
+	StopSayingOnScreen();
+	DescriptionScreen.Reset();
 
 	// A question still asked goes unanswered: its dialog closes with the menu, and the prompt is ready for the next opening.
 	PromptAnswer = TFunction<void(bool, int32)>();
@@ -530,11 +532,12 @@ void UModularContextMenuWidget::HighlightEntry(UCommonButtonBase* Entry, bool bF
 		Entry->SetIsSelected(true, /*bGiveClickFeedback*/ false);
 	}
 
-	// The prompt's buttons say nothing of their own: the question is on screen.
+	// The prompt's buttons say nothing of their own: the question is on screen, and the screen keeps saying what the entry that asked does.
 	if (!IsPromptButton(Entry))
 	{
-		const FText Description = GetEntryDescription(Entry);
-		ShowDescription(Description);
+		const FText Description = GetDescriptionOf(*Entry);
+		SetHighlightedDescription(Description, Entry);
+		SayOnScreen(Description);
 		NativeOnEntryHighlighted(Entry, Description);
 		OnEntryHighlighted(Entry, Description);
 	}
@@ -554,12 +557,73 @@ void UModularContextMenuWidget::ClearHighlight()
 	HighlightedEntry.Reset();
 }
 
-void UModularContextMenuWidget::ShowDescription(const FText& Description)
+void UModularContextMenuWidget::DescribeHighlightedEntry(const FText& Description)
 {
-	if (DescriptionText)
+	UCommonButtonBase* Highlighted = HighlightedEntry.Get();
+	SetHighlightedDescription(Description, Highlighted ? static_cast<const UObject*>(Highlighted) : this);
+	SayOnScreen(Description);
+}
+
+// Description: the screen the menu opened from says what the highlighted entry does too, along its bottom, from as the menu opens until it
+// starts to close. It's said on the menu's behalf, so a menu closing never clears what a newer one says.
+void UModularContextMenuWidget::SetDescriptionScreen(UModularActivatableWidget* Screen)
+{
+	DescriptionScreen = Screen;
+}
+
+UModularActivatableWidget* UModularContextMenuWidget::FindDescriptionScreen() const
+{
+	UModularActivatableWidget* Screen = DescriptionScreen.Get();
+	if (!Screen)
 	{
-		DescriptionText->SetText(Description);
+		UWidget* Anchor = AnchorWidget.Get();
+		Screen = Anchor ? ModularUI::FindDescriptionOwner(*Anchor) : nullptr;
 	}
+	return Screen != this ? Screen : nullptr;
+}
+
+void UModularContextMenuWidget::SayOnScreen(const FText& Description)
+{
+	UModularActivatableWidget* Screen = bShowDescriptionOnScreen && IsActivated() && !IsClosing() ? FindDescriptionScreen() : nullptr;
+	UModularActivatableWidget* SaidOn = DescribedScreen.Get();
+	if (SaidOn && SaidOn != Screen)
+	{
+		SaidOn->ClearDescriptionFrom(this);
+	}
+	DescribedScreen = Screen;
+	if (Screen)
+	{
+		Screen->ShowDescriptionFrom(this, Description);
+	}
+}
+
+void UModularContextMenuWidget::StopSayingOnScreen()
+{
+	if (UModularActivatableWidget* SaidOn = DescribedScreen.Get())
+	{
+		SaidOn->ClearDescriptionFrom(this);
+	}
+	DescribedScreen.Reset();
+}
+
+void UModularContextMenuWidget::NativeOnCloseStarted()
+{
+	// The screen says its own description again as the menu starts to go, or what a menu opening in its place says.
+	StopSayingOnScreen();
+	Super::NativeOnCloseStarted();
+}
+
+FText UModularContextMenuWidget::GetDescriptionOf(const UWidget& Widget) const
+{
+	// An entry says what Get Entry Description says for it, or else what its button says for itself. The prompt's buttons say nothing,
+	// as the question is on screen.
+	UCommonButtonBase* Entry = const_cast<UCommonButtonBase*>(Cast<UCommonButtonBase>(&Widget));
+	if (Entry && IsPromptButton(Entry))
+	{
+		return FText::GetEmpty();
+	}
+	const FText EntryDescription = Entry && IsEntry(Entry) ? GetEntryDescription(Entry) : FText::GetEmpty();
+	return !EntryDescription.IsEmpty() ? EntryDescription : Super::GetDescriptionOf(Widget);
 }
 
 bool UModularContextMenuWidget::IsEntry(UCommonButtonBase* Button) const
@@ -644,8 +708,6 @@ void UModularContextMenuWidget::NativeOnFocusChanging(const FWeakWidgetPath& Pre
 
 FReply UModularContextMenuWidget::NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
-	RefreshConfirm();
-
 	// The mouse highlights any entry it's over, and focus goes with it so Accept picks what's highlighted. Off the entries, the last one
 	// stays highlighted.
 	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
@@ -768,37 +830,24 @@ FReply UModularContextMenuWidget::NativeOnPreviewKeyDown(const FGeometry& InGeom
 	return Super::NativeOnPreviewKeyDown(InGeometry, InKeyEvent);
 }
 
-// Confirm: shown for what Accept does. If focus has left the entries, its key comes here and clicks the entry under the mouse.
-void UModularContextMenuWidget::HandleInputMethodChanged(ECommonInputType InputType)
-{
-	RefreshConfirm();
-}
-
-void UModularContextMenuWidget::RefreshConfirm()
-{
-	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
-	const bool bClicks = Input && Input->GetCurrentInputType() == ECommonInputType::MouseAndKeyboard && FindHoveredButton();
-	if (ConfirmHandle.IsValid() && bConfirmClicks != bClicks)
-	{
-		ConfirmHandle.Unregister();
-		ConfirmHandle = FUIActionBindingHandle();
-	}
-	if (!ConfirmHandle.IsValid() && !ConfirmAction.IsNull())
-	{
-		// Without the mouse on an entry, it's only shown: not consuming it lets Accept reach the focused button.
-		FBindUIActionArgs ConfirmArgs(ConfirmAction, true, bClicks ? FSimpleDelegate::CreateUObject(this, &ThisClass::HandleConfirmAction) : FSimpleDelegate::CreateWeakLambda(this, [] {}));
-		ConfirmArgs.bConsumeInput = bClicks;
-		ConfirmHandle = RegisterUIActionBinding(ConfirmArgs);
-		bConfirmClicks = bClicks;
-	}
-}
-
+// Confirm: Accept goes on to whatever has focus once this returns. That's normally an entry, as focus follows the highlight, but should focus
+// have left the menu, such as for something behind it, the entry under the mouse, or else the one highlighted, takes it first, so Accept picks
+// the entry the player sees rather than reaching whatever had focus.
 void UModularContextMenuWidget::HandleConfirmAction()
 {
-	// A real click, so the entry does all it does for one, its sounds included.
-	if (FindHoveredButton())
+	if (!IsActivated() || IsClosing() || PromptDialog.IsValid() || HasAnyUserFocus() || HasFocusedDescendants())
 	{
-		ClickAtCursor(GetOwningLocalPlayer());
+		return;
+	}
+
+	UWidget* Target = GetCursorPosition().IsSet() ? FindHoveredButton() : nullptr;
+	if (!Target)
+	{
+		Target = GetDesiredFocusTarget();
+	}
+	if (Target)
+	{
+		Target->SetFocus();
 	}
 }
 

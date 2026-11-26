@@ -21,9 +21,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FHadesInteractionSignature, AActor*,
 
 
 /**
- * Makes its actor interactable and shows a world marker while the player is nearby. While the player looks at it, the interactor shows its
- * prompt, its Prompt Title, Prompt Icon and interaction text, as a message on the interactor's Prompt Channel, such as a banner near the
- * bottom of the screen naming the item the player can pick up.
+ * Makes its actor interactable and shows a world marker while the player is nearby, which shows its interaction text and key while the
+ * player looks at it. With Show Prompt Message, the interactor also shows its Prompt Title, Prompt Icon and interaction text as a message on
+ * the interactor's Prompt Channel meanwhile, such as a banner near the bottom of the screen naming an item the player can pick up.
  */
 UCLASS(Blueprintable, ClassGroup = (Interaction), meta = (BlueprintSpawnableComponent))
 class HADES_API UHadesInteractableComponent : public UActorComponent
@@ -90,7 +90,17 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Interaction")
 	FText GetPromptText() const;
 
-	/** The prompt's title, icon or text changed, or interaction was turned on or off, so a prompt showing it shows it again. */
+	/** Whether the interactor shows its prompt as a message while the player looks at it, such as an item's banner, or only its marker. */
+	UFUNCTION(BlueprintCallable, Category = "Interaction")
+	void SetShowPromptMessage(bool bShow);
+
+	UFUNCTION(BlueprintPure, Category = "Interaction")
+	bool ShowsPromptMessage() const { return bShowPromptMessage; }
+
+	/**
+	 * The prompt's title, icon or text changed, interaction was turned on or off, or Show Prompt Message changed, so a prompt showing it
+	 * shows it again.
+	 */
 	FSimpleMulticastDelegate OnPromptChanged;
 
 	// Nearby and focus
@@ -167,12 +177,20 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Interaction|Prompt")
 	FText DisabledText;
 
-	/** What the prompt names while the player looks at it, such as "Green Herb". A pickup sets it to the item it holds. */
+	/**
+	 * While the player looks at it, the interactor shows its Prompt Title, Prompt Icon and interaction text as a message on its Prompt
+	 * Channel, such as a banner naming the item a pickup holds. Off, only its marker shows what interacting does, as for doors and boxes.
+	 * Pickups turn it on.
+	 */
 	UPROPERTY(EditAnywhere, Category = "Interaction|Prompt")
+	bool bShowPromptMessage = false;
+
+	/** What the prompt names while the player looks at it, such as "Green Herb". A pickup sets it to the item it holds. */
+	UPROPERTY(EditAnywhere, Category = "Interaction|Prompt", meta = (EditCondition = "bShowPromptMessage"))
 	FText PromptTitle;
 
 	/** Shown beside Prompt Title, such as the item's icon. A pickup sets it to the item it holds. */
-	UPROPERTY(EditAnywhere, Category = "Interaction|Prompt")
+	UPROPERTY(EditAnywhere, Category = "Interaction|Prompt", meta = (EditCondition = "bShowPromptMessage"))
 	TSoftObjectPtr<UTexture2D> PromptIcon;
 
 	/** The collision the player looks at to focus this. Defaults to the actor's root. */

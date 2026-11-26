@@ -27,6 +27,8 @@ enum class EModularButtonJustify : uint8
  * Color.
  * Put Icon, then Label, in a Horizontal Box, and that Horizontal Box in an Overlay at the root; Justification moves the Horizontal Box.
  * Context menus and prompts set the label of entries and buttons made from this class.
+ * While the mouse is over it or focus is on it, its Description shows in the Description Text of the screen it's on, such as what an
+ * option of an options menu does.
  */
 UCLASS(Abstract)
 class MODULARUI_API UModularButton : public UCommonButtonBase
@@ -44,10 +46,19 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Modular Button")
 	void SetIconTexture(UTexture2D* InTexture);
 
+	/** What the button does, for the Description Text of the screen it's on. Updates it at once while the button is highlighted. */
+	UFUNCTION(BlueprintCallable, Category = "Modular Button")
+	void SetDescription(const FText& InDescription);
+
+	UFUNCTION(BlueprintPure, Category = "Modular Button")
+	FText GetDescription() const { return Description; }
+
 protected:
 	//~ Begin UUserWidget Interface
 	virtual void NativePreConstruct() override;
 	virtual void NativeConstruct() override;
+	virtual void NativeOnAddedToFocusPath(const FFocusEvent& InFocusEvent) override;
+	virtual void NativeOnRemovedFromFocusPath(const FFocusEvent& InFocusEvent) override;
 	//~ End UUserWidget Interface
 
 	//~ Begin UCommonButtonBase Interface
@@ -86,7 +97,17 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Modular Button")
 	EModularButtonJustify Justification = EModularButtonJustify::Left;
 
+	/**
+	 * What the button does, such as "Adjust mouse and keyboard control settings.", shown in the Description Text of the screen it's on
+	 * while the mouse is over it or focus is on it. Empty leaves Description Text to the rest.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Modular Button", meta = (MultiLine = true))
+	FText Description;
+
 private:
+	/** Tells the screen it's on that it's highlighted, or isn't any more, for its Description Text. */
+	void SetHighlightedForDescription(bool bHighlighted);
+
 	void SetHoverLit(bool bInHoverLit);
 	void RefreshIconColor();
 	void ApplyTextStyle();

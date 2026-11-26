@@ -4,7 +4,6 @@
 
 #include "Containers/Ticker.h"
 #include "GameplayTagContainer.h"
-#include "Input/UIActionBindingHandle.h"
 
 #include "ModularActivatableWidget.h"
 #include "Widgets/ModularPromptTypes.h"
@@ -17,7 +16,6 @@ class UPanelWidget;
 class USlider;
 class UTextBlock;
 class UTexture2D;
-enum class ECommonInputType : uint8;
 
 
 /** Where a context menu opens. Each but As Designed then moves in as far as it takes to stay on screen. */
@@ -146,7 +144,8 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FModularMenuEntryChosenSignature, F
 /**
  * A small menu opened beside something, such as Use, Equip and Drop beside an item, or Set Waypoint beside a map marker: push it onto a
  * layer, give it an anchor, and it places itself beside it, staying on screen. One entry is highlighted at a time: the first as it opens,
- * then whichever the mouse or focus reached last, and Description Text says what it does.
+ * then whichever the mouse or focus reached last. What it does, from Get Entry Description, shows in the menu's Description Text, and with
+ * Show Description On Screen, along the bottom of the screen it opened from, as console menus say it.
  * Entries are the buttons in Menu Panel: placed in the designer, whose On Clicked you bind, or made with Add Entry, which On Entry Chosen
  * reports. An entry can ask first, to confirm or how many, inline in place of the entries, over the menu, or in a dialog of its own.
  * Back closes it, as do the presses off it that Outside Click and Right Click say. It comes in with Open Transition, out of whatever it
@@ -181,6 +180,14 @@ public:
 	/** The widget the menu opened beside, if it was given one. */
 	UFUNCTION(BlueprintPure, Category = "Context Menu|Anchor")
 	UWidget* GetAnchorWidget() const { return AnchorWidget.Get(); }
+
+	/**
+	 * The screen whose Description Text says what the highlighted entry does, with Show Description On Screen. Without one, it's the screen
+	 * the menu opened from: the nearest Modular Activatable Widget with a description line around its Anchor Widget. Call it as the menu is
+	 * pushed, for a menu anchored to a box or the cursor. Forgotten as the menu closes.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Context Menu|Description")
+	void SetDescriptionScreen(UModularActivatableWidget* Screen);
 
 	// Entries
 	/**
@@ -252,9 +259,18 @@ protected:
 	//~ End UCommonActivatableWidget Interface
 
 	//~ Begin UModularActivatableWidget Interface
+	virtual void NativeOnCloseStarted() override;
 	virtual void RegisterConfirmAction() override;
 	virtual void AddRevealParts(FModularUIReveal& InReveal) override;
+	virtual FText GetDescriptionOf(const UWidget& Widget) const override;
 	//~ End UModularActivatableWidget Interface
+
+	/**
+	 * The screen whose Description Text says what the highlighted entry does, with Show Description On Screen: the one Set Description
+	 * Screen gave, or else the one the menu opened from, around its anchor. Override it to find another, such as the screen an item menu
+	 * is for. Null says it only in the menu's own Description Text.
+	 */
+	virtual UModularActivatableWidget* FindDescriptionScreen() const;
 
 	/**
 	 * A press off the menu that should pass through, as Outside Click or Right Click say: reach whatever is under it and return true with
@@ -291,8 +307,11 @@ protected:
 	void HighlightEntry(UCommonButtonBase* Entry, bool bFocus);
 	void ClearHighlight();
 
-	/** Says Description in Description Text. */
-	void ShowDescription(const FText& Description);
+	/**
+	 * Says Description for the highlighted entry, such as why it can't be picked, until another entry is highlighted: in Description Text,
+	 * and with Show Description On Screen, on the screen's too.
+	 */
+	void DescribeHighlightedEntry(const FText& Description);
 
 	/** Whether the button is an entry: one of Menu Panel's buttons, or the prompt's. */
 	bool IsEntry(UCommonButtonBase* Button) const;
@@ -362,9 +381,14 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Context Menu|Highlight")
 	bool bKeepEntryHighlighted = false;
 
-	/** What the highlighted entry does. */
-	UPROPERTY(BlueprintReadOnly, Category = "Context Menu|Highlight", meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> DescriptionText;
+	// Description
+	/**
+	 * What the highlighted entry does, such as "Use the item.", shows in the Description Text of the screen the menu opened from too, along
+	 * the bottom of the screen as console menus say it, until the menu starts to close. The menu's own Description Text, if it has one,
+	 * says it either way. Off, only the menu's own says it.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Description")
+	bool bShowDescriptionOnScreen = true;
 
 	// Entries
 	/** Holds the entries Add Entry makes, after any placed in it, such as a Vertical Box. */
@@ -490,13 +514,15 @@ private:
 	UFUNCTION()
 	void HandleQuantityChanged(float Value);
 
-	// Confirm: shown for what Accept does, and with the mouse on an entry, a click on it.
-	void HandleInputMethodChanged(ECommonInputType InputType);
-	void RefreshConfirm();
+	/** Confirm's key was pressed: it only shows what Accept does, so Accept goes on, to the entry the player sees, once this returns. */
 	void HandleConfirmAction();
 
-	FUIActionBindingHandle ConfirmHandle;
-	bool bConfirmClicks = false;
+	// Description: says what the highlighted entry does on the screen's Description Text, or stops.
+	void SayOnScreen(const FText& Description);
+	void StopSayingOnScreen();
+
+	TWeakObjectPtr<UModularActivatableWidget> DescriptionScreen;
+	TWeakObjectPtr<UModularActivatableWidget> DescribedScreen;
 
 	TWeakObjectPtr<UWidget> AnchorWidget;
 	FBox2D AnchorBox = FBox2D(ForceInit);

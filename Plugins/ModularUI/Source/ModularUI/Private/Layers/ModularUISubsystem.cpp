@@ -32,6 +32,7 @@ FModularUIFindLayerDelegate& UModularUISubsystem::OnFindLayer()
 void UModularUISubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+	bDeinitialized = false;
 
 	// Only a project that has Modular UI make its root layouts needs to watch for the player's controller.
 	if (!GetDefault<UModularUISettings>()->RootLayoutClass.IsNull())
@@ -42,10 +43,14 @@ void UModularUISubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 void UModularUISubsystem::Deinitialize()
 {
+	// First, so nothing from here on, cancelled loads included, reaches Common Input, which may already have deinitialized: the player's
+	// subsystems go in no set order. The input filters loads still going set go with it.
+	bDeinitialized = true;
+
 	FTSTicker::GetCoreTicker().RemoveTicker(TickHandle);
 	TickHandle = FTSTicker::FDelegateHandle();
 
-	// Loads still going are dropped, and the input they held back comes back.
+	// Loads still going are dropped.
 	TArray<FPendingPush> Pending = MoveTemp(PendingPushes);
 	PendingPushes.Reset();
 	for (FPendingPush& Push : Pending)
@@ -54,7 +59,6 @@ void UModularUISubsystem::Deinitialize()
 		{
 			Push.Handle->CancelHandle();
 		}
-		ResumeInput(Push.SuspendToken);
 	}
 
 	if (RootLayout)
@@ -172,7 +176,7 @@ void UModularUISubsystem::K2_PushStreamedWidgetToLayer(FGameplayTag LayerTag, TS
 }
 
 void UModularUISubsystem::PushStreamedWidgetToLayer(FGameplayTag LayerTag, TSoftClassPtr<UCommonActivatableWidget> WidgetClass, bool bSuspendInput,
-	TFunction<void(UCommonActivatableWidget*)>&& OnPushed)
+	TFunction<void(UCommonActivatableWidget&)>&& InitFunc, TFunction<void(UCommonActivatableWidget*)>&& OnPushed)
 {
 	if (WidgetClass.IsNull())
 	{
@@ -186,7 +190,13 @@ void UModularUISubsystem::PushStreamedWidgetToLayer(FGameplayTag LayerTag, TSoft
 	// Already loaded, it goes up at once.
 	if (UClass* Loaded = WidgetClass.Get())
 	{
-		UCommonActivatableWidget* Pushed = PushWidgetToLayer<UCommonActivatableWidget>(LayerTag, Loaded, [](UCommonActivatableWidget&) {});
+		UCommonActivatableWidget* Pushed = PushWidgetToLayer<UCommonActivatableWidget>(LayerTag, Loaded, [&InitFunc](UCommonActivatableWidget& Widget)
+		{
+			if (InitFunc)
+			{
+				InitFunc(Widget);
+			}
+		});
 		if (OnPushed)
 		{
 			OnPushed(Pushed);
@@ -197,10 +207,20 @@ void UModularUISubsystem::PushStreamedWidgetToLayer(FGameplayTag LayerTag, TSoft
 	static const FName SuspendReason(TEXT("ModularUIPushingWidget"));
 	const FName SuspendToken = bSuspendInput ? SuspendInput(SuspendReason) : NAME_None;
 	TSharedPtr<FStreamableHandle> Handle = UAssetManager::GetStreamableManager().RequestAsyncLoad(WidgetClass.ToSoftObjectPath(),
-		FStreamableDelegate::CreateWeakLambda(this, [this, LayerTag, WidgetClass, SuspendToken, OnPushed]()
+		FStreamableDelegate::CreateWeakLambda(this, [this, LayerTag, WidgetClass, SuspendToken, InitFunc, OnPushed]()
 		{
+			if (bDeinitialized)
+			{
+				return;
+			}
 			ResumeInput(SuspendToken);
-			UCommonActivatableWidget* Pushed = PushWidgetToLayer<UCommonActivatableWidget>(LayerTag, WidgetClass.Get(), [](UCommonActivatableWidget&) {});
+			UCommonActivatableWidget* Pushed = PushWidgetToLayer<UCommonActivatableWidget>(LayerTag, WidgetClass.Get(), [&InitFunc](UCommonActivatableWidget& Widget)
+			{
+				if (InitFunc)
+				{
+					InitFunc(Widget);
+				}
+			});
 			if (OnPushed)
 			{
 				OnPushed(Pushed);
@@ -239,7 +259,7 @@ void UModularUISubsystem::RemoveWidgetFromLayers(UCommonActivatableWidget* Widge
 
 FName UModularUISubsystem::SuspendInput(FName Reason)
 {
-	UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetLocalPlayer());
+	UCommonInputSubsystem* Input = !bDeinitialized ? UCommonInputSubsystem::Get(GetLocalPlayer()) : nullptr;
 	if (!Input)
 	{
 		return NAME_None;
@@ -257,7 +277,8 @@ FName UModularUISubsystem::SuspendInput(FName Reason)
 
 void UModularUISubsystem::ResumeInput(FName Token)
 {
-	UCommonInputSubsystem* Input = Token.IsNone() ? nullptr : UCommonInputSubsystem::Get(GetLocalPlayer());
+	// Not once deinitializing: Common Input may have gone first, and its filters went with it.
+	UCommonInputSubsystem* Input = Token.IsNone() || bDeinitialized ? nullptr : UCommonInputSubsystem::Get(GetLocalPlayer());
 	if (Input)
 	{
 		Input->SetInputTypeFilter(ECommonInputType::MouseAndKeyboard, Token, false);

@@ -221,6 +221,13 @@ void UInventoryUISubsystem::SplitHeld()
 	}
 }
 
+bool UInventoryUISubsystem::CanEverRotateHeld() const
+{
+	const FInventoryRegistry* Registry = GetRegistry();
+	const FInventoryItemRecord* Record = Registry ? Registry->FindItem(HeldItem) : nullptr;
+	return Record && Record->Definition && Record->Definition->bCanRotate;
+}
+
 bool UInventoryUISubsystem::CanSplitHeld() const
 {
 	const FInventoryRegistry* Registry = GetRegistry();

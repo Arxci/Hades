@@ -27,16 +27,38 @@ struct FInventoryItemActionContext;
 enum class ECommonInputType : uint8;
 
 
+/** Which of an inventory screen's actions are bound, and so shown in action bars, at a time. */
+UENUM(BlueprintType)
+enum class EInventoryActionAvailability : uint8
+{
+	/**
+	 * The actions for what the player is doing: browsing the items, holding one, or choosing one. Action bars stay as they are while the
+	 * cursor moves, as console games keep them, and an action that can't be done for what's aimed at, such as Move over an empty cell,
+	 * does nothing.
+	 */
+	ByMode,
+	/**
+	 * Only the actions that can be done for what's aimed at now, such as Move only over an item. Action bars change as the cursor moves,
+	 * and a Common Bound Action Bar rebuilds its buttons each time.
+	 */
+	ByTarget
+};
+
+
 /**
  * A Common UI screen for an inventory: push it onto a layer to open it, and close it with Close Widget. Lay out its grids, lists, slots and
  * details in the designer. It sets its input mode, can pause the game, and comes in and goes with Open Reveal, as any Modular Activatable
  * Widget.
- * While it's active, Interaction Style decides how items are handled, and each action is bound only while it can work, so an action bar
- * shows what works now. Back stops choosing an item, or puts back the held item, before it closes the screen, and closing it drops whatever
- * was held or chosen. A right-click or the mouse wheel anywhere on it can put back or turn the held item, as the style says.
+ * While it's active, Interaction Style decides how items are handled, and its actions are bound as Action Availability says, for action
+ * bars to show. Back stops choosing an item, or puts back the held item, before it closes the screen, and closing it drops whatever was
+ * held or chosen. A right-click or the mouse wheel anywhere on it can put back or turn the held item, as the style says.
  * An item asking for its menu opens Item Menu Class on Item Menu Layer, or in Item Menu Stack.
- * With pages, such as Map, Items and Files, link a Tab List to Pages: the items only work while Items Page shows, and coming back to it
- * focuses the items again, as other pages get focus back where it was.
+ * Description Text, the line along the bottom of the screen, says what the player can do now: what the highlighted option of an item menu
+ * open over it does, or what to do with the held item or the item being chosen for, such as where the held item can't go and why, or what
+ * a highlighted button does. Browsing the items, it says nothing: what an item is belongs in a details panel.
+ * With pages, such as Map, Items and Crafting, link a Tab List to Pages, best a Modular Page Switcher: the items only work while Items Page
+ * shows, and coming back to it focuses the items again and hovers the item hovered as they were left, as other pages get focus back where
+ * it was. The screen opens on Items Page, or on the page Set Start Page names, such as for a key that opens it on its crafting page.
  */
 UCLASS(Abstract, Blueprintable)
 class MODULARINVENTORYUI_API UInventoryScreenWidget : public UModularActivatableWidget
@@ -62,10 +84,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Screen")
 	UInventoryItemMenuWidget* OpenItemMenu(FInventoryItemHandle Item, TSubclassOf<UInventoryItemMenuWidget> MenuClass);
 
+	/** Open Item Menu, with Init Menu setting the menu up before it's given its item and shows, such as the recipes a recipe menu lists. */
+	UInventoryItemMenuWidget* OpenItemMenuWith(FInventoryItemHandle Item, TSubclassOf<UInventoryItemMenuWidget> MenuClass, TFunctionRef<void(UInventoryItemMenuWidget&)> InitMenu);
+
 	/**
 	 * Whether the items are on screen, such as on a tabbed screen while their tab is open. While they aren't, item menus and the screen's
-	 * actions don't work, and whatever was held or chosen is dropped. Showing them again aims at the start, as opening the screen does.
-	 * Pages and Tab List call it as pages change.
+	 * actions don't work, and whatever was held or chosen is dropped. Showing them again gives them focus back once they're drawn, and with
+	 * the mouse hovers the item hovered as they were left, or else aims at the start, as opening the screen does. Pages and Tab List call it
+	 * as pages change.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Screen")
 	void SetInventoryShown(bool bShown);
@@ -80,6 +106,18 @@ public:
 	/** The index of the page shown in Pages, or -1 without Pages. */
 	UFUNCTION(BlueprintPure, Category = "Inventory|Screen")
 	int32 GetOpenPage() const;
+
+	/**
+	 * The page the screen opens on the next time it opens, once, instead of Items Page, such as its crafting page for a key that opens the
+	 * screen there. Call it as the screen is pushed, before it shows, such as from a push's Init Func; called while it's open, it opens the
+	 * page now. -1 goes back to Items Page.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Screen")
+	void SetStartPage(int32 PageIndex);
+
+	/** Set Start Page, by the Tab Id of the page's tab in Tab List. */
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Screen")
+	void SetStartTab(FName TabId);
 
 	/**
 	 * The other side while this screen is open, such as a chest's container: Transfer, Take All and shift-clicks move items between
@@ -102,21 +140,10 @@ public:
 
 	/**
 	 * Aims at the spot focus starts on and hovers its item, so it's lit and shown in details panels with the mouse too, as Aim On Open
-	 * does as the screen opens. Showing the items again does it. Nothing while an item is held.
+	 * does as the screen opens. Showing the items again does it, when there's no item to hover again. Nothing while an item is held.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Screen")
 	void AimAtStart();
-
-	/**
-	 * Says what the highlighted option of an open menu does, in Action Hint Text. Empty gives the screen its own hint back: what to do with
-	 * the held item, why it can't go where it's aimed, what to choose, or Idle Hint. Item menus call it for their actions.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Inventory|Screen")
-	void ShowActionHint(const FText& Hint);
-
-	/** The hint Action Hint Text shows now. */
-	UFUNCTION(BlueprintPure, Category = "Inventory|Screen")
-	FText GetActionHint() const { return ShownHint; }
 
 	/** Runs an item action for an item on this screen if it can run, such as from a button of your own. It doesn't prompt. */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Screen")
@@ -151,9 +178,13 @@ protected:
 	//~ Begin UModularActivatableWidget Interface
 	virtual void NativeOnCloseStarted() override;
 	virtual void RegisterConfirmAction() override;
+	virtual FText GetHint() const override;
 	//~ End UModularActivatableWidget Interface
 
-	/** Binds each action while it can work, and none while the screen closes. Override to bind your own with Set Action Bound, after calling Super. */
+	/**
+	 * Binds the actions as Action Availability says, and none while the screen closes. Override to bind your own with Set Action Bound,
+	 * after calling Super.
+	 */
 	virtual void RefreshActions();
 
 	/** Registers Row while bBound and unregisters it otherwise. */
@@ -180,10 +211,6 @@ protected:
 	 */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Screen")
 	void OnItemMenuRequested(FInventoryItemHandle Item);
-
-	/** The action hint changed, such as to animate it. After Action Hint Text shows it. */
-	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Screen")
-	void OnActionHintChanged(const FText& Hint);
 
 	/** Sort Items ran: whether everything was sorted, or nothing moved because it couldn't all fit again, such as to tell the player. */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Inventory|Screen")
@@ -259,33 +286,23 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory Screen|Pages")
 	bool bTabKeysTurnHeldItem = false;
 
-	// Hints
-	/** Shows what to do now, or what a menu option does, and is hidden while there's nothing to say. Put Action Hint Text inside it. */
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory Screen|Hints", meta = (BindWidgetOptional))
-	TObjectPtr<UWidget> ActionHint;
-
-	UPROPERTY(BlueprintReadOnly, Category = "Inventory Screen|Hints", meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> ActionHintText;
-
-	/** The hint while an item is held. */
+	// Hints: what Description Text says to do now, ahead of what's highlighted. What the highlighted option of an item menu open over the
+	// screen does comes first. Browsing the items, it says nothing.
+	/** What to do while an item is held, such as "Select an area to place this item." */
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory Screen|Hints")
 	FText MoveHint;
 
-	/** The hint while the held item is aimed where it can't go, by why it can't. Reasons not listed use Invalid Hint. */
+	/** Why the held item can't go where it's aimed, by the reason. Reasons not listed say Invalid Hint. */
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory Screen|Hints")
 	TMap<EInventoryError, FText> InvalidHints;
 
-	/** The hint while the held item is aimed where it can't go, for reasons not in Invalid Hints. Empty keeps Move Hint. */
+	/** Why the held item can't go where it's aimed, for reasons not in Invalid Hints. Empty keeps Move Hint. */
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory Screen|Hints")
 	FText InvalidHint;
 
-	/** The hint while an item is being chosen for another, such as to combine them. */
+	/** What to do while an item is being chosen for another, such as "Select an item to combine with." */
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory Screen|Hints")
 	FText ChooseHint;
-
-	/** The hint the rest of the time. Empty hides the hint. */
-	UPROPERTY(EditDefaultsOnly, Category = "Inventory Screen|Hints")
-	FText IdleHint;
 
 	// Sorting
 	/** How Sort Items orders the items, such as biggest first and then by name, or by category. */
@@ -297,9 +314,16 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory Screen|Sounds")
 	FInventoryUISounds Sounds;
 
+	/**
+	 * Which actions are bound, and so shown in action bars, at a time: By Mode, those for what the player is doing, browsing, holding an
+	 * item or choosing one, so action bars stay still as the cursor moves; By Target, only those that work for what's aimed at now.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Inventory Actions")
+	EInventoryActionAvailability ActionAvailability = EInventoryActionAvailability::ByMode;
+
 	// Rows of a UI input action table, so a Common Bound Action Bar shows them with their keys. Each is optional. Confirm Action, with the
 	// screen's other input settings, is under Input: with a gamepad it's only shown, as Accept goes to the focused cell; with the mouse, its
-	// key does what a click on the hovered item does, or puts the held item down where it's aimed, and it's bound only while it can.
+	// key does what a click on the hovered item does, or puts the held item down where it's aimed.
 	/** Picks up the item under the cursor or focus, or puts the held item down where it's aimed. How keys pick items up when Accept opens item menus. */
 	UPROPERTY(EditDefaultsOnly, Category = "Input|Inventory Actions", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
 	FDataTableRowHandle MoveAction;
@@ -355,14 +379,15 @@ private:
 
 	FInventoryItemActionContext MakeActionContext(FInventoryItemHandle Item) const;
 
-	/** Shows the menu's hint while there is one, or else what to do now, in Action Hint Text. */
-	void RefreshActionHint();
-
 	/**
-	 * Gamepad focus goes back to the items once they're drawn, such as when their page shows again. With the mouse, the spot focus would
-	 * start on is aimed at, as Aim On Open does.
+	 * Focus goes back to the items once they're drawn, such as when their page shows again, which aims at the cell focused with a gamepad.
+	 * With the mouse, the item hovered as the items were left is hovered again, or else the spot focus starts on is aimed at, as Aim On
+	 * Open does.
 	 */
 	void ReturnToItems();
+
+	/** With the mouse, hovers the item hovered as the items were last left, while it's on the screen, or else Aim At Start. */
+	void RestoreHover();
 
 	/** Whether the page with the items is the one open, or there are no pages. */
 	bool IsItemsPageOpen() const;
@@ -391,20 +416,20 @@ private:
 	FInventoryContainerHandle LastAimedContainer;
 	FInventoryPlacement LastAimedPlacement;
 
-	/** The item hovered as the screen last closed, for Start On Last Item. */
+	/**
+	 * The item hovered as the items were last left: as the screen closed, for Start On Last Item, or as another page showed, to hover it
+	 * again as they show again.
+	 */
 	FInventoryItemHandle LastHoveredItem;
 
-	/** Aim At Start is hovering the item the screen starts on, which plays no hover sound. */
-	bool bAimingAtStart = false;
+	/** The page the screen opens on next, from Set Start Page, or -1 for Items Page. */
+	int32 StartPage = INDEX_NONE;
 
-	/** What an open menu's highlighted option does, from Show Action Hint. */
-	FText MenuHint;
+	/** Aim At Start, or Restore Hover, is hovering an item without the player, which plays no hover sound. */
+	bool bAimingAtStart = false;
 
 	/** The menu Open Item Menu opened last, wherever Push Item Menu put it, to close at once if it's still closing as another opens. */
 	TWeakObjectPtr<UInventoryItemMenuWidget> OpenedMenu;
-
-	/** What Action Hint Text shows now. */
-	FText ShownHint;
 
 	FUIActionBindingHandle ConfirmHandle;
 	FUIActionBindingHandle ConfirmShownHandle;
@@ -422,5 +447,9 @@ private:
 	// Replaced by the base's Input Config. Loaded only so PostLoad can carry a screen's setting over.
 	UPROPERTY()
 	bool bGameKeepsInput_DEPRECATED = false;
+
+	// Replaced by the base's Default Description. Loaded only so PostLoad can carry a screen's text over.
+	UPROPERTY()
+	FText IdleHint_DEPRECATED;
 #endif
 };

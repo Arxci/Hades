@@ -4,6 +4,7 @@
 
 #include "CommonTabListWidgetBase.h"
 #include "Containers/Ticker.h"
+#include "UITag.h"
 
 #include "ModularTabListWidget.generated.h"
 
@@ -31,12 +32,27 @@ struct MODULARUI_API FModularTabDescriptor
 	TObjectPtr<UTexture2D> Icon;
 
 	/**
+	 * What the tab's page is for, such as "Combine items to make new ones.", shown in the Description Text of the screen the tab list is on
+	 * while the mouse is over the tab. Needs a Tab Button Class that's a Modular Tab Button.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Tab", meta = (MultiLine = true))
+	FText Description;
+
+	/**
 	 * Where focus goes as the tab's page shows, the first time or when the widget focused last is gone: the widget with this name in the
 	 * page, in the page's own designer when it's a widget of its own. None leaves it to the page: an activatable page's desired focus
 	 * target, or nothing.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Tab")
 	FName FocusWidget;
+
+	/**
+	 * A UI action that opens this tab directly while the tab list takes input, such as M for a map tab or C for a crafting tab, as Next Tab
+	 * and Previous Tab move between tabs. Map its key in the project's Common UI input settings. Pressed while the tab is open already, it
+	 * closes the screen with Shortcut Toggles Screen.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Tab", meta = (Categories = "UI.Action"))
+	FUIActionTag Shortcut;
 };
 
 
@@ -45,11 +61,12 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FModularTabPageShownSignature, FNam
 
 /**
  * Common UI's tab list, set up in the designer: a Tab Button Class button in Tab Button Panel for each of Tabs, opening the page at the same
- * index in the linked switcher. Link a Common Animated Switcher holding the pages with Set Linked Switcher. The tab list's Next Tab and
- * Previous Tab input actions change tabs.
- * As a page shows again, focus goes back to where it was when the player left it, so a gamepad player picks up where they were. A
- * switcher with a Transition Duration keeps the old page up long enough to see where focus was; without one, focus goes to the tab's Focus
- * Widget instead.
+ * index in the linked switcher. Link a switcher holding the pages with Set Linked Switcher: a Modular Page Switcher, which brings each page
+ * in with a quick transition of its own, or any Common Animated Switcher. The tab list's Next Tab and Previous Tab input actions change
+ * tabs, and each tab's Shortcut opens it directly.
+ * As a page shows again, focus goes back to where it was when the player left it, so a gamepad player picks up where they were. A Modular
+ * Page Switcher says where focus was as each page is left. With another switcher, its Transition Duration keeps the old page up long enough
+ * to see where focus was; without one, focus goes to the tab's Focus Widget instead.
  */
 UCLASS(Abstract, meta = (DisableNativeTick))
 class MODULARUI_API UModularTabListWidget : public UCommonTabListWidgetBase
@@ -88,6 +105,7 @@ protected:
 	//~ End UUserWidget Interface
 
 	//~ Begin UCommonTabListWidgetBase Interface
+	virtual void HandlePreLinkedSwitcherChanged() override;
 	virtual void HandlePostLinkedSwitcherChanged() override;
 	virtual void HandleTabCreation_Implementation(FName TabId, UCommonButtonBase* TabButton) override;
 	//~ End UCommonTabListWidgetBase Interface
@@ -110,6 +128,13 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Tab List")
 	bool bFocusPages = true;
 
+	/**
+	 * A tab's Shortcut pressed while its tab is open already closes the screen the tab list is on, so the key that opened the screen on that
+	 * tab closes it again, as an inventory or map key does. Off, it does nothing then.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Tab List")
+	bool bShortcutTogglesScreen = true;
+
 	/** Holds the tab buttons, such as a Horizontal Box. Leave it empty: they're made for it, and drawn in the designer with the first open. */
 	UPROPERTY(BlueprintReadOnly, Category = "Tab List", meta = (BindWidget))
 	TObjectPtr<UPanelWidget> TabButtonPanel;
@@ -118,9 +143,17 @@ private:
 	UFUNCTION()
 	void HandleTabSelected(FName TabId);
 
+	/** A Modular Page Switcher is about to change pages: where focus is on the page being left, while it's still drawn. */
+	void HandlePageChanging(UWidget* LeavingPage, UWidget* NewPage);
+
+	void HandleTabShortcut(int32 Index);
+
 	FName MakeTabId(int32 Index) const;
 	void RegisterTabs();
 	void AddToPanel(UCommonButtonBase& TabButton);
+
+	/** Remembers the widget focused on the page of the tab shown now, if focus is on it. */
+	void RememberFocusOnShownTab();
 
 	/** Where focus goes as the tab's page shows: where it was left, else the tab's Focus Widget, else the page's own target. */
 	UWidget* FindFocusTarget(FName TabId, UWidget& Page) const;

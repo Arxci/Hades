@@ -7,9 +7,12 @@
 #include "Components/PanelWidget.h"
 #include "Components/VerticalBoxSlot.h"
 #include "Engine/Texture2D.h"
+#include "Input/CommonUIInputTypes.h"
 
+#include "ModularActivatableWidget.h"
 #include "ModularUI.h"
 #include "ModularUIFocus.h"
+#include "Widgets/ModularPageSwitcher.h"
 #include "Widgets/ModularTabButton.h"
 
 int32 UModularTabListWidget::GetOpenTabIndex() const
@@ -51,6 +54,16 @@ void UModularTabListWidget::NativeOnInitialized()
 	Super::NativeOnInitialized();
 
 	OnTabSelected.AddUniqueDynamic(this, &ThisClass::HandleTabSelected);
+
+	// Each tab's own key, bound while the screen the tab list is on is active, as Next Tab and Previous Tab are.
+	for (int32 Index = 0; Index < Tabs.Num(); ++Index)
+	{
+		if (Tabs[Index].Shortcut.IsValid())
+		{
+			RegisterUIActionBinding(FBindUIActionArgs(Tabs[Index].Shortcut, /*bShowInActionBar*/ false,
+				FSimpleDelegate::CreateUObject(this, &ThisClass::HandleTabShortcut, Index)));
+		}
+	}
 }
 
 void UModularTabListWidget::NativePreConstruct()
@@ -79,8 +92,25 @@ void UModularTabListWidget::NativeDestruct()
 	Super::NativeDestruct();
 }
 
+void UModularTabListWidget::HandlePreLinkedSwitcherChanged()
+{
+	if (UModularPageSwitcher* PageSwitcher = Cast<UModularPageSwitcher>(GetLinkedSwitcher()))
+	{
+		PageSwitcher->OnPageChanging.RemoveAll(this);
+	}
+
+	Super::HandlePreLinkedSwitcherChanged();
+}
+
 void UModularTabListWidget::HandlePostLinkedSwitcherChanged()
 {
+	// A Modular Page Switcher changes page at once, so it says where focus was on a page just before it goes.
+	if (UModularPageSwitcher* PageSwitcher = Cast<UModularPageSwitcher>(GetLinkedSwitcher()))
+	{
+		PageSwitcher->OnPageChanging.RemoveAll(this);
+		PageSwitcher->OnPageChanging.AddUObject(this, &ThisClass::HandlePageChanging);
+	}
+
 	// Linked before it's built, it registers its tabs as it's constructed.
 	if (!IsDesignTime() && GetCachedWidget().IsValid())
 	{
@@ -128,6 +158,7 @@ void UModularTabListWidget::HandleTabCreation_Implementation(FName TabId, UCommo
 	{
 		ModularTab->SetLabelText(Tabs[Index].Label);
 		ModularTab->SetIconTexture(Tabs[Index].Icon);
+		ModularTab->SetDescription(Tabs[Index].Description);
 	}
 	if (TabButton)
 	{
@@ -148,17 +179,49 @@ void UModularTabListWidget::AddToPanel(UCommonButtonBase& TabButton)
 	}
 }
 
-void UModularTabListWidget::HandleTabSelected(FName TabId)
+void UModularTabListWidget::HandleTabShortcut(int32 Index)
 {
-	// Where focus is on the page being left, while it's still up: an animated switcher keeps it until its transition is half done.
-	UWidget* LeftPage = !ShownTabId.IsNone() && ShownTabId != TabId ? GetTabPage(ShownTabId) : nullptr;
-	if (UWidget* Focused = LeftPage ? ModularUI::FindFocusedWidgetIn(*LeftPage, GetOwningLocalPlayer()) : nullptr)
+	// Nothing while the screen goes. Pressed again on its own open tab, it closes the screen, as the key that opened it there would.
+	UModularActivatableWidget* Screen = ModularUI::FindEnclosing<UModularActivatableWidget>(*this);
+	if (!Tabs.IsValidIndex(Index) || (Screen && Screen->IsClosing()))
+	{
+		return;
+	}
+	if (GetOpenTabIndex() != Index)
+	{
+		OpenTabAtIndex(Index);
+	}
+	else if (bShortcutTogglesScreen && Screen)
+	{
+		Screen->CloseWidget();
+	}
+}
+
+void UModularTabListWidget::HandlePageChanging(UWidget* LeavingPage, UWidget* NewPage)
+{
+	RememberFocusOnShownTab();
+}
+
+void UModularTabListWidget::RememberFocusOnShownTab()
+{
+	UWidget* ShownPage = !ShownTabId.IsNone() ? GetTabPage(ShownTabId) : nullptr;
+	if (UWidget* Focused = ShownPage ? ModularUI::FindFocusedWidgetIn(*ShownPage, GetOwningLocalPlayer()) : nullptr)
 	{
 		LastFocused.Add(ShownTabId, Focused);
 	}
+}
+
+void UModularTabListWidget::HandleTabSelected(FName TabId)
+{
+	// Where focus is on the page being left, if it's still up, as an animated switcher keeps it until its transition is half done. A Modular
+	// Page Switcher said so already, just before it changed pages, and nothing found now replaces that.
+	if (!ShownTabId.IsNone() && ShownTabId != TabId)
+	{
+		RememberFocusOnShownTab();
+	}
 	ShownTabId = TabId;
 
-	// Once the new page is drawn, focus goes into it, and whoever listens hears it's shown.
+	// Once the new page is drawn, focus goes into it, and whoever listens hears it's shown. However long the switcher takes to bring it in.
 	UWidget* Page = GetTabPage(TabId);
 	ModularUI::CallWhenDrawn(PageShownHandle, *this, Page, [this, TabId](UWidget& Shown)
 	{
@@ -171,7 +234,7 @@ void UModularTabListWidget::HandleTabSelected(FName TabId)
 			Target->SetFocus();
 		}
 		OnTabPageShown.Broadcast(TabId, &Shown);
-	});
+	}, ModularUI::PageDrawnTimeout);
 }
 
 UWidget* UModularTabListWidget::FindFocusTarget(FName TabId, UWidget& Page) const

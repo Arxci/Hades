@@ -22,8 +22,8 @@ DECLARE_DELEGATE_RetVal_TwoParams(UCommonActivatableWidgetContainerBase*, FModul
 /**
  * A local player's UI: the layers widgets are pushed onto, each a Common UI stack or queue known by a gameplay tag, such as UI.Layer.Game
  * for the HUD and UI.Layer.Modal for popups. Anything can push a widget onto a layer by its tag, without knowing where the layer is.
- * Layers register themselves: Modular Layer Stacks and Queues do as they're built, wherever they're placed, and any other stack can be
- * registered with Register Layer. With a Root Layout Class in Project Settings > Plugins > Modular UI, the subsystem also makes the
+ * A Modular Root Layout registers the stacks its Layers name as it's made, and any other stack or queue can be registered with Register
+ * Layer, such as one inside a screen. With a Root Layout Class in Project Settings > Plugins > Modular UI, the subsystem also makes the
  * player's root layout, holding the layers, and keeps it on their screen. On Find Layer reaches layers of other UI frameworks, such as
  * Common Game's Primary Game Layout.
  */
@@ -39,7 +39,7 @@ public:
 	static UModularUISubsystem* GetForPlayer(const APlayerController* PlayerController);
 
 	/**
-	 * Asked for a layer no Modular Layer Stack or Register Layer gave, such as to find layers in another plugin's root layout. Bind it once,
+	 * Asked for a layer no root layout or Register Layer gave, such as to find layers in another plugin's root layout. Bind it once,
 	 * such as as the game instance starts, and unbind it as it ends.
 	 */
 	static FModularUIFindLayerDelegate& OnFindLayer();
@@ -75,10 +75,12 @@ public:
 	}
 
 	/**
-	 * Loads the class in the background, then pushes a widget of it onto the layer, and calls On Pushed with it, or with null when it
-	 * couldn't. With Suspend Input, the player's input waits meanwhile, so nothing is pressed twice while it loads.
+	 * Loads the class in the background, then pushes a widget of it onto the layer, after Init Func sets it up, before it shows, such as the
+	 * page a screen opens on. On Pushed is called with it then, or with null when it couldn't be pushed. With Suspend Input, the player's
+	 * input waits meanwhile, so nothing is pressed twice while it loads.
 	 */
 	void PushStreamedWidgetToLayer(FGameplayTag LayerTag, TSoftClassPtr<UCommonActivatableWidget> WidgetClass, bool bSuspendInput = true,
+		TFunction<void(UCommonActivatableWidget&)>&& InitFunc = TFunction<void(UCommonActivatableWidget&)>(),
 		TFunction<void(UCommonActivatableWidget*)>&& OnPushed = TFunction<void(UCommonActivatableWidget*)>());
 
 	/** Loads the class in the background, then pushes a widget of it onto the layer. The player's input waits meanwhile. */
@@ -122,4 +124,10 @@ private:
 
 	FTSTicker::FDelegateHandle TickHandle;
 	bool bWarnedNoRootLayoutClass = false;
+
+	/**
+	 * Set as the subsystem deinitializes. From then on it leaves Common Input alone: the player's subsystems go in no set order, and
+	 * Common Input's input filters can't be changed once it has gone. They go with it, so the input a load held back needs no giving back.
+	 */
+	bool bDeinitialized = false;
 };

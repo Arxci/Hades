@@ -219,7 +219,7 @@ void UInventoryShortcutMenuWidget::HandleEntryClicked(UInventoryShortcutMenuEntr
 	{
 		if (!RefusedHint.IsEmpty())
 		{
-			ShowHint(RefusedHint);
+			DescribeHighlightedEntry(RefusedHint);
 		}
 		OnAssignRefused(SlotIndex, MenuItem);
 		return;
