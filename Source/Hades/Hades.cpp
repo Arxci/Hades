@@ -3,6 +3,7 @@
 #include "Modules/ModuleManager.h"
 #include "UObject/CoreRedirects.h"
 
+DEFINE_LOG_CATEGORY(LogHadesAbility);
 DEFINE_LOG_CATEGORY(LogHadesInput);
 DEFINE_LOG_CATEGORY(LogHadesInteraction);
 DEFINE_LOG_CATEGORY(LogHadesUI);

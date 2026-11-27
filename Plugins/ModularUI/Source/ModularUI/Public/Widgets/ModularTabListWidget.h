@@ -4,11 +4,11 @@
 
 #include "CommonTabListWidgetBase.h"
 #include "Containers/Ticker.h"
-#include "UITag.h"
 
 #include "ModularTabListWidget.generated.h"
 
 class UCommonButtonBase;
+class UInputAction;
 class UModularTabButton;
 class UPanelWidget;
 class UTexture2D;
@@ -47,12 +47,11 @@ struct MODULARUI_API FModularTabDescriptor
 	FName FocusWidget;
 
 	/**
-	 * A UI action that opens this tab directly while the tab list takes input, such as M for a map tab or C for a crafting tab, as Next Tab
-	 * and Previous Tab move between tabs. Map its key in the project's Common UI input settings. Pressed while the tab is open already, it
-	 * closes the screen with Shortcut Toggles Screen.
+	 * An input action that opens this tab directly while the tab list takes input, such as M for a map tab or C for a crafting tab, as Next
+	 * Tab and Previous Tab move between tabs. Pressed while the tab is open already, it closes the screen with Shortcut Toggles Screen.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Tab", meta = (Categories = "UI.Action"))
-	FUIActionTag Shortcut;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Tab")
+	TObjectPtr<const UInputAction> ShortcutInputAction;
 };
 
 
@@ -62,8 +61,8 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FModularTabPageShownSignature, FNam
 /**
  * Common UI's tab list, set up in the designer: a Tab Button Class button in Tab Button Panel for each of Tabs, opening the page at the same
  * index in the linked switcher. Link a switcher holding the pages with Set Linked Switcher: a Modular Page Switcher, which brings each page
- * in with a quick transition of its own, or any Common Animated Switcher. The tab list's Next Tab and Previous Tab input actions change
- * tabs, and each tab's Shortcut opens it directly.
+ * in with a quick transition of its own, or any Common Animated Switcher. The tab list's Next Tab Enhanced Input Action and Previous Tab
+ * Enhanced Input Action change tabs, and each tab's Shortcut Input Action opens it directly.
  * As a page shows again, focus goes back to where it was when the player left it, so a gamepad player picks up where they were. A Modular
  * Page Switcher says where focus was as each page is left. With another switcher, its Transition Duration keeps the old page up long enough
  * to see where focus was; without one, focus goes to the tab's Focus Widget instead.
@@ -89,8 +88,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Tab List")
 	UWidget* GetTabPage(FName TabId) const;
 
-	const FDataTableRowHandle& GetNextTabAction() const { return NextTabInputActionData; }
-	const FDataTableRowHandle& GetPreviousTabAction() const { return PreviousTabInputActionData; }
+	/** The Next Tab and Previous Tab keys: the tab list's Next Tab Enhanced Input Action and Previous Tab Enhanced Input Action. */
+	const UInputAction* GetNextTabEnhancedInputAction() const;
+	const UInputAction* GetPreviousTabEnhancedInputAction() const;
 
 	/** A tab's page is drawn after it was opened, and focus has gone into it. For what else should happen as a page shows, such as aiming at an item. */
 	UPROPERTY(BlueprintAssignable, Category = "Tab List")
@@ -129,8 +129,8 @@ protected:
 	bool bFocusPages = true;
 
 	/**
-	 * A tab's Shortcut pressed while its tab is open already closes the screen the tab list is on, so the key that opened the screen on that
-	 * tab closes it again, as an inventory or map key does. Off, it does nothing then.
+	 * A tab's Shortcut Input Action pressed while its tab is open already closes the screen the tab list is on, so the key that opened the
+	 * screen on that tab closes it again, as an inventory or map key does. Off, it does nothing then.
 	 */
 	UPROPERTY(EditAnywhere, Category = "Tab List")
 	bool bShortcutTogglesScreen = true;

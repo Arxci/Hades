@@ -12,6 +12,7 @@
  * its Button Name, such as UseButton, or else on one made in Action Panel. Edit, reorder or remove them in Class Defaults.
  * As in the console games it follows, the right mouse button goes back, as Escape does: out of a prompt to the actions, then out of the
  * menu. A click off the menu closes it, and an action's question is asked in place of the actions.
+ * It slides out from behind the item, never over it: lay its background and buttons out in Menu Content, inside Menu Panel, which clips it.
  */
 UCLASS(Abstract, Blueprintable)
 class HADES_API UHadesItemMenu : public UInventoryItemMenuWidget

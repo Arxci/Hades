@@ -3,11 +3,11 @@
 #include "Animation/WidgetAnimation.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
-#include "Input/CommonUIInputTypes.h"
 
 #include "Hades/HadesGameplayTags.h"
 #include "Hades/Inventory/HadesQuickSlotComponent.h"
 
+#include "InputAction.h"
 #include "Layers/ModularUISubsystem.h"
 #include "Widgets/InventoryScreenWidget.h"
 
@@ -20,12 +20,9 @@ void UHadesHUDLayout::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 
-	RegisterUIActionBinding(FBindUIActionArgs(FUIActionTag::ConvertChecked(HadesGameplayTags::UI_Action_Escape), false,
-		FSimpleDelegate::CreateUObject(this, &ThisClass::HandleEscapeAction)));
-	RegisterUIActionBinding(FBindUIActionArgs(FUIActionTag::ConvertChecked(HadesGameplayTags::UI_Action_Inventory), false,
-		FSimpleDelegate::CreateUObject(this, &ThisClass::HandleInventoryAction)));
-	RegisterUIActionBinding(FBindUIActionArgs(FUIActionTag::ConvertChecked(HadesGameplayTags::UI_Action_Crafting), false,
-		FSimpleDelegate::CreateUObject(this, &ThisClass::HandleCraftingAction)));
+	RegisterInputAction(PauseInputAction, /*bDisplayInActionBar*/ false, FSimpleDelegate::CreateUObject(this, &ThisClass::HandlePauseAction));
+	RegisterInputAction(InventoryInputAction, /*bDisplayInActionBar*/ false, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleInventoryAction));
+	RegisterInputAction(CraftingInputAction, /*bDisplayInActionBar*/ false, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleCraftingAction));
 }
 
 void UHadesHUDLayout::NativeConstruct()
@@ -72,7 +69,7 @@ void UHadesHUDLayout::HandleQuickSlotActivated(int32 SlotIndex, FInventoryItemHa
 	}
 }
 
-void UHadesHUDLayout::HandleEscapeAction()
+void UHadesHUDLayout::HandlePauseAction()
 {
 	UModularUISubsystem* UI = UModularUISubsystem::Get(GetOwningLocalPlayer());
 	if (UI && ensure(!EscapeMenuClass.IsNull()))

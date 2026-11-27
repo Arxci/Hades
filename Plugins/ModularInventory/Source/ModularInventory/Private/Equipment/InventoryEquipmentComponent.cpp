@@ -87,6 +87,20 @@ void UInventoryEquipmentComponent::EndPlay(const EEndPlayReason::Type EndPlayRea
 }
 
 // Requests
+FInventoryContainerHandle UInventoryEquipmentComponent::FindEquipmentContainer(FGameplayTag Slot) const
+{
+	const UInventorySubsystem* InventorySubsystem = Subsystem.Get();
+	for (const FInventoryContainerHandle& Container : InventorySubsystem && Inventory ? Inventory->GetEquipmentContainers() : TArray<FInventoryContainerHandle>())
+	{
+		const UInventoryContainerLayout* Layout = InventorySubsystem->GetContainerLayout(Container);
+		if (Layout && Layout->FindSlot(Slot) != INDEX_NONE)
+		{
+			return Container;
+		}
+	}
+	return FInventoryContainerHandle();
+}
+
 bool UInventoryEquipmentComponent::EquipItem(FInventoryItemHandle Item, FGameplayTag Slot, EInventoryError& OutError)
 {
 	UInventorySubsystem* InventorySubsystem = Subsystem.Get();
@@ -96,24 +110,31 @@ bool UInventoryEquipmentComponent::EquipItem(FInventoryItemHandle Item, FGamepla
 		return false;
 	}
 
-	FInventoryContainerHandle Target;
-	for (const FInventoryContainerHandle& Container : Inventory->GetEquipmentContainers())
-	{
-		const UInventoryContainerLayout* Layout = InventorySubsystem->GetContainerLayout(Container);
-		if (Layout && Layout->FindSlot(Slot) != INDEX_NONE)
-		{
-			Target = Container;
-			break;
-		}
-	}
+	const FInventoryContainerHandle Target = FindEquipmentContainer(Slot);
 	if (!Target.IsSet())
 	{
 		OutError = EInventoryError::OutOfBounds;
 		return false;
 	}
 
-	OutError = InventorySubsystem->GetRegistry().EquipItem(Item, Target, Slot, Inventory->GetStorageContainers());
+	// What's in the way takes the spot the item left, such as a light source swapped for one lying in the world, or else goes to storage.
+	OutError = InventorySubsystem->GetRegistry().EquipItem(Item, Target, Slot, Inventory->GetStowContainers());
 	return OutError == EInventoryError::None;
+}
+
+bool UInventoryEquipmentComponent::CanEquipItem(FInventoryItemHandle Item, FGameplayTag Slot) const
+{
+	UInventorySubsystem* InventorySubsystem = Subsystem.Get();
+	const FInventoryContainerHandle Target = FindEquipmentContainer(Slot);
+	if (!InventorySubsystem || !Inventory || !Target.IsSet())
+	{
+		return false;
+	}
+
+	// The real move, undone, so it can't disagree with Equip Item.
+	FInventoryRegistry& Registry = InventorySubsystem->GetRegistry();
+	const TArray<FInventoryContainerHandle> Stow = Inventory->GetStowContainers();
+	return Registry.DryRun([&]() { return Registry.EquipItem(Item, Target, Slot, Stow); }) == EInventoryError::None;
 }
 
 bool UInventoryEquipmentComponent::EquipInPlace(FInventoryItemHandle Item, FGameplayTag Slot, EInventoryError& OutError)
@@ -168,7 +189,7 @@ bool UInventoryEquipmentComponent::UnequipItem(FInventoryItemHandle Item, EInven
 		return false;
 	}
 
-	OutError = InventorySubsystem->GetRegistry().MoveItemToContainers(Item, Inventory->GetStorageContainers());
+	OutError = InventorySubsystem->GetRegistry().MoveItemToContainers(Item, Inventory->GetStowContainers());
 	return OutError == EInventoryError::None;
 }
 
@@ -499,8 +520,14 @@ void UInventoryEquipmentComponent::GrantAbilitySystem(FInventoryEquippedItem& En
 		FGameplayAbilitySpecHandle Handle;
 		if (Grant.Ability)
 		{
-			// The source object lets an ability find its item again through GetItemForAbility.
-			Handle = AbilitySystem->GiveAbility(FGameplayAbilitySpec(Grant.Ability, Grant.GetLevel(Entry.Level), INDEX_NONE, this));
+			// The source object lets an ability find its item again through GetItemForAbility. The input tag goes on the spec, for a game that
+			// activates abilities by input tag, as Lyra does.
+			FGameplayAbilitySpec Spec(Grant.Ability, Grant.GetLevel(Entry.Level), INDEX_NONE, this);
+			if (Grant.InputTag.IsValid())
+			{
+				Spec.GetDynamicSpecSourceTags().AddTag(Grant.InputTag);
+			}
+			Handle = AbilitySystem->GiveAbility(Spec);
 		}
 		Entry.Abilities.Add(Handle);
 	}

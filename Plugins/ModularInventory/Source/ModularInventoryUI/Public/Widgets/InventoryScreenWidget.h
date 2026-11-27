@@ -2,7 +2,6 @@
 
 #include "CoreMinimal.h"
 
-#include "Engine/DataTable.h"
 #include "GameplayTagContainer.h"
 #include "Input/UIActionBindingHandle.h"
 
@@ -19,6 +18,7 @@ class UInventoryItemAction;
 class UInventoryItemActionSet;
 class UInventoryItemMenuWidget;
 class UInventoryItemWidget;
+class UInputAction;
 class UInventoryUISubsystem;
 class UModularTabListWidget;
 class USoundBase;
@@ -56,9 +56,10 @@ enum class EInventoryActionAvailability : uint8
  * Description Text, the line along the bottom of the screen, says what the player can do now: what the highlighted option of an item menu
  * open over it does, or what to do with the held item or the item being chosen for, such as where the held item can't go and why, or what
  * a highlighted button does. Browsing the items, it says nothing: what an item is belongs in a details panel.
- * With pages, such as Map, Items and Crafting, link a Tab List to Pages, best a Modular Page Switcher: the items only work while Items Page
- * shows, and coming back to it focuses the items again and hovers the item hovered as they were left, as other pages get focus back where
- * it was. The screen opens on Items Page, or on the page Set Start Page names, such as for a key that opens it on its crafting page.
+ * With pages, such as Map, Items and Crafting, link a Tab List to Pages, best a Modular Page Switcher: the items only work while a page
+ * showing them is open, one holding a grid, list or slot widget, and coming back to one focuses the items again and hovers the item hovered
+ * as they were left, as other pages get focus back where it was. The screen opens on Items Page, or on the page Set Start Page names, such
+ * as for a key that opens it on its crafting page.
  */
 UCLASS(Abstract, Blueprintable)
 class MODULARINVENTORYUI_API UInventoryScreenWidget : public UModularActivatableWidget
@@ -187,8 +188,11 @@ protected:
 	 */
 	virtual void RefreshActions();
 
-	/** Registers Row while bBound and unregisters it otherwise. */
-	void SetActionBound(FUIActionBindingHandle& Handle, const FDataTableRowHandle& Row, bool bBound, const FSimpleDelegate& Handler, bool bShowInActionBar = true);
+	/**
+	 * Binds the input action while bBound, with Register Input Action, so one with a Hold trigger holds, and unbinds it otherwise. A null
+	 * action is never bound.
+	 */
+	void SetActionBound(FUIActionBindingHandle& Handle, const UInputAction* InputAction, bool bBound, const FSimpleDelegate& Handler, bool bShowInActionBar = true);
 
 	/**
 	 * Adds a menu Open Item Menu made to Item Menu Layer, or else to Item Menu Stack. Override to open it somewhere else, such as a stack of
@@ -198,6 +202,13 @@ protected:
 
 	/** The container Sort Items sorts: Main Grid's. Override to sort another, such as the player's backpack by its tag. */
 	virtual FInventoryContainerHandle GetSortContainer() const;
+
+	/**
+	 * Whether a page of Pages shows items, so the items work while it's open: by default, whether it holds a grid, list or slot widget, at any
+	 * depth, so a crafting page with its own grid, or an item box page, works as the items page does. Without Pages, or for -1, true.
+	 * Override to decide otherwise, such as by the page's tab.
+	 */
+	virtual bool DoesPageShowItems(int32 PageIndex) const;
 
 	/** Before On Item Menu Requested, for C++ subclasses. */
 	virtual void NativeOnItemMenuRequested(FInventoryItemHandle Item) {}
@@ -274,11 +285,14 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory Screen|Pages", meta = (BindWidgetOptional))
 	TObjectPtr<UModularTabListWidget> TabList;
 
-	/** The screen's pages, such as a map, the items, and files, one of which holds the items. */
+	/**
+	 * The screen's pages, such as a map, the items, and files. The items work on the pages that show them, those holding a grid, list or slot
+	 * widget; on the others, whatever was held is put back.
+	 */
 	UPROPERTY(BlueprintReadOnly, Category = "Inventory Screen|Pages", meta = (BindWidgetOptional))
 	TObjectPtr<UCommonAnimatedSwitcher> Pages;
 
-	/** The index of the page with the items in Pages. The screen opens on it. */
+	/** The index of the page in Pages the screen opens on, usually the one with the items, unless Set Start Page names another. */
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory Screen|Pages", meta = (ClampMin = "0"))
 	int32 ItemsPage = 0;
 
@@ -321,39 +335,40 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Input|Inventory Actions")
 	EInventoryActionAvailability ActionAvailability = EInventoryActionAvailability::ByMode;
 
-	// Rows of a UI input action table, so a Common Bound Action Bar shows them with their keys. Each is optional. Confirm Action, with the
-	// screen's other input settings, is under Input: with a gamepad it's only shown, as Accept goes to the focused cell; with the mouse, its
-	// key does what a click on the hovered item does, or puts the held item down where it's aimed.
+	// Each action is an input action players can rebind, shown in action bars by its Description beside its key. Each is optional. A Hold
+	// trigger on one makes it a hold, such as to sort only once the key has been held for a moment. Confirm Display Name, with the screen's
+	// other input settings, is under Input: Accept's label. With a gamepad Confirm is only shown, as Accept goes to the focused cell; with the
+	// mouse, Accept's key does what a click on the hovered item does, or puts the held item down where it's aimed.
 	/** Picks up the item under the cursor or focus, or puts the held item down where it's aimed. How keys pick items up when Accept opens item menus. */
-	UPROPERTY(EditDefaultsOnly, Category = "Input|Inventory Actions", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
-	FDataTableRowHandle MoveAction;
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Inventory Actions")
+	TObjectPtr<const UInputAction> MoveInputAction;
 
 	/**
 	 * Opens the menu of the item under the cursor or focus, while nothing is held, such as a gamepad face button or the keyboard's Menu key.
 	 * How gamepads and keys reach item menus when Accept picks items up.
 	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Input|Inventory Actions", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
-	FDataTableRowHandle ItemMenuAction;
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Inventory Actions")
+	TObjectPtr<const UInputAction> ItemMenuInputAction;
 
 	/** Turns the held item, while it can turn and still fit. */
-	UPROPERTY(EditDefaultsOnly, Category = "Input|Inventory Actions", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
-	FDataTableRowHandle RotateAction;
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Inventory Actions")
+	TObjectPtr<const UInputAction> RotateInputAction;
 
 	/** Halves the held stack, while it's a stack of more than one that can split. */
-	UPROPERTY(EditDefaultsOnly, Category = "Input|Inventory Actions", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
-	FDataTableRowHandle SplitAction;
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Inventory Actions")
+	TObjectPtr<const UInputAction> SplitInputAction;
 
 	/** Moves the item under the cursor or focus to the other side, while there's a transfer container and it fits. */
-	UPROPERTY(EditDefaultsOnly, Category = "Input|Inventory Actions", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
-	FDataTableRowHandle TransferAction;
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Inventory Actions")
+	TObjectPtr<const UInputAction> TransferInputAction;
 
 	/** Takes everything that fits from the transfer container into the player's storage, while it holds anything. */
-	UPROPERTY(EditDefaultsOnly, Category = "Input|Inventory Actions", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
-	FDataTableRowHandle TakeAllAction;
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Inventory Actions")
+	TObjectPtr<const UInputAction> TakeAllInputAction;
 
 	/** Sorts the items with Sort Items, while they show. */
-	UPROPERTY(EditDefaultsOnly, Category = "Input|Inventory Actions", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
-	FDataTableRowHandle SortAction;
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Inventory Actions")
+	TObjectPtr<const UInputAction> SortInputAction;
 
 private:
 	UFUNCTION()
@@ -389,7 +404,7 @@ private:
 	/** With the mouse, hovers the item hovered as the items were last left, while it's on the screen, or else Aim At Start. */
 	void RestoreHover();
 
-	/** Whether the page with the items is the one open, or there are no pages. */
+	/** Whether the page open shows items, or there are no pages. */
 	bool IsItemsPageOpen() const;
 
 	void PlayInventorySound(USoundBase* Sound) const;
@@ -398,6 +413,9 @@ private:
 
 	/** Binds Confirm only to show it, without taking Accept from the focused cell, while bShown. */
 	void SetConfirmShown(bool bShown);
+
+	/** Binds Confirm to act on what's aimed at, for the mouse, while bBound. */
+	void SetConfirmBound(bool bBound);
 
 	void HandleConfirmAction();
 	void HandleMoveAction();

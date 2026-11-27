@@ -1,7 +1,6 @@
 #include "HadesInventoryScreen.h"
 
 #include "GameFramework/Pawn.h"
-#include "Input/CommonUIInputTypes.h"
 
 #include "Hades/HadesGameplayTags.h"
 #include "Hades/Inventory/HadesInventoryComponent.h"
@@ -14,9 +13,9 @@
 
 UHadesInventoryScreen::UHadesInventoryScreen(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
-	// A left click does nothing, so items are only moved on purpose, by a drag or Move.
-	InteractionStyle.LeftClick = EInventoryItemPress::None;
-	InteractionStyle.RightClick = EInventoryItemPress::OpenItemMenu;
+	// A click opens the item's menu, and only a drag or Move picks it up. A right-click is left free, for Back (Modular UI's Extra Back Keys).
+	InteractionStyle.LeftClick = EInventoryItemPress::OpenItemMenu;
+	InteractionStyle.RightClick = EInventoryItemPress::None;
 	InteractionStyle.Accept = EInventoryItemPress::OpenItemMenu;
 	InteractionStyle.bSnapHeldItem = true;
 	InteractionStyle.bSwapPicksUpOther = true;
@@ -43,15 +42,6 @@ UHadesInventoryScreen::UHadesInventoryScreen(const FObjectInitializer& ObjectIni
 	InvalidHints.Add(EInventoryError::OutOfBounds, LOCTEXT("OutOfBoundsHint", "That space can't be used yet."));
 	InvalidHints.Add(EInventoryError::CannotStack, LOCTEXT("CannotStackHint", "That stack is full."));
 	InvalidHints.Add(EInventoryError::NoSpace, LOCTEXT("NoSpaceHint", "Not enough space."));
-}
-
-void UHadesInventoryScreen::NativeOnInitialized()
-{
-	Super::NativeOnInitialized();
-
-	// The key that opens the inventory closes it too.
-	RegisterUIActionBinding(FBindUIActionArgs(FUIActionTag::ConvertChecked(HadesGameplayTags::UI_Action_Inventory), false,
-		FSimpleDelegate::CreateUObject(this, &ThisClass::HandleCloseAction)));
 }
 
 void UHadesInventoryScreen::NativeOnActivated()
@@ -96,11 +86,6 @@ void UHadesInventoryScreen::NativeOnSorted(bool bSorted)
 	{
 		AHadesPlayerController::ShowMessageTo(GetOwningPlayerPawn(), LOCTEXT("CantOrganize", "Couldn't organize your inventory."));
 	}
-}
-
-void UHadesInventoryScreen::HandleCloseAction()
-{
-	CloseWidget();
 }
 
 // Helpers

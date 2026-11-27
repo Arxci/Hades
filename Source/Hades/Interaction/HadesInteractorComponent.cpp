@@ -14,6 +14,7 @@
 
 #include "TimerManager.h"
 
+#include "Hades/Hades.h"
 #include "Hades/HadesCollisionChannels.h"
 #include "Hades/HadesGameplayTags.h"
 #include "Hades/Camera/HadesCameraLibrary.h"
@@ -226,7 +227,7 @@ void UHadesInteractorComponent::UpdateNearbyInteractables()
 
 			if (bShowOcclusionDebug)
 			{
-				UKismetSystemLibrary::DrawDebugLine(this, ViewLocation, Interactable->GetMarkerLocation(),
+				UKismetSystemLibrary::DrawDebugLine(this, ViewLocation, Interactable->GetVisibilityPoint(),
 					Interactable->IsOccluded() ? FLinearColor::Red : FLinearColor::Green, NearbyUpdateInterval);
 			}
 		}
@@ -311,6 +312,10 @@ void UHadesInteractorComponent::SetFocusedInteractable(UHadesInteractableCompone
 	}
 
 	FocusedInteractable = NewFocused;
+
+	// Why focus moved, for when a prompt goes while the player still looks at its interactable: log LogHadesInteraction Verbose.
+	UE_LOG(LogHadesInteraction, Verbose, TEXT("[Interact] Focus %s -> %s%s."), *GetNameSafe(OldFocused ? OldFocused->GetOwner() : nullptr),
+		*GetNameSafe(NewFocused ? NewFocused->GetOwner() : nullptr), OldFocused && OldFocused->IsOccluded() ? TEXT(", as the last one is occluded") : TEXT(""));
 
 	HidePrompt();
 	if (OldFocused)

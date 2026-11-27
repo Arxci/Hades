@@ -13,9 +13,11 @@ class UInventoryListWidget;
 
 /**
  * The player's inventory, pushed onto the GameMenu layer by the HUD, or by an item box when the screen has an Item Box List.
- * A right-click or Accept on an item opens Item Menu Class beside it, on the Modal layer, and dragging or Move picks it up, with the held
- * item drawn on the cells it would land on. Putting it on another item picks that one up.
- * With a Tab List linked to Pages, the items only work on Items Page, and while an item is held the tab keys turn it instead.
+ * A click or Accept on an item opens Item Menu Class beside it, on the Modal layer, and dragging or Move picks it up, with the held item
+ * drawn on the cells it would land on. Putting it on another item picks that one up. A right-click is left free, for Back.
+ * With a Tab List linked to Pages, the items only work on pages that show them, and while an item is held the tab keys turn it instead.
+ * The key that opens it closes it: give it the HUD's Inventory Input Action in its Close Input Actions, and the gamepad's Start, such as
+ * IA_UI_Resume, so Start goes back to the game too.
  */
 UCLASS(Abstract, Blueprintable)
 class HADES_API UHadesInventoryScreen : public UInventoryScreenWidget
@@ -30,10 +32,6 @@ public:
 	FInventoryContainerHandle GetItemBox() const;
 
 protected:
-	//~ Begin UUserWidget Interface
-	virtual void NativeOnInitialized() override;
-	//~ End UUserWidget Interface
-
 	//~ Begin UCommonActivatableWidget Interface
 	virtual void NativeOnActivated() override;
 	virtual void NativeOnDeactivated() override;
@@ -52,6 +50,4 @@ private:
 	void HandleItemChosen(FInventoryItemHandle Item, FInventoryItemHandle Chosen);
 
 	UHadesInventoryComponent* GetPlayerInventory() const;
-
-	void HandleCloseAction();
 };

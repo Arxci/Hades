@@ -3,7 +3,6 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "Components/SpotLightComponent.h"
 #include "Camera/CameraComponent.h"
 
 #include "InputActionValue.h"
@@ -13,7 +12,6 @@
 #include "Hades/Hades.h"
 #include "Hades/HadesGameplayTags.h"
 #include "Hades/AbilitySystem/HadesAbilitySystemComponent.h"
-#include "Hades/Flashlight/HadesFlashlightComponent.h"
 #include "Hades/Camera/HadesCameraLagComponent.h"
 #include "Hades/Input/HadesInputComponent.h"
 #include "Hades/Interaction/HadesInteractorComponent.h"
@@ -54,21 +52,8 @@ AHadesHeroCharacter::AHadesHeroCharacter(const FObjectInitializer& ObjectInitial
 	ArmsMesh->SetCastShadow(false);
 	ArmsMesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 
-	FlashlightLight = CreateDefaultSubobject<USpotLightComponent>(TEXT("FlashlightLight"));
-	FlashlightLight->SetupAttachment(Flashlight);
-	FlashlightLight->SetMobility(EComponentMobility::Movable);
-	FlashlightLight->IntensityUnits = ELightUnits::Candelas;
-	FlashlightLight->Intensity = 2000.0f;
-	FlashlightLight->AttenuationRadius = 1500.0f;
-	FlashlightLight->InnerConeAngle = 21.0f;
-	FlashlightLight->OuterConeAngle = 24.0f;
-	FlashlightLight->SourceRadius = 2.0f;
-	FlashlightLight->bUseTemperature = true;
-	FlashlightLight->Temperature = 6800.0f;
-	FlashlightLight->ContactShadowLength = 0.02f;
-	// The flashlight component draws the beam; volumetric fog's version smears as the view turns.
-	FlashlightLight->VolumetricScatteringIntensity = 0.0f;
-	
+	// The light the hero carries is an item now, in the light source slot: its light source actor attaches to ViewRoot while it's equipped.
+
 	InteractorComponent = CreateDefaultSubobject<UHadesInteractorComponent>(TEXT("InteractorComponent"));
 	InventoryComponent = CreateDefaultSubobject<UHadesInventoryComponent>(TEXT("InventoryComponent"));
 	EquipmentComponent = CreateDefaultSubobject<UInventoryEquipmentComponent>(TEXT("EquipmentComponent"));

@@ -38,7 +38,9 @@ UHadesItemMenu::UHadesItemMenu(const FObjectInitializer& ObjectInitializer) : Su
 	OutsideClick = EModularMenuOutsideClick::Close;
 	PromptPresentation = EModularPromptPresentation::Inline;
 
+	// Slides out from behind the item, as a drawer pulled out from under it, and back in as it closes. Needs Menu Content inside Menu Panel.
 	OpenTransition = MakeTransition();
+	bSlideFromBehindAnchor = true;
 	bCloseReversesOpen = true;
 	ActionTiming = EInventoryMenuActionTiming::AsMenuCloses;
 
@@ -48,11 +50,14 @@ UHadesItemMenu::UHadesItemMenu(const FObjectInitializer& ObjectInitializer) : Su
 
 FModularUITransition UHadesItemMenu::MakeTransition()
 {
+	// Quick, and settling as it arrives, as a drawer does. With Slide From Behind Anchor the slide covers the menu's whole width; without it,
+	// as for a menu laid out without Menu Content, it slides the 20 pixels out of the item it opened beside. The fade only softens the start.
 	FModularUITransition Transition;
-	Transition.Duration = 5.0f / 60.0f;
-	Transition.Easing = EEasingFunc::Linear;
+	Transition.Duration = 0.12f;
+	Transition.Easing = EEasingFunc::EaseOut;
+	Transition.EasingStrength = 3.0f;
 	Transition.bFade = true;
-	Transition.FadeFrom = 0.0f;
+	Transition.FadeFrom = 0.2f;
 	Transition.bSlide = true;
 	Transition.SlideDistance = 20.0f;
 	Transition.SlideFrom = EModularUISlide::FromOrigin;

@@ -221,20 +221,42 @@ void UHadesInteractableComponent::OnFocusEnd_Implementation()
 
 void UHadesInteractableComponent::UpdateOcclusion(const FVector& ViewLocation, const AActor* Viewer)
 {
-	// Traced from the view toward the marker so a marker inside an occluder's collision is still caught.
-	const FVector MarkerLocation = GetMarkerLocation();
+	// Traced from the view toward what the player sees of it, so something inside an occluder's collision is still caught. The viewer and
+	// what it carries, such as an equipped item's actor in front of the camera, never hide it.
+	const FVector Target = GetVisibilityPoint();
 
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(HadesInteractableOcclusion), false, GetOwner());
 	Params.AddIgnoredActor(Viewer);
+	if (Viewer)
+	{
+		TArray<AActor*> Carried;
+		Viewer->GetAttachedActors(Carried, /*bResetArray*/ true, /*bRecursivelyIncludeAttachedActors*/ true);
+		Params.AddIgnoredActors(Carried);
+	}
 
-	const bool bOccluded = GetWorld()->LineTraceTestByChannel(ViewLocation, MarkerLocation, ECC_Visibility, Params)
+	// A hit that close to the target is what it rests on, grazed on the way, not something in front of it.
+	const double Reach = FVector::Dist(ViewLocation, Target) - OcclusionTolerance;
+	const auto InFront = [Reach](const FHitResult& Hit) { return Hit.Distance < Reach; };
+
+	FHitResult WorldHit;
+	const bool bOccluded = (Reach > 0.0 && GetWorld()->LineTraceSingleByChannel(WorldHit, ViewLocation, Target, ECC_Visibility, Params) && InFront(WorldHit))
 		|| Algo::AnyOf(OcclusionTargets, [&](UPrimitiveComponent* Occluder)
 		{
 			FHitResult Hit;
-			return Occluder && Occluder->LineTraceComponent(Hit, ViewLocation, MarkerLocation, FCollisionQueryParams::DefaultQueryParam);
+			return Occluder && Occluder->LineTraceComponent(Hit, ViewLocation, Target, FCollisionQueryParams::DefaultQueryParam) && InFront(Hit);
 		});
 
+	if (bOccluded != IsOccluded())
+	{
+		UE_LOG(LogHadesInteraction, Verbose, TEXT("[Interact] %s is %s."), *GetNameSafe(GetOwner()),
+			bOccluded ? *FString::Printf(TEXT("occluded by %s"), *GetNameSafe(WorldHit.GetActor())) : TEXT("no longer occluded"));
+	}
 	SetStateTag(HadesGameplayTags::Interactable_State_Occluded, bOccluded);
+}
+
+FVector UHadesInteractableComponent::GetVisibilityPoint() const
+{
+	return FocusTarget ? FocusTarget->Bounds.Origin : GetMarkerLocation();
 }
 
 bool UHadesInteractableComponent::IsOccluded() const

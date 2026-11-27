@@ -216,10 +216,12 @@ bool UInventoryShortcutWidget::NativeOnDrop(const FGeometry& InGeometry, const F
 
 FReply UInventoryShortcutWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
+	// Only a slot with an item takes the right-click, so on an empty one it goes on, such as to Back.
 	UInventoryShortcutComponent* Component = Shortcuts.Get();
-	if (bRightClickClears && Component && InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton)
+	const int32 ShortcutIndex = GetSlotIndex();
+	if (bRightClickClears && Component && InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton && Component->GetSlotItem(ShortcutIndex).IsSet())
 	{
-		Component->ClearSlot(GetSlotIndex());
+		Component->ClearSlot(ShortcutIndex);
 		return FReply::Handled();
 	}
 	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);

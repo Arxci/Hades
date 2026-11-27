@@ -7,35 +7,16 @@
 #include "InputCoreTypes.h"
 
 #include "Data/InventoryItemDefinition.h"
+#include "InputAction.h"
 #include "InventorySubsystem.h"
 #include "InventoryUISubsystem.h"
 #include "ModularInventory.h"
+#include "ModularUIFocus.h"
+#include "ModularUIInput.h"
 #include "Widgets/InventoryDragDropOperation.h"
 #include "Widgets/InventoryItemActionButton.h"
 #include "Widgets/InventoryItemWidget.h"
 #include "Widgets/InventoryScreenWidget.h"
-
-namespace
-{
-	/**
-	 * The widget of type T a widget is drawn in, such as its inventory screen or grid: up through its parents, and from the top of each user
-	 * widget to the user widget.
-	 */
-	template <typename T>
-	T* FindEnclosing(UWidget* Widget)
-	{
-		while (Widget)
-		{
-			if (T* Found = Cast<T>(Widget))
-			{
-				return Found;
-			}
-			UWidget* Parent = Widget->GetParent();
-			Widget = Parent ? Parent : Widget->GetTypedOuter<UUserWidget>();
-		}
-		return nullptr;
-	}
-}
 
 void UInventoryItemMenuWidget::PostLoad()
 {
@@ -82,7 +63,7 @@ void UInventoryItemMenuWidget::PostLoad()
 void UInventoryItemMenuWidget::SetItem(FInventoryItemHandle InItem, UInventoryItemWidget* ItemWidget)
 {
 	Item = InItem;
-	if (UInventoryScreenWidget* FoundScreen = FindEnclosing<UInventoryScreenWidget>(ItemWidget))
+	if (UInventoryScreenWidget* FoundScreen = ItemWidget ? ModularUI::FindEnclosing<UInventoryScreenWidget>(*ItemWidget) : nullptr)
 	{
 		BindScreen(FoundScreen);
 	}
@@ -273,9 +254,9 @@ void UInventoryItemMenuWidget::RefreshActions()
 		{
 			ActionButton->SetAction(Action, Action->DisplayName, bAvailable, Reason);
 		}
-		if (!Action->InputAction.IsNull())
+		if (Action->InputAction)
 		{
-			Button->SetTriggeringInputAction(Action->InputAction);
+			Button->SetTriggeringEnhancedInputAction(Action->InputAction);
 		}
 
 		// The mouse and focus highlight it as they reach it, as they do any entry.

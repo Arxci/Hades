@@ -10,6 +10,7 @@ UHadesQuickSlotMenu::UHadesQuickSlotMenu(const FObjectInitializer& ObjectInitial
 	RightClick = EModularMenuRightClick::Back;
 	OutsideClick = EModularMenuOutsideClick::Close;
 	OpenTransition = UHadesItemMenu::MakeTransition();
+	bSlideFromBehindAnchor = true;
 	bCloseReversesOpen = true;
 
 	AssignHint = LOCTEXT("AssignHint", "Assign the item to this quick slot.");

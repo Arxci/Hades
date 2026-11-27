@@ -4,10 +4,18 @@
 
 namespace
 {
+	/**
+	 * Whether the input activates the ability: it's the ability's own Input Tag, or one its spec was given, such as by an item's equip rules
+	 * granting it for a key of that item's own, as Lyra's ability sets do.
+	 */
 	bool HasInputTag(const FGameplayAbilitySpec& Spec, const FGameplayTag& InputTag)
 	{
+		if (!InputTag.IsValid())
+		{
+			return false;
+		}
 		const UHadesAbility* Ability = Cast<UHadesAbility>(Spec.Ability);
-		return Ability && Ability->GetInputTag() == InputTag;
+		return (Ability && Ability->GetInputTag() == InputTag) || Spec.GetDynamicSpecSourceTags().HasTagExact(InputTag);
 	}
 
 	// Wait Input Press/Release listen for the input event under the key the ability was activated with.

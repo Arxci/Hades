@@ -122,10 +122,8 @@ void UHadesFlashlightComponent::BeginPlay()
 		UE_LOG(LogHadesFlashlight, Warning, TEXT("[Flashlight] %s has no spot light attached, so it has nothing to aim."), *GetPathNameSafe(this));
 	}
 
-	if (const AActor* Owner = GetOwner())
-	{
-		ViewCamera = Owner->FindComponentByClass<UCameraComponent>();
-	}
+	// Found now on a character; a light source actor is only attached to the hero after it begins play, so it finds it as it first places.
+	FindViewCamera();
 
 	CreateBeam();
 
@@ -206,12 +204,40 @@ void UHadesFlashlightComponent::SnapToView()
 	UpdatePlacement(0.0f, true);
 }
 
-bool UHadesFlashlightComponent::GetViewPoint(FVector& OutLocation, FQuat& OutRotation) const
+AActor* UHadesFlashlightComponent::GetViewer() const
+{
+	AActor* Owner = GetOwner();
+	if (!Owner || Owner->IsA<APawn>())
+	{
+		return Owner;
+	}
+	if (AActor* Holder = Owner->GetAttachParentActor())
+	{
+		return Holder;
+	}
+	return Owner->GetOwner() ? Owner->GetOwner() : Owner;
+}
+
+UCameraComponent* UHadesFlashlightComponent::FindViewCamera()
+{
+	if (!ViewCamera.IsValid())
+	{
+		const AActor* Viewer = GetViewer();
+		ViewCamera = Viewer ? Viewer->FindComponentByClass<UCameraComponent>() : nullptr;
+	}
+	return ViewCamera.Get();
+}
+
+bool UHadesFlashlightComponent::GetViewPoint(FVector& OutLocation, FQuat& OutRotation)
 {
 	// Not the controller's view point: the camera manager only updates that at the end of the frame, so it's a frame
 	// behind here and the light would trail the camera when moving. The camera's location already follows the pawn,
 	// and the pawn's view rotation is this frame's.
-	const USceneComponent* ViewComponent = ViewCamera.IsValid() ? ViewCamera.Get() : GetAttachParent();
+	const USceneComponent* ViewComponent = FindViewCamera();
+	if (!ViewComponent)
+	{
+		ViewComponent = GetAttachParent();
+	}
 	if (!ViewComponent)
 	{
 		return false;
@@ -219,7 +245,7 @@ bool UHadesFlashlightComponent::GetViewPoint(FVector& OutLocation, FQuat& OutRot
 
 	OutLocation = ViewComponent->GetComponentLocation();
 
-	const APawn* Pawn = GetOwner<APawn>();
+	const APawn* Pawn = Cast<APawn>(GetViewer());
 	OutRotation = Pawn ? Pawn->GetViewRotation().Quaternion() : ViewComponent->GetComponentQuat();
 	return true;
 }
@@ -237,11 +263,14 @@ void UHadesFlashlightComponent::UpdatePlacement(float DeltaTime, bool bSnap)
 	const FVector ViewForward = ViewRotation.GetForwardVector();
 	const FVector ViewUp = ViewRotation.GetUpVector();
 
-	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(HadesFlashlight), false, GetOwner());
-	if (const AActor* Owner = GetOwner())
+	// The viewer and everything it carries, this light's own actor included, never block the light.
+	const AActor* Viewer = GetViewer();
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(HadesFlashlight), false, Viewer);
+	QueryParams.AddIgnoredActor(GetOwner());
+	if (Viewer)
 	{
 		TArray<AActor*> AttachedActors;
-		Owner->GetAttachedActors(AttachedActors);
+		Viewer->GetAttachedActors(AttachedActors, /*bResetArray*/ true, /*bRecursivelyIncludeAttachedActors*/ true);
 		QueryParams.AddIgnoredActors(AttachedActors);
 	}
 

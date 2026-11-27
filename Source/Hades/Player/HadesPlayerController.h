@@ -47,13 +47,27 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void SetupInputComponent() override;
 	
+	/** The gameplay Input Mapping Contexts, added at priority 0. */
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TArray<TObjectPtr<UInputMappingContext>> DefaultMappingContexts;
 
 	/**
-	 * Registers Default Mapping Contexts with Enhanced Input's user settings, so the player can rebind their keys and the keys they chose
-	 * are used. Needs Enable User Settings in Project Settings > Enhanced Input, and Player Mappable Key Settings on each input action that
-	 * can be rebound.
+	 * Input Mapping Contexts for menus, such as IMC_UI, mapping every key that opens, closes and works the menus: the input actions the HUD,
+	 * the screens and their tab lists bind. Added at Menu Mapping Priority, above Default Mapping Contexts, and kept added during play:
+	 * Common UI only routes a menu action to the widget that bound it. Untick Consume Lower Priority Enhanced Input Mappings on their input
+	 * actions, so a key shared with gameplay, such as R for Rotate and Reload, stays mapped to both.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	TArray<TObjectPtr<UInputMappingContext>> MenuMappingContexts;
+
+	/** The priority Menu Mapping Contexts are added at: above Default Mapping Contexts, which are added at 0. */
+	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (ClampMin = "1"))
+	int32 MenuMappingPriority = 1;
+
+	/**
+	 * Registers Default Mapping Contexts and Menu Mapping Contexts with Enhanced Input's user settings, so the player can rebind their keys
+	 * and the keys they chose are used. Needs Enable User Settings in Project Settings > Enhanced Input, and Player Mappable Key Settings on
+	 * each input action that can be rebound.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	bool bRegisterMappingsWithSettings = true;
@@ -79,8 +93,8 @@ private:
 	void HandlePauseChanged(bool bPaused);
 
 	/**
-	 * Registers Default Mapping Contexts with Enhanced Input's user settings, once each. False while there are no user settings: Enable User
-	 * Settings is off, or Enhanced Input hasn't made them yet.
+	 * Registers Default Mapping Contexts and Menu Mapping Contexts with Enhanced Input's user settings, once each. False while there are no
+	 * user settings: Enable User Settings is off, or Enhanced Input hasn't made them yet.
 	 */
 	bool RegisterMappingContextsWithSettings();
 

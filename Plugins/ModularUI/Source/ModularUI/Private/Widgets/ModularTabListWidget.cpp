@@ -9,9 +9,11 @@
 #include "Engine/Texture2D.h"
 #include "Input/CommonUIInputTypes.h"
 
+#include "InputAction.h"
 #include "ModularActivatableWidget.h"
 #include "ModularUI.h"
 #include "ModularUIFocus.h"
+#include "ModularUIInput.h"
 #include "Widgets/ModularPageSwitcher.h"
 #include "Widgets/ModularTabButton.h"
 
@@ -42,6 +44,16 @@ int32 UModularTabListWidget::GetTabIndexOf(FName TabId) const
 	return INDEX_NONE;
 }
 
+const UInputAction* UModularTabListWidget::GetNextTabEnhancedInputAction() const
+{
+	return NextTabEnhancedInputAction.Get();
+}
+
+const UInputAction* UModularTabListWidget::GetPreviousTabEnhancedInputAction() const
+{
+	return PreviousTabEnhancedInputAction.Get();
+}
+
 UWidget* UModularTabListWidget::GetTabPage(FName TabId) const
 {
 	const UCommonAnimatedSwitcher* Switcher = const_cast<UModularTabListWidget*>(this)->GetLinkedSwitcher();
@@ -58,11 +70,8 @@ void UModularTabListWidget::NativeOnInitialized()
 	// Each tab's own key, bound while the screen the tab list is on is active, as Next Tab and Previous Tab are.
 	for (int32 Index = 0; Index < Tabs.Num(); ++Index)
 	{
-		if (Tabs[Index].Shortcut.IsValid())
-		{
-			RegisterUIActionBinding(FBindUIActionArgs(Tabs[Index].Shortcut, /*bShowInActionBar*/ false,
-				FSimpleDelegate::CreateUObject(this, &ThisClass::HandleTabShortcut, Index)));
-		}
+		ModularUI::RegisterInputAction([this](const FBindUIActionArgs& Args) { return RegisterUIActionBinding(Args); }, *this, Tabs[Index].ShortcutInputAction,
+			/*bDisplayInActionBar*/ false, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleTabShortcut, Index));
 	}
 }
 

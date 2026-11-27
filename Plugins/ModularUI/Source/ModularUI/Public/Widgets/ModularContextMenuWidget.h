@@ -344,6 +344,14 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Context Menu", meta = (BindWidget))
 	TObjectPtr<UWidget> MenuPanel;
 
+	/**
+	 * Everything the menu draws, its background and its entries, as one widget inside Menu Panel, such as a Border holding them. Only needed
+	 * for Slide From Behind Anchor: Menu Panel stays where the menu ends up and clips it, while it slides out from behind the anchor, so give
+	 * Menu Panel no background or padding of its own.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Context Menu", meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> MenuContent;
+
 	/** Where the menu opens. As Designed keeps it where it's laid out, such as centered for a modal picker. */
 	UPROPERTY(EditDefaultsOnly, Category = "Context Menu|Placement")
 	EModularMenuPlacement Placement = EModularMenuPlacement::TowardCenter;
@@ -472,6 +480,18 @@ protected:
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Transition")
 	FModularUITransition OpenTransition;
+
+	/**
+	 * The menu comes out from behind what it opened beside, rather than over it, as a drawer pulled out from under it: Menu Panel clips Menu
+	 * Content, which slides out of Menu Panel's edge nearest the anchor, from all the way behind it, so nothing of the menu ever covers the
+	 * anchor. Open Transition's timing, easing, fade and growth still apply, and its slide covers the menu's whole width or height, whatever
+	 * its Slide Distance. Needs Menu Content inside Menu Panel; without it, the menu slides as Open Transition says.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Transition")
+	bool bSlideFromBehindAnchor = false;
+
+	/** Whether the menu slides from behind its anchor: Slide From Behind Anchor is on, with Menu Content inside Menu Panel. */
+	bool SlidesFromBehindAnchor() const;
 
 private:
 	/** An entry Add Entry made, and its button. */

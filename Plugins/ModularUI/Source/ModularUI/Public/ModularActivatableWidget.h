@@ -4,14 +4,15 @@
 
 #include "CommonActivatableWidget.h"
 #include "Containers/Ticker.h"
-#include "Engine/DataTable.h"
-#include "UITag.h"
+#include "Input/CommonUIInputTypes.h"
+#include "Input/UIActionBindingHandle.h"
 
 #include "ModularUIReveal.h"
 #include "ModularUITransition.h"
 
 #include "ModularActivatableWidget.generated.h"
 
+class UInputAction;
 class USoundBase;
 class UTextBlock;
 class UWidgetAnimation;
@@ -38,7 +39,9 @@ enum class EModularUIInputMode : uint8
  * transitions, and can pause the game while it's open.
  * As it opens, Open Reveal brings its parts in one after another, such as a panel, then its title, then its text, and an animation named
  * OpenAnimation plays. Close Widget sends the parts back out and plays CloseAnimation, or OpenAnimation backwards, and deactivates it once
- * they end. Back, and Close Action, close it the same way. Use Close Widget rather than Deactivate Widget, so the close plays.
+ * they end. Back, and Close Input Actions, close it the same way. Use Close Widget rather than Deactivate Widget, so the close plays.
+ * Every key it binds is an Enhanced Input action players can rebind (see ModularUIInput.h). Accept stays Common UI's: Confirm Display Name
+ * only says what it does here. On a widget that handles Back, the project's Extra Back Keys go Back too.
  * Transitions are for motion that depends on where and how the widget opened, or that many widgets share; widget animations are for
  * anything else, such as colors, materials and glows. Both play together, and a close waits for whichever ends last.
  * Description Text, the line along the bottom of a console menu, says what the player can do now: what the highlighted option of a menu
@@ -146,6 +149,8 @@ protected:
 	virtual void NativeOnInitialized() override;
 	virtual FReply NativeOnPreviewMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	virtual FReply NativeOnPreviewKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
+	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+	virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
 	//~ End UUserWidget Interface
 
 	//~ Begin UCommonActivatableWidget Interface
@@ -158,10 +163,17 @@ protected:
 	virtual void NativeOnCloseStarted() {}
 
 	/**
-	 * Registers Confirm Action, only to show what Accept does in an action bar: Accept itself still goes to the focused button. Override to
-	 * bind it yourself, such as to click whatever the mouse is over.
+	 * Binds Accept, only to show Confirm Display Name beside Accept's key in action bars: Accept itself still goes to the focused button.
+	 * Override to bind it yourself, such as to click whatever the mouse is over.
 	 */
 	virtual void RegisterConfirmAction();
+
+	/**
+	 * Binds an input action, run while this is active, and shown in action bars by its Description with bDisplayInActionBar. With a Hold
+	 * trigger on it, it runs once its key has been held for the trigger's Hold Time Threshold, and meanwhile the action bar shows the
+	 * progress. Nothing is bound for a null action. Unregister the handle to unbind it.
+	 */
+	FUIActionBindingHandle RegisterInputAction(const UInputAction* InputAction, bool bShouldDisplayInActionBar, const FSimpleDelegate& OnExecuteAction);
 
 	/**
 	 * Adds parts of its own to the reveal, after Open Reveal's, such as a menu's panel that slides out of whatever it opened beside. Called
@@ -211,16 +223,25 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (EditCondition = "InputConfig == EModularUIInputMode::Game || InputConfig == EModularUIInputMode::GameAndMenu"))
 	EMouseCaptureMode GameMouseCaptureMode = EMouseCaptureMode::CapturePermanently;
 
-	/** Shown in an action bar for what Accept does here, such as Select. A row of a UI input action table. */
-	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
-	FDataTableRowHandle ConfirmAction;
+	/**
+	 * What Accept does here, such as Select, shown in action bars beside Accept's key. Accept is Common UI's, set once in the project's Common
+	 * UI Input Data, so there's no key to set here. Empty shows nothing.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	FText ConfirmDisplayName;
 
 	/**
-	 * A UI action that closes this as Back does, such as the key that opened it, so the same key toggles it: Tab for an inventory, or M
-	 * for a map. Not shown in action bars.
+	 * Input actions that close this as Back does, such as the key that opened it, so the same key toggles it: I for an inventory, or M for a
+	 * map. Not shown in action bars.
 	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Input", meta = (Categories = "UI.Action"))
-	FUIActionTag CloseAction;
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	TArray<TObjectPtr<const UInputAction>> CloseInputActions;
+
+	/** Whether Confirm has anything to show: a Confirm Display Name, and an Accept in the project's Common UI Input Data. */
+	bool HasConfirmAction() const;
+
+	/** Binding arguments for Confirm: Common UI's Accept, named Confirm Display Name. */
+	FBindUIActionArgs MakeConfirmBindArgs(bool bShouldDisplayInActionBar, const FSimpleDelegate& OnExecuteAction) const;
 
 	// Pause
 	/** The world stops while this is open. It starts again as the close begins, so the world comes back while this goes. */
@@ -292,6 +313,9 @@ protected:
 
 private:
 	void SetPauseRequested(bool bRequested);
+
+	/** Goes Back for one of the project's Extra Back Keys, while this is open and handles Back. False when it didn't. */
+	bool HandleExtraBackKey(const FKey& Key);
 
 	/**
 	 * Moves the reveal on, and watches the close animation, from the core ticker, so both play with the game paused too. A close finishes

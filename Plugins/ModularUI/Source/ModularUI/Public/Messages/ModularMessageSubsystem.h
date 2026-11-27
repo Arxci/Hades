@@ -66,6 +66,10 @@ public:
 private:
 	TArray<TWeakObjectPtr<UModularMessageFeed>> Feeds;
 
-	/** Keyed messages that stay until hidden, for feeds made after they were sent. */
+	/**
+	 * Keyed messages that stay until hidden, for feeds made after they were sent. Kept as a property, so what a message refers to, such as
+	 * its Payload, is known to the garbage collector, which clears it should it be destroyed meanwhile.
+	 */
+	UPROPERTY(Transient)
 	TArray<FModularMessage> Lasting;
 };

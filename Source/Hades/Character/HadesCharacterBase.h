@@ -13,6 +13,7 @@ class UGameplayAbility;
 class UGameplayEffect;
 
 class UHadesAbilitySystemComponent;
+class UHadesHealthSet;
 class UHadesMovementSet;
 class UHadesCharacterMovementComponent;
 
@@ -76,4 +77,8 @@ private:
 	/** Created as a subobject so the ability system component finds and registers it on its own. */
 	UPROPERTY()
 	TObjectPtr<UHadesMovementSet> MovementSet;
+
+	/** Health and Max Health, which widgets such as the inventory's condition panel show. Registered as Movement Set is. */
+	UPROPERTY()
+	TObjectPtr<UHadesHealthSet> HealthSet;
 };

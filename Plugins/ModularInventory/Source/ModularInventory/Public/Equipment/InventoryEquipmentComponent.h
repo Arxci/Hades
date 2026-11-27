@@ -108,10 +108,21 @@ public:
 
 	/**
 	 * Moves the item into the first equipment container with that slot. Whatever is in the way, the item in the slot or one its equip rules
-	 * keep apart from it, takes the spot the item left, or goes to storage. Fails when there is no room for it.
+	 * keep apart from it, takes the spot the item left, such as a pickup's, or goes to storage. Fails when there is no room for it.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Inventory|Equipment")
 	bool EquipItem(FInventoryItemHandle Item, FGameplayTag Slot, EInventoryError& OutError);
+
+	/**
+	 * Whether Equip Item would work now, without changing anything, such as to offer swapping an item lying in the world for the one in its
+	 * slot. Only for slots of equipment containers; Equip In Place takes any slot.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Equipment")
+	bool CanEquipItem(FInventoryItemHandle Item, FGameplayTag Slot) const;
+
+	/** The owner's first equipment container with the slot, or none. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Equipment")
+	FInventoryContainerHandle FindEquipmentContainer(FGameplayTag Slot) const;
 
 	/**
 	 * Equips an item the owner carries without moving it. Its equip rules must allow the slot and the owner meet their requirements;

@@ -62,6 +62,7 @@ void UInventoryComponent::BeginPlay()
 		{
 			const int32 StartingCapacity = Config.bOverrideStartingCapacity ? FMath::Max(0, Config.StartingCapacity) : INDEX_NONE;
 			RootContainers.Add(Registry.CreateContainer(Config.Layout, Config.Tag, this, StartingCapacity));
+			RootNewItems.Add(Config.NewItems);
 		}
 	}
 	if (RootContainers.IsEmpty())
@@ -120,6 +121,7 @@ void UInventoryComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		Registry.OnChanged.Remove(RegistryChangedHandle);
 	}
 	RootContainers.Reset();
+	RootNewItems.Reset();
 	CosmeticsHandle.Reset();
 	PreloadedCosmetics.Reset();
 
@@ -209,12 +211,56 @@ TArray<FInventoryContainerHandle> UInventoryComponent::GetStorageContainers() co
 	{
 		const FInventoryRegistry& Registry = InventorySubsystem->GetRegistry();
 		Registry.CollectContainers(RootContainers, Storage);
-		Storage.RemoveAll([&Registry](const FInventoryContainerHandle& Container)
+		Storage.RemoveAll([this, &Registry](const FInventoryContainerHandle& Container)
 		{
-			return Registry.FindContainer(Container)->Layout->bEquipment;
+			return !TakesNewItemsIn(Registry, Container);
 		});
 	}
 	return Storage;
+}
+
+TArray<FInventoryContainerHandle> UInventoryComponent::GetStowContainers() const
+{
+	TArray<FInventoryContainerHandle> Stow = GetStorageContainers();
+	if (const UInventorySubsystem* InventorySubsystem = GetSubsystem())
+	{
+		const FInventoryRegistry& Registry = InventorySubsystem->GetRegistry();
+		Stow.RemoveAll([&Registry](const FInventoryContainerHandle& Container)
+		{
+			const FInventoryContainerRecord* Record = Registry.FindContainer(Container);
+			return !Record || !Record->Layout || Record->Layout->bEquipment;
+		});
+	}
+	return Stow;
+}
+
+bool UInventoryComponent::TakesNewItems(FInventoryContainerHandle Container) const
+{
+	const UInventorySubsystem* InventorySubsystem = GetSubsystem();
+	return InventorySubsystem && OwnsContainer(Container) && TakesNewItemsIn(InventorySubsystem->GetRegistry(), Container);
+}
+
+bool UInventoryComponent::TakesNewItemsIn(const FInventoryRegistry& Registry, FInventoryContainerHandle Container) const
+{
+	const FInventoryContainerRecord* Record = Registry.FindContainer(Container);
+	if (!Record || !Record->Layout)
+	{
+		return false;
+	}
+
+	// A root container as its config says. One inside an item, such as a backpack's storage or a rifle's attachment slots, is storage unless
+	// it's equipment slots.
+	const int32 RootIndex = RootContainers.IndexOfByKey(Container);
+	switch (RootNewItems.IsValidIndex(RootIndex) ? RootNewItems[RootIndex] : EInventoryNewItems::Auto)
+	{
+	case EInventoryNewItems::Take:
+		return true;
+	case EInventoryNewItems::Skip:
+		return false;
+	case EInventoryNewItems::Auto:
+		break;
+	}
+	return !Record->Layout->bEquipment;
 }
 
 TArray<FInventoryContainerHandle> UInventoryComponent::GetEquipmentContainers() const

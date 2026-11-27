@@ -35,7 +35,9 @@ struct FHadesGun
 /**
  * The player's inventory with the game's rules on top: one item in hand, using, discarding and combining items, and guns and their ammo.
  * The item in hand stays where it is in the inventory. Its equip rules decide which hand slot it's equipped to.
- * Expects a Container.Inventory grid and a Container.KeyItems list, plus an Inventory Equipment Component on the same actor.
+ * Expects a Container.Inventory grid and a Container.KeyItems list, plus an Inventory Equipment Component on the same actor. A light source
+ * lives in a Container.LightSource equipment container of one Equipment.Slot.LightSource slot, whose New Items is Take, so the light the
+ * player finds goes straight into it; give the grid's layout a filter leaving out Item.Type.LightSource, so lights never land there.
  * Give the inventory's layout the grid it starts with as its Grid Size, Grid Growth With Upgrades, and the most rows it grows to as its
  * Max Rows. Pouches are items with an Inventory Capacity Upgrade for Container.Inventory: picking one up adds cells, and this component
  * tells the player so.
@@ -62,6 +64,19 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Inventory|Hands")
 	FInventoryItemHandle GetItemInHand() const;
+
+	// Light source: one at a time, in the Equipment.Slot.LightSource slot of a Container.LightSource equipment container, never in the grid.
+	/** The light source the player carries, or none. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Light Source")
+	FInventoryItemHandle GetLightSource() const;
+
+	/** Whether the light source the player carries is on: its Item.State.LightOn value. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Light Source")
+	bool IsLightSourceOn() const;
+
+	/** Whether the item is a light source: it's tagged Item.Type.LightSource. */
+	UFUNCTION(BlueprintPure, Category = "Inventory|Light Source")
+	bool IsLightSource(FInventoryItemHandle Item) const;
 
 	// Item actions. Using items is the plugin's: items with an Inventory Item Use fragment, such as a herb that heals.
 	/** Key items can't be dropped; they go away by themselves once used up. */

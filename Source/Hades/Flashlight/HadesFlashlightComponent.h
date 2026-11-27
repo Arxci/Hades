@@ -18,6 +18,9 @@ class UStaticMeshComponent;
  * Holds the spot light attached to it the way a hand holds a flashlight: off to the side of the eye so shadows show,
  * trailing the view a little, aimed at whatever is under the crosshair, and kept out of walls.
  * It places itself every frame, so attach it to something that follows the pawn but doesn't pitch with the view, like the hero's ViewRoot.
+ * It follows the view of the pawn holding it: its owner when that's a pawn, or else the actor its owner is attached to, or owned by, as for a
+ * light source item's actor, which the hero's equipment attaches to the hero. Give that actor's Blueprint this component with a spot light
+ * under it, and untick Start On: the light source turns it on and off.
  *
  * With a Beam Material it also draws the beam through the air, without the lag volumetric fog has (see Shaders/FlashlightBeam.ush).
  * Set the light's Volumetric Scattering Intensity to 0 so fog doesn't draw a second, smeared beam.
@@ -54,6 +57,13 @@ public:
 	/** Jumps straight to where the light should point, without trailing. For teleports and camera cuts. */
 	UFUNCTION(BlueprintCallable, Category = "Flashlight")
 	void SnapToView();
+
+	/**
+	 * The actor whose view the light follows: its owner when that's a pawn, or else the actor its owner is attached to, or is owned by, such
+	 * as the hero holding a light source item's actor.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Flashlight")
+	AActor* GetViewer() const;
 
 protected:
 	//~ Begin UActorComponent Interface
@@ -156,7 +166,10 @@ protected:
 	TObjectPtr<UStaticMesh> BeamProxyMesh;
 
 private:
-	bool GetViewPoint(FVector& OutLocation, FQuat& OutRotation) const;
+	bool GetViewPoint(FVector& OutLocation, FQuat& OutRotation);
+
+	/** The viewer's camera, found once there is one, such as once the light source actor holding this is attached to the hero. */
+	UCameraComponent* FindViewCamera();
 	void UpdatePlacement(float DeltaTime, bool bSnap);
 	void ApplyOnState();
 	void CreateBeam();

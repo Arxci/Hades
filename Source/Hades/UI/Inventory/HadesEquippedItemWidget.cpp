@@ -3,64 +3,92 @@
 #include "Components/TextBlock.h"
 #include "GameFramework/Pawn.h"
 
+#include "Hades/HadesGameplayTags.h"
 #include "Hades/Inventory/HadesInventoryComponent.h"
 
-#include "Data/InventoryItemDefinition.h"
-#include "Equipment/InventoryEquipmentComponent.h"
+#include "InventoryRegistry.h"
 #include "InventorySubsystem.h"
-#include "Widgets/InventoryItemWidget.h"
+#include "Widgets/ModularSegmentedMeter.h"
 
-void UHadesEquippedItemWidget::NativeConstruct()
+#define LOCTEXT_NAMESPACE "HadesEquippedItem"
+
+UHadesEquippedItemWidget::UHadesEquippedItemWidget(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
-	Super::NativeConstruct();
+	Slots = { FGameplayTag(HadesGameplayTags::Equipment_Slot_Hand_Right), FGameplayTag(HadesGameplayTags::Equipment_Slot_Hand_Left) };
+	RoundsFormat = LOCTEXT("RoundsFormat", "{Rounds} / {Capacity}");
+	SpareRoundsFormat = LOCTEXT("SpareRoundsFormat", "{Spare}");
+}
 
-	Equipment = UInventoryEquipmentComponent::FindEquipmentComponent(GetOwningPlayerPawn());
-	if (UInventoryEquipmentComponent* Component = Equipment.Get())
+void UHadesEquippedItemWidget::NativeOnInitialized()
+{
+	// The colors set in the designer, which low values replace for a while.
+	if (RoundsText)
 	{
-		Component->OnItemEquipped.AddUniqueDynamic(this, &ThisClass::HandleEquipmentChanged);
-		Component->OnItemUnequipped.AddUniqueDynamic(this, &ThisClass::HandleEquipmentChanged);
+		DefaultRoundsColor = RoundsText->GetColorAndOpacity();
 	}
-	RegistryListener.Bind(this, FOnInventoryRegistryChanged::FDelegate::CreateWeakLambda(this, [this](const FInventoryChangeSet&) { Refresh(); }));
-	Refresh();
-}
-
-void UHadesEquippedItemWidget::NativeDestruct()
-{
-	if (UInventoryEquipmentComponent* Component = Equipment.Get())
+	if (ChargeMeter)
 	{
-		Component->OnItemEquipped.RemoveDynamic(this, &ThisClass::HandleEquipmentChanged);
-		Component->OnItemUnequipped.RemoveDynamic(this, &ThisClass::HandleEquipmentChanged);
+		DefaultChargeColor = ChargeMeter->GetFillColor();
 	}
-	Equipment.Reset();
-	RegistryListener.Unbind();
 
-	Super::NativeDestruct();
+	Super::NativeOnInitialized();
 }
 
-void UHadesEquippedItemWidget::HandleEquipmentChanged(FInventoryItemHandle Item, FGameplayTag EquipSlot)
+bool UHadesEquippedItemWidget::ShouldRefreshFor(const FInventoryChangeSet& Changes) const
 {
-	Refresh();
-}
-
-void UHadesEquippedItemWidget::Refresh()
-{
+	// A gun's spare rounds are ammo anywhere in the inventory, which changes without the gun changing.
 	const UHadesInventoryComponent* Inventory = Cast<UHadesInventoryComponent>(UInventoryComponent::FindInventoryComponent(GetOwningPlayerPawn()));
-	const FInventoryItemHandle Item = Inventory ? Inventory->GetItemInHand() : FInventoryItemHandle();
+	return Super::ShouldRefreshFor(Changes) || (SpareRoundsText && Inventory && Inventory->IsGun(GetShownItem()));
+}
 
-	if (ItemWidget)
+void UHadesEquippedItemWidget::NativeOnRefresh(FInventoryItemHandle Item)
+{
+	Super::NativeOnRefresh(Item);
+
+	const UHadesInventoryComponent* Inventory = Cast<UHadesInventoryComponent>(UInventoryComponent::FindInventoryComponent(GetOwningPlayerPawn()));
+	const bool bGun = Inventory && Inventory->IsGun(Item);
+	const ESlateVisibility GunVisibility = bGun ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed;
+
+	if (RoundsText)
 	{
-		// Hidden, not collapsed, so a Size Box around it keeps its size.
-		ItemWidget->SetItem(Item);
-		ItemWidget->SetVisibility(Item.IsSet() ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+		const int32 Rounds = bGun ? Inventory->GetLoadedRounds(Item) : 0;
+		const int32 Capacity = bGun ? Inventory->GetCapacity(Item) : 0;
+		FFormatNamedArguments Args;
+		Args.Add(TEXT("Rounds"), Rounds);
+		Args.Add(TEXT("Capacity"), Capacity);
+		RoundsText->SetText(bGun ? FText::Format(RoundsFormat, Args) : FText::GetEmpty());
+		RoundsText->SetColorAndOpacity(bGun && Capacity > 0 && Rounds <= Capacity * LowFraction ? LowColor : DefaultRoundsColor);
+		RoundsText->SetVisibility(GunVisibility);
 	}
-	if (NameText)
+	if (SpareRoundsText)
+	{
+		FFormatNamedArguments Args;
+		Args.Add(TEXT("Spare"), bGun ? Inventory->GetSpareRounds(Item) : 0);
+		SpareRoundsText->SetText(bGun ? FText::Format(SpareRoundsFormat, Args) : FText::GetEmpty());
+		SpareRoundsText->SetVisibility(GunVisibility);
+	}
+	if (RoundsPanel)
+	{
+		RoundsPanel->SetVisibility(GunVisibility);
+	}
+
+	if (ChargeMeter)
 	{
 		const UInventorySubsystem* Subsystem = UInventorySubsystem::Get(this);
-		const UInventoryItemDefinition* Definition = Subsystem ? Subsystem->GetItemDefinition(Item) : nullptr;
-		NameText->SetText(Definition ? Definition->DisplayName : EmptyText);
-	}
-	if (EmptyMarker)
-	{
-		EmptyMarker->SetVisibility(Item.IsSet() ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
+		float Charge = 0.0f;
+		const bool bHasCharge = Subsystem && Item.IsSet() && Subsystem->GetTagValueFraction(Item, HadesGameplayTags::Item_Stat_Charge, FGameplayTag(), Charge);
+		if (bHasCharge && Item == ChargeItem)
+		{
+			ChargeMeter->SetPercent(Charge);
+		}
+		else
+		{
+			ChargeMeter->SetPercentImmediately(Charge);
+		}
+		ChargeItem = bHasCharge ? Item : FInventoryItemHandle();
+		ChargeMeter->SetFillColor(bHasCharge && Charge <= LowFraction ? LowColor.GetSpecifiedColor() : DefaultChargeColor);
+		ChargeMeter->SetVisibility(bHasCharge ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
 }
+
+#undef LOCTEXT_NAMESPACE

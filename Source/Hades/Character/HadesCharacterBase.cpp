@@ -5,6 +5,7 @@
 
 #include "HadesCharacterMovementComponent.h"
 #include "Hades/AbilitySystem/HadesAbilitySystemComponent.h"
+#include "Hades/AbilitySystem/Attributes/HadesHealthSet.h"
 #include "Hades/AbilitySystem/Attributes/HadesMovementSet.h"
 #include "Hades/HadesGameplayTags.h"
 
@@ -16,6 +17,7 @@ AHadesCharacterBase::AHadesCharacterBase(const FObjectInitializer& ObjectInitial
 	HadesCharacterMovement = Cast<UHadesCharacterMovementComponent>(GetCharacterMovement());
 	HadesAbilitySystemComponent = CreateDefaultSubobject<UHadesAbilitySystemComponent>(TEXT("AbilitySystemComponent"));
 	MovementSet = CreateDefaultSubobject<UHadesMovementSet>(TEXT("MovementSet"));
+	HealthSet = CreateDefaultSubobject<UHadesHealthSet>(TEXT("HealthSet"));
 
 	GetCharacterMovement()->GetNavAgentPropertiesRef().bCanCrouch = true;
 }

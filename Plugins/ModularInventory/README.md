@@ -45,7 +45,7 @@ A data-driven inventory system for Unreal Engine 5.7. Items live in grid, slot o
 | Loot | Weighted pools, nested tables, tag conditions and random tag values. |
 | Crafting | Recipes with consumed ingredients and tools, tag requirements, fixed and random outputs. |
 | Safety | Every change is a transaction: it fully succeeds or is fully undone. |
-| UI | Common UI screens and widgets for mouse, keyboard, gamepad and touch: drag and drop, placement previews, item menus and actions, recipe menus listing what an item makes, a description line, tabbed pages, numbers on items, details with stat comparisons, and shortcut bars. |
+| UI | Common UI screens and widgets for mouse, keyboard, gamepad and touch: drag and drop, placement previews, item menus and actions, recipe menus listing what an item makes, a description line, tabbed pages, numbers on items, details with stat comparisons, shortcut bars, and what the player has equipped. Every key the screens bind is an Enhanced Input action the player can rebind, and any can be a hold. |
 | Shortcuts | Quick slots that point at items the owner carries, follow them as they move, and move on to the next of the same kind. |
 | Editor | A Modular Inventory menu on the Level Editor toolbar with this guide and the tools, an Inventory section in the Add menu, one-click item creation, an icon generator with a live studio, icon thumbnails, a socket preview, live loot drop rates, extra validation and automatic Asset Manager setup. |
 | Debugging | A Gameplay Debugger category, Unreal Insights scopes, automation tests, and a console command to give items. |
@@ -73,7 +73,7 @@ A data-driven inventory system for Unreal Engine 5.7. Items live in grid, slot o
 | Handle | How you refer to an item or container: `FInventoryItemHandle`, `FInventoryContainerHandle`. |
 | Container | A grid, slot set or list holding items. Built at runtime from a Container Layout. |
 | Placement | Where an item sits in its container: a cell and rotation for grids, an index for slots and lists. |
-| Storage | The containers new items go into: everything an Inventory Component holds except equipment slots. |
+| Storage | The containers new items go into: by default everything an Inventory Component holds except equipment slots. A container's **New Items** changes that ([6.1](#61-inventory-component)). |
 | Equipment container | A slot container whose layout has **Equipment** ticked. |
 | Tag value | A number on an item, keyed by a gameplay tag. |
 | Fragment | Any struct stored on a definition, item or container. |
@@ -164,18 +164,26 @@ Slot tags are matched hierarchically: equip rules that allow `Equipment.Slot.Han
 
 ### 2.4 Common UI input
 
-Only needed for the widgets.
+Only needed for the widgets. Every key the screens and item menus bind is an Enhanced Input action players can rebind, set up as Modular UI's guide describes under **Input actions**: one input action per key, its keys mapped in an Input Mapping Context for menus, such as `IMC_UI`, and the action set in the widget's field. There are no data table rows or UI action tags to fill in.
 
-- **Accept and Back** use your project's Common UI defaults (**Project Settings > Game > Common Input Settings > Input Data**). If menus already work with a gamepad, nothing changes here.
-- **Move, Item Menu, Rotate, Split, Transfer, Take All and Confirm** are rows of a Common UI input action data table: **Add › Miscellaneous › Data Table**, row structure **CommonInputActionDataBase**. Give each row a display name and its keyboard and gamepad keys, such as:
-  | Row | Example keys |
-  | --- | --- |
-  | Rotate | R; Gamepad Face Button Top |
-  | Split | Left Shift; Gamepad Left Shoulder |
-  | Item Menu | Tab; Gamepad Face Button Left |
-  | Transfer | T; Gamepad Right Shoulder |
+- **Accept and Back** stay your project's Common UI defaults (**Project Settings > Game > Common Input Settings > Input Data**). If menus already work with a gamepad, nothing changes here. Keys that go Back as well, such as the right mouse button, are Modular UI's **Extra Back Keys** setting.
+- **Move, Item Menu, Rotate, Split, Transfer, Take All and Sort** are input actions on the inventory screen ([11.3](#113-building-an-inventory-screen)), and each item action can have one of its own ([11.8](#118-item-menus-and-item-actions)). For each:
+  1. Create an Input Action, such as `IA_UI_Rotate`: **Value Type** Digital (bool), a **Description**, which action bars show as its name, and **Consume Lower Priority Enhanced Input Mappings** unticked. Give it **Player Mappable Key Settings** with a unique **Name**, so players can rebind it.
+  2. Map its keys in `IMC_UI`, such as:
+     | Input action | Example keys |
+     | --- | --- |
+     | `IA_UI_Rotate` | R; Gamepad Face Button Top |
+     | `IA_UI_Split` | Left Shift; Gamepad Left Shoulder |
+     | `IA_UI_ItemMenu` | Tab; Gamepad Face Button Left |
+     | `IA_UI_Transfer` | T; Gamepad Right Shoulder |
+  3. Set it in the screen's field, such as **Rotate Input Action**.
+- **A hold**, such as sorting only once the key has been held for a moment, is a **Hold** trigger on the input action, with its **Hold Time Threshold**. The action bar button shows the progress through On Action Progress.
 
-Pick the rows you want on your inventory screen ([11.3](#113-building-an-inventory-screen)). Each is bound while the player is doing something it's for, such as Rotate while an item is held, as the screen's **Action Availability** says. See [11.4](#114-input-and-interaction-style) for what they do.
+Add `IMC_UI` for the player above the gameplay contexts, with a higher **Priority**, and keep it added during gameplay: Common UI only routes a menu action to the widget that bound it, and while a menu with the Menu input mode is active, the game doesn't get the key. Register it with Enhanced Input's user settings, so the keys players choose are used. Each action is bound while the player is doing something it's for, such as Rotate while an item is held, as the screen's **Action Availability** says. See [11.4](#114-input-and-interaction-style) for what they do.
+
+Action bars and key widgets show the key the player mapped, and follow rebinding.
+
+> Why **Consume Lower Priority Enhanced Input Mappings** off and a higher priority: Enhanced Input drops a lower-priority context's mapping of a key that a higher-priority action consumes. With both settings, a key shared by a menu action and a gameplay action, such as R for Rotate and Reload, stays mapped to both. Common UI's Enhanced Input support needs **Project Settings > Game > Common Input Settings > Enable Enhanced Input Support** on; Epic describes it as limited ([Using CommonUI with Enhanced Input](https://dev.epicgames.com/documentation/en-us/unreal-engine/using-commonui-with-enhnaced-input-in-unreal-engine)).
 
 ---
 
@@ -546,7 +554,7 @@ Where an item can be equipped and what it grants. Share one asset between items,
 | Slots | Slots | Slot tags the item fits. A slot matches if its tag is one of these or a child of one. |
 | Slots | Blocked Slots | Slots in the same container that must stay empty while equipped, such as the off hand for a two-handed weapon. |
 | Requirements | Owner Requirements | Tags the owner's Ability System Component must have (Require Tags) or must not have (Ignore Tags), or a tag query. |
-| Granted | Abilities | Ability class, **Level** (default 1) and **Scale With Item Level** (default on). |
+| Granted | Abilities | Ability class, **Level** (default 1), **Scale With Item Level** (default on) and an optional **Input Tag**, added to the granted ability's dynamic source tags so a key can activate it ([8.5](#85-abilities-that-need-their-item)). |
 | Granted | Effects | Effect class, **Level** and **Scale With Item Level**. |
 | Granted | Attribute Sets | Attribute set classes added while equipped. |
 | Granted | Owner Tags | Loose tags added to the owner while equipped. |
@@ -675,7 +683,7 @@ Gives an actor its own containers. Use it on characters, chests, drawers and pic
 
 | Field | Description |
 | --- | --- |
-| Containers | Tag + Layout pairs, each with an optional **Starting Capacity**: how much the container holds when play begins, instead of its layout's ([4.7](#47-capacity-storage-that-grows)). Each becomes a root container on begin play. The order matters for where new items go. |
+| Containers | Tag + Layout pairs, each with an optional **Starting Capacity**: how much the container holds when play begins, instead of its layout's ([4.7](#47-capacity-storage-that-grows)), and **New Items**: whether items the component takes in can go into it. **Auto** (default): storage does and equipment slots don't. **Take**: new items can go in, equipment slots included, which equips them, such as a single light source slot the light the player finds goes straight into. **Skip**: only moving an item there puts it there, such as a stash. Each becomes a root container on begin play. The order matters for where new items go. |
 | Preload Cosmetics | Keeps the cosmetics of everything held here loaded ([13.2](#132-when-soft-assets-load)). Turn it on for the player only. |
 | Starting Items | Item specs added on begin play. |
 | Starting Equipment | Slot + item spec. Each is placed straight into the first equipment container that has that slot. |
@@ -694,13 +702,17 @@ Gives an actor its own containers. Use it on characters, chests, drawers and pic
 
 ![Storage order: root containers in the order listed, then containers inside items; equipment slots are skipped](Docs/Images/storage-order.png)
 
+Equipment slots are skipped unless their container's New Items is **Take**, and containers whose New Items is **Skip** are always skipped. An item only goes into an equipment slot its equip rules allow, so a Take slot only fills with what it's for. Items leaving an equipment slot, such as one unequipped or one making way for another, go to **Get Stow Containers**, which never has equipment slots, so they don't land in another slot by themselves.
+
 **Functions**
 
 | Function | Description |
 | --- | --- |
 | Find Inventory Component (Actor) | Static. The first Inventory Component on an actor. |
 | Get Containers / Get Container (Tag) | Root containers, or the one with a tag. |
-| Get Storage Containers / Get Equipment Containers | The containers new items go into, and the equipment slot containers. |
+| Get Storage Containers / Get Equipment Containers | The containers new items go into, as their New Items says, and the equipment slot containers. |
+| Get Stow Containers | Where items leaving an equipment slot go: the storage containers without equipment slots. |
+| Takes New Items (Container) | Whether new items can go into one of its containers, at any depth. |
 | Owns Container / Owns Item | Whether something is inside this component, at any depth. |
 | Add Item (Spec, Allow Partial) | Creates items in storage and returns how many were added. Out Items lists the stacks touched. A capacity upgrade applied when taken is applied instead ([5.11](#511-inventory-capacity-upgrade)). |
 | Add Item By Definition (Definition, Count, Allow Partial) | Add Item with nothing but a definition and a count, such as to give the player an item from a Blueprint. |
@@ -729,7 +741,10 @@ Applies whatever sits in the owner's equipment slots. It has no settings.
 | Function | Description |
 | --- | --- |
 | Find Equipment Component (Actor) | Static. |
-| Equip Item (Item, Slot) | Moves the item into the first equipment container with that slot. The slot's current item swaps places with it, or goes to storage. |
+| Equip Item (Item, Slot) | Moves the item into the first equipment container with that slot. Whatever is in the way, the slot's item or one the equip rules keep apart from it, takes the spot the item left, such as a pickup's, or goes to storage. Fails when there's no room for it. |
+| Can Equip Item (Item, Slot) | Whether Equip Item would work now, without changing anything, such as to offer swapping an item lying in the world for the one in its slot. |
+| Find Equipment Container (Slot) | The owner's first equipment container with the slot. |
+| Find Slot For (Item) / Find Equipped Item For (Item) | A slot the item's equip rules allow, an empty one first; and the item it would replace, to compare them. |
 | Equip In Place (Item, Slot) | Equips an item the owner carries without moving it, such as a weapon in hand that keeps its place in a grid. Its equip rules must allow the slot; use a slot no equipment container has. Whatever was equipped in place in that slot stops being equipped, and the item stays equipped until unequipped or until it leaves the inventory. |
 | Unequip Item (Item) / Unequip Slot (Slot) | Moves the item to a free spot in storage. An item equipped in place just stops being equipped. |
 | Get Equipped Item (Slot) | The item in a slot. |
@@ -834,7 +849,9 @@ Use an **Actor** piece for anything a mesh can't do: lights, physics, Mutable ch
 
 ### 8.5 Abilities that need their item
 
-Inside an ability granted by an item, call **Get Item From Ability** (Self). With the handle, read the item's state through the Inventory Subsystem, such as **Get Tag Value** `Item.Stat.Charge`.
+Inside an ability granted by an item, call **Get Item From Ability** (Self). With the handle, read the item's state through the Inventory Subsystem, such as **Get Tag Value** `Item.Stat.Charge`. To reach the actor an Actor piece spawned for the item, such as a light to switch on, look through **Get Spawned Pieces** (Item) on the Equipment Component.
+
+**Keys for item abilities.** Give the grant an **Input Tag** in the equip rules, such as `Input.LightSource`. It's added to the granted ability's dynamic source tags, so an ability system component that activates abilities by the input tag of the key pressed, as Lyra's does, activates it while the item is equipped, and nothing answers the key while it isn't. One ability class can then answer a different key on each item, such as a fire ability on two weapons. The plugin only passes the tag on: reading it is your ability system component's job, by checking `Spec.GetDynamicSpecSourceTags()` as well as the ability's own tags. This is how to give items their own inputs, such as reload, fire, inspect or a light's switch, without the item knowing about keys.
 
 ---
 
@@ -936,6 +953,7 @@ Every widget class is abstract: make a Blueprint child of each and design it. Na
 | Inventory Recipe Menu Entry | One recipe of a recipe menu: what it makes, how many the player has, what it takes. A Common UI button. |
 | Inventory Recipe Ingredient Widget | One ingredient in a recipe menu entry. |
 | Inventory Shortcut Widget | One slot of an Inventory Shortcut Component ([11.12](#1112-shortcut-widgets)). A Common UI button. |
+| Inventory Equipped Item Widget | What the player has equipped in one or more slots, such as the weapon in hand or the light carried, and whether it's active ([11.16](#1116-equipped-item-widgets)). |
 
 ![Inside the grid widget: three layers for cells, items and the placement preview, with the grid and item widget hierarchies](Docs/Images/ui-grid-layers.png)
 
@@ -989,7 +1007,7 @@ Display Filter and Sort By only change what's shown, such as one tab per kind of
 | Events | On Item Changed. Stat rows: On Stat Changed |
 | Functions | Set Item, Get Item |
 
-The screen, item menu, shortcut and recipe menu widgets are covered in [11.3](#113-building-an-inventory-screen), [11.8](#118-item-menus-and-item-actions), [11.12](#1112-shortcut-widgets) and [11.15](#1115-recipe-menus-what-an-item-makes).
+The screen, item menu, shortcut, recipe menu and equipped item widgets are covered in [11.3](#113-building-an-inventory-screen), [11.8](#118-item-menus-and-item-actions), [11.12](#1112-shortcut-widgets), [11.15](#1115-recipe-menus-what-an-item-makes) and [11.16](#1116-equipped-item-widgets).
 
 ### 11.3 Building an inventory screen
 
@@ -1018,15 +1036,16 @@ The screen, item menu, shortcut and recipe menu widgets are covered in [11.3](#1
 - Place `W_InventoryGrid`, named **`MainGrid`**, so gamepad focus starts on its first cell. Place your slots and `W_ItemDetails` beside it.
 - For item menus, add a **Common Activatable Widget Stack** named `ItemMenuStack` over the rest of the screen, filling it, and set **Item Menu Class** ([11.8](#118-item-menus-and-item-actions)).
 - Set **Interaction Style** ([11.4](#114-input-and-interaction-style)) and **Sounds**.
-- Under **Input**, pick the rows of a Common UI input action data table for **Move**, **Item Menu**, **Rotate**, **Split**, **Transfer**, **Take All** and **Confirm** that you want, and place a **Common Bound Action Bar** to show them. **Action Availability** says when each is bound, and so shown:
+- Under **Input › Inventory Actions**, set the input actions you want for **Move**, **Item Menu**, **Rotate**, **Split**, **Transfer**, **Take All** and **Sort** ([2.4](#24-common-ui-input)), and under **Input**, **Confirm Display Name**, such as Select: what Accept does, shown beside Accept's key. Place a **Modular Bound Action Bar** (Modular UI) to show them: it keeps the buttons that stay and only adds and removes the ones that change, where a Common Bound Action Bar rebuilds all of them on every change, which flickers as a menu opens. **Action Availability** says when each is bound, and so shown:
 
   | Action Availability | Bound | The action bar |
   | --- | --- | --- |
   | By Mode, the default | The actions for what the player is doing: browsing the items, holding one, or choosing one. One that can't be done for what's aimed at does nothing, such as Move over an empty cell | Stays as it is while the cursor moves, changing only as the player picks something up, puts it down, or opens a menu, as console games keep it |
-  | By Target | Only the actions that can be done for what's aimed at now | Changes as the cursor moves from item to item. A Common Bound Action Bar rebuilds its buttons each time, which shows as a flicker |
+  | By Target | Only the actions that can be done for what's aimed at now | Changes as the cursor moves from item to item. A Modular Bound Action Bar adds and removes only the buttons that change; a Common Bound Action Bar rebuilds them all, which shows as a flicker |
 - Optionally add a description line along the bottom: a Text Block named `DescriptionText`, inside a `DescriptionPanel` such as a Border, and fill in the hint texts ([11.13](#1113-the-description-line)).
 - Optionally put the screen's parts on pages, such as Map, Items and Crafting, with a Tab List and a Modular Page Switcher ([11.14](#1114-pages-tabs-on-an-inventory-screen)).
-- Open the screen by pushing it onto one of your Common UI layer stacks. Close it with **Close Widget**.
+- Optionally show what the player has equipped, such as the weapon in hand and the light carried, with Inventory Equipped Item Widgets beside the details panel ([11.16](#1116-equipped-item-widgets)).
+- Open the screen by pushing it onto one of your Common UI layer stacks. Close it with **Close Widget**, or the **Close Input Actions** under Input, such as the key that opened it.
 
 The screen takes menu input and shows the cursor (tick **Game Keeps Input** to keep the game's input too). Back cancels choosing an item, then puts back the held item, then closes the screen, and closing drops whatever was held or chosen.
 
@@ -1058,7 +1077,7 @@ The **Interaction Style** on the screen sets the rest. Its defaults are drag and
 | Swap Picks Up Other | off | A swap picks the other item up from where the held one was, instead of only trading places. |
 | Shift Click Transfers | off | Shift and a click moves an item to the other side, such as from a chest into the player's inventory. |
 | Keep Last Hovered Item | off | The item the mouse was last over stays hovered until the mouse reaches another. |
-| Held Right Click | As Usual | What a right-click does while an item is held: as usual, Put Back, or Rotate. |
+| Held Right Click | As Usual | What a right-click does while an item is held: as usual, Put Back, or Rotate. As usual, with Right Mouse Button in Modular UI's Extra Back Keys, it goes Back, which puts the item back. |
 | Wheel Rotates Held | off | The mouse wheel turns the held item. |
 
 Held items in a grid land as close to where they're aimed as fits, never partly off the edge.
@@ -1111,7 +1130,7 @@ An **item action** is something the player can do with an item, such as Use, Equ
 | Field | Description |
 | --- | --- |
 | Display Name, Description, Icon | What its entry shows, and what Description Text, the menu's and the screen's, says while it's highlighted. |
-| Input Action | A key that runs it while the menu is open. |
+| Input Action | A key that runs it while the menu is open, shown on its button: an input action players can rebind, mapped in your menu context ([2.4](#24-common-ui-input)). Optional. |
 | Item Filter | Only items that match are offered the action at all, such as Tag Query `Item.Type.Consumable` for Use, or one leaving out `Item.Trait.NoDiscard` for Discard. |
 | When Unavailable | Hide it while Can Run says no, or Show Disabled with **Get Unavailable Reason**, such as "Not enough space". |
 | Prompt, Prompt Text | Run at once, Confirm first, or ask for a Quantity. `{Item}` and `{Count}` are filled in. |
@@ -1126,7 +1145,8 @@ Built in: **Move** (picks the item up, for gamepads), **Split** (asks how many),
 - For prompts: `PromptPanel` with `PromptText`, `ConfirmButton` and `CancelButton`, and for counts `QuantitySlider` and `QuantityText`.
 - **Placement** (Toward Center, Right, Left, As Designed or At Cursor), **Menu Gap** and **Screen Padding** decide where it opens. **Outside Click** decides what a click off it does: **Close** only closes it, **Pass Through** closes it and goes on to the item under it, and **Block** does nothing, so the menu stays open until the player picks an action or goes Back. **Right Click** is **Back**, as in games where the right mouse button means Back, **Pass Through**, so right-clicking another item opens its menu instead, or **Ignore**. They're Modular UI context menu settings; see its guide.
 - **Open Transition** fades, slides and grows the menu out of the item, and **Close Reverses Open** sends it back the same way, or **Close Transition** plays instead; animations named `OpenAnimation` and `CloseAnimation` play too. **Action Timing** runs a picked action as the menu starts closing, or once it has closed.
-- Give it a **Confirm Action** and a Common Bound Action Bar on the screen shows Back and Confirm while it's open. They're bound once, so they don't flicker or swap places as the mouse moves over the actions.
+- To have the menu slide out from behind the item, as a drawer does, rather than appear over it: put everything the menu shows, its background included, in a widget named `MenuContent` inside `MenuPanel`, leave Menu Panel itself without a background, and tick **Slide From Behind Anchor**. Menu Panel then clips what's inside it, and Menu Content slides in from the item's side by its own size, so it seems to come out from under the item. With Placement Toward Center, it comes out of whichever side the menu opens on.
+- Give it a **Confirm Display Name**, such as Select, and a Modular Bound Action Bar on the screen shows Back and Confirm while it's open. They're bound once, so they don't flicker or swap places as the mouse moves over the actions.
 
 The menu closes by itself when its item leaves the inventory, and when its screen closes. **Action Button Class** is a child of **Inventory Item Action Button**, with `NameText` (a Common Text), `Icon` and `ReasonText`, and an **Unavailable Style** for actions that can't run. With **Show Description On Screen**, on by default, what the highlighted action does shows in the screen's description line too, such as along the bottom of the screen, as console inventories say it; turn it off when the menu's own `DescriptionText` says it instead. Write each action's **Description** as what it does, such as "Use the item.", not what the item is.
 
@@ -1182,7 +1202,7 @@ An **Inventory Shortcut Widget** shows one slot of the owning player's Inventory
 | Part | Details |
 | --- | --- |
 | Named widgets | `ItemWidget` (your item widget), `NameText` (the slot's Display Name), `NumberText` (1 for the first slot), `EmptyMarker` (shown while empty) |
-| Settings | **Slot Index**, or **Slot Tag** to follow a slot by its tag. **Right Click Clears** |
+| Settings | **Slot Index**, or **Slot Tag** to follow a slot by its tag. **Right Click Clears** empties a slot that has an item; on an empty slot the right-click goes on, such as to Back with Right Mouse Button in Modular UI's Extra Back Keys |
 | Events | On Shortcut Changed, On Shortcut Activated (to flash it), On Assign Refused (the held item doesn't suit the slot) |
 | Functions | Set Slot Index, Get Slot Index, Get Slot Item, Get Shortcuts |
 
@@ -1212,9 +1232,9 @@ An inventory screen can have pages, such as Map, Items and Crafting, as survival
 
 1. Add a **Modular Tab List** named **`TabList`** with a Tab Button Class, and a tab for each page, in order. Give each a **Tab Id**, such as `Items` and `Crafting`, and optionally a **Description** for the description line and a **Shortcut**, a UI action that opens it directly.
 2. Add a **Modular Page Switcher** named **`Pages`** holding the pages, in the same order. A Common Activatable Widget Switcher already there can be swapped with **Replace With**.
-3. Set **Items Page** to the index of the page with the grids. The screen opens on it.
+3. Set **Items Page** to the index of the page the screen opens on, usually the one with the grids.
 
-The items only work while their page shows: changing page puts back whatever was held. Coming back to them, focus goes back to the cell it was on, and with the mouse the item hovered as the player left is hovered again, so the details panel and description line show it at once. The page switcher brings each page in with a quick fade and a short slide from the side it comes from, and nothing on a page lights up as it slides under the cursor. Modular UI's guide, under Pages, explains why its transition replaces the Common Animated Switcher's own.
+The items work on every page that shows items, and the screen finds those by itself: a page holding a grid, list or slot widget, at any depth, inside other user widgets too, such as a crafting page with its own grid or an item box page. Changing to a page without items, such as a map, puts back whatever was held. In C++, override **Does Page Show Items** to decide otherwise, such as by the page's tab. Coming back to them, focus goes back to the cell it was on, and with the mouse the item hovered as the player left is hovered again, so the details panel and description line show it at once. The page switcher brings each page in with a quick fade and a short slide from the side it comes from, and nothing on a page lights up as it slides under the cursor. Modular UI's guide, under Pages, explains why its transition replaces the Common Animated Switcher's own.
 
 To open the screen on another page, such as a crafting key opening it on its crafting page, call **Set Start Tab** (or **Set Start Page**) as the screen is pushed, before it shows. In C++, Modular UI's `PushStreamedWidgetToLayer` takes a function that sets the widget up first:
 
@@ -1267,6 +1287,19 @@ A recipe menu lists what an item can be crafted into, as survival games' Combine
 **The ingredient.** Parent **Inventory Recipe Ingredient Widget**: `ItemWidget` or `Icon`, `NameText`, `CountText` in **Count Format** (`{Count}` needed, `{Held}` held, such as `{Held}/{Count}`), tinted **Missing Color** while there isn't enough, and `ToolMarker` for tools, which are needed but kept. What it shows for an ingredient is its **Display Item** ([5.7](#57-recipe)).
 
 For example, a recipe turning scrap and gunpowder into handgun ammo: Ingredients Scrap × 1 and Gunpowder × 1, Outputs Handgun Ammo × 10. The scrap's recipe menu lists Handgun Ammo x10, how much handgun ammo the player carries, and Scrap 1 + Gunpowder 1, with every other recipe that takes scrap below it.
+
+### 11.16 Equipped item widgets
+
+An **Inventory Equipped Item Widget** shows what the owning player has equipped, such as the weapon in hand or the light carried, on an inventory screen or a HUD. Unlike a slot widget, it's only a readout: it takes no clicks, and can show whichever of several slots has an item, such as whatever is in either hand.
+
+| Part | Details |
+| --- | --- |
+| Named widgets | `ItemWidget` (your item widget, with its Value Displays, such as rounds or charge; hidden while nothing is equipped), `NameText` (the item's name, or Empty Text), `EmptyMarker` (shown while nothing is equipped), `ActiveMarker` (shown while the item is active) |
+| Settings | **Slots**: the equipment slots it shows, in order; the first with an item equipped is shown, such as a right hand then a left hand. **Active Tag**: the item is active while it has this tag, or a tag value above 0 for it, such as a state a light sets to 1 while it's on. **Empty Text** |
+| Events | On Equipped Item Changed (Item, Slot), On Active Changed. In C++, Native On Refresh shows more of the item, and Should Refresh For decides which inventory changes refresh it |
+| Functions | Set Slots, Get Shown Item, Get Shown Slot, Is Shown Item Active, Get Equipment Component |
+
+It follows equipping and unequipping, changes to the item itself, such as rounds fired or a light switched off, and the player's pawn changing. Slots can be equipment container slots or slots items are equipped in place to ([8.1](#81-making-an-item-equippable)).
 
 ---
 
@@ -1625,10 +1658,20 @@ Bind gameplay to the Inventory Component's events, which only fire for that acto
 
 ### 16.1 A flashlight that uses battery charge
 
+In the hand, the simplest way:
+
 1. `DA_Flashlight`: Tag Values `Item.Stat.Charge = 100`, Equip Rules for the hand slot.
-2. While the light is on, drain it: Equipment Component › **Get Equipped Item** (`Equipment.Slot.Hand.Main`), then Inventory Subsystem › **Add To Tag Value** (Item, `Item.Stat.Charge`, -drain per second × delta seconds).
+2. While the light is on, drain it: Equipment Component › **Get Equipped Item** (`Equipment.Slot.Hand.Main`), then Inventory Subsystem › **Add To Tag Value** (Item, `Item.Stat.Charge`, -drain). Add it up and write it in steps, such as once a second, rather than every frame: every change to an item is a change each widget showing it hears about.
 3. When the charge reaches 0, turn the light off. Read it with **Get Tag Value**.
 4. To swap the battery: Inventory Component › **Remove Items** (Query: Definitions `DA_Battery`, Count 1). If it returns 1, **Set Tag Value** (flashlight, `Item.Stat.Charge`, 100).
+
+In a slot of its own, as many survival games keep the light: one at a time, never in the grid, switched with its own key.
+
+1. Make a Slots layout with **Equipment** ticked and one slot, such as `Equipment.Slot.LightSource`, and add it to the Inventory Component's Containers with its own tag and **New Items** Take, so the first light the player picks up goes straight in, and is equipped ([6.1](#61-inventory-component)).
+2. Give the grid's layout a Filter that leaves out lights, such as a Tag Query without `Item.Type.Light`, so they never land in the grid. With the slot full, another light has nowhere to go: offer a swap with **Can Equip Item**, and **Equip Item** puts the old light where the new one was, such as in the pickup.
+3. Give the light's equip rules that slot, an **Actor** piece in its cosmetics for the light itself ([8.4](#84-equipment-actors-and-mutable)), and an ability with the light key's **Input Tag** ([8.5](#85-abilities-that-need-their-item)). The ability finds the actor with **Get Spawned Pieces** and switches it.
+4. Have the actor keep whether it's on as a tag value of its item, such as `Item.State.LightOn` at 1, so it comes back as it was when it's equipped again, and drain the charge while it's on, as above.
+5. Show it with an Inventory Equipped Item Widget whose Slots is the light's slot and whose Active Tag is the on state ([11.16](#1116-equipped-item-widgets)).
 
 ### 16.2 A backpack
 
@@ -1805,7 +1848,14 @@ An ammo case lets the player carry more ammo in each cell, instead of adding cel
 | Nothing can be put into a container through the UI | Its layout's Player Access is Take Only or Read Only | Set it to Full or Put Only |
 | A list has no empty entry to put items on | Show Empty Entry is off, the list is full, or its Player Access doesn't let the player put items in | Check the list's capacity and Player Access |
 | The description line never says anything | The screen has no Text Block named `DescriptionText`, or the hint texts, the actions' and the buttons' Descriptions are empty. Browsing the items, it says nothing by design | Name the Text Block `DescriptionText` and fill them in ([11.13](#1113-the-description-line)) |
-| The action bar flickers, or its actions swap places, as the cursor moves or a menu opens | A Common Bound Action Bar rebuilds its buttons whenever the bound actions change. With Action Availability By Target, they change as the cursor moves from item to item | Set **Action Availability** to By Mode, its default, so they change only as the player picks up, puts down or opens a menu ([11.3](#113-building-an-inventory-screen)). Item menus bind Back and Confirm once, so they stay put while open |
+| The action bar flickers, or its actions swap places, as the cursor moves or a menu opens | A Common Bound Action Bar rebuilds all its buttons whenever the bound actions change. With Action Availability By Target, they change as the cursor moves from item to item | Use a **Modular Bound Action Bar**, which keeps the buttons that stay, and set **Action Availability** to By Mode, its default, so they change only as the player picks up, puts down or opens a menu ([11.3](#113-building-an-inventory-screen)). Item menus bind Back and Confirm once, so they stay put while open |
+| A screen key does nothing, or isn't shown in the action bar | Common UI's Enhanced Input support is off, the input action isn't mapped in a context that's added for the player, or the field is empty | Turn on **Enable Enhanced Input Support** in Common Input Settings, map the action in your menu context and add the context, and set the field ([2.4](#24-common-ui-input)) |
+| Players can't rebind a screen key | The input action has no Player Mappable Key Settings, or its context isn't registered with Enhanced Input's user settings | Give it Player Mappable Key Settings with a unique Name, and register the context ([2.4](#24-common-ui-input)) |
+| A hold action runs at once, or its ring never fills | The input action has no Hold trigger, or the action bar button doesn't use On Action Progress | Add a **Hold** trigger with a Hold Time Threshold; drive the button's fill from On Action Progress ([2.4](#24-common-ui-input)) |
+| A rebindable menu key does nothing, or a gameplay key on the same key stops working | The menu context's priority is below the gameplay contexts', or its actions consume input, so one context's mapping drops the other's | Give the menu context the higher Priority and untick **Consume Lower Priority Enhanced Input Mappings** on its actions ([2.4](#24-common-ui-input)) |
+| A picked-up item went into an equipment slot by itself | That container's **New Items** is Take | Set it to Auto, or keep Take only for slots meant to fill by themselves, such as a light source's ([6.1](#61-inventory-component)) |
+| An item that should only go in its own slot lands in the grid | The grid's filter takes it | Leave it out of the grid layout's Filter ([16.1](#161-a-flashlight-that-uses-battery-charge)) |
+| A page's items don't respond, or the held item is put back on a page with items | The screen didn't find a grid, list or slot widget on the page | Override **Does Page Show Items** in C++ for pages built at runtime ([11.14](#1114-pages-tabs-on-an-inventory-screen)) |
 | Back on the items page, nothing is focused or hovered | The switcher took longer to bring the page in than focus waits, or a Blueprint Get Desired Focus Target returns something other than a cell | Use a Modular Page Switcher ([11.14](#1114-pages-tabs-on-an-inventory-screen)); leave Get Desired Focus Target to the screen, or return a cell from it |
 | Items light up one after another as a page slides in | A Common Animated Switcher's transition moves the real widgets under the cursor | Use a Modular Page Switcher, with Block Input While Showing |
 | The screen opens on the wrong page | Set Start Tab was called after the screen showed, or the Tab Id isn't one of Tab List's | Call it as the screen is pushed, such as in the push's Init Func; the log names a Tab Id it can't find |
@@ -1839,6 +1889,10 @@ To be ready, mark the properties of your fragment structs `SaveGame`.
 - **Upgrades are data.** A capacity upgrade is a fragment on an item, so a pouch needs no code: the Inventory Component applies it as it's taken.
 - **Equipping is a move.** Equipping works inside batches and transactions, and a worn backpack is simply an item in the Back slot.
 - **One UI subsystem.** Mouse and gamepad call the same functions, so they can't drift apart. Common UI owns focus and Accept; UMG drag and drop is only used for the mouse.
+- **The screen knows its pages.** Inventory interaction depends on what's on screen: a held item has to go back when the items leave the screen, focus and hover come back with them, and the tab list's keys turn a held item instead of changing pages. A Blueprint can't easily get those right from outside, so Tab List and Pages are named widgets the screen binds to. Both are optional, and a screen without them is one page. The screen doesn't assume one page holds the items: it finds the pages that do, and a C++ subclass can decide otherwise.
+- **New items never equip by surprise.** By default, picked-up items go to storage, never to an equipment slot. A container meant to fill by itself, such as a light source slot, says so in its config with New Items Take, so the rule is data, not code.
+- **Items don't know keys.** An item's inputs, such as fire, reload or switching a light, are abilities it grants with an input tag the game's ability system reads. The plugin never binds gameplay keys, and one ability class can serve many items.
+- **Every key can be rebindable.** Data table rows are Common UI's default and keep working; every screen action, item action, Confirm and Close also takes an Enhanced Input action, used while Common UI's Enhanced Input support is on.
 - **Checks that can't disagree.** A recipe menu's counts and reasons come from the real craft, tried and undone, as placement previews do, so a recipe listed as craftable has the ingredients and the room it needs.
 - **No view models.** Widgets read the registry directly through handles. Item state is cheap to look up, so view models would mostly copy it.
 - **Singleplayer.** There is no replication. The registry is per world.

@@ -20,11 +20,13 @@
 
 #include "Actions/InventoryItemAction.h"
 #include "Data/InventoryItemDefinition.h"
+#include "InputAction.h"
 #include "InventorySubsystem.h"
 #include "InventoryUISubsystem.h"
 #include "Layers/ModularUISubsystem.h"
 #include "ModularInventory.h"
 #include "ModularUIFocus.h"
+#include "ModularUIInput.h"
 #include "Widgets/InventoryCellWidget.h"
 #include "Widgets/InventoryGridWidget.h"
 #include "Widgets/InventoryItemMenuWidget.h"
@@ -125,6 +127,29 @@ namespace
 		}
 		const EVisibility Visibility = SlateWidget->GetVisibility();
 		return Visibility.IsHitTestVisible() || Visibility.AreChildrenHitTestVisible();
+	}
+
+	/** Whether Root is, or holds at any depth, a widget that shows a container's items: a grid, a list or a slot. */
+	bool ShowsItems(UWidget& Root)
+	{
+		bool bFound = false;
+		UWidgetTree::ForWidgetAndChildren(&Root, [&bFound](UWidget* Widget)
+		{
+			if (bFound || !Widget)
+			{
+				return;
+			}
+			if (Widget->IsA<UInventoryGridWidget>() || Widget->IsA<UInventoryListWidget>() || Widget->IsA<UInventorySlotWidget>())
+			{
+				bFound = true;
+			}
+			else if (const UUserWidget* Group = Cast<UUserWidget>(Widget))
+			{
+				UWidget* GroupRoot = Group->WidgetTree ? Group->WidgetTree->RootWidget.Get() : nullptr;
+				bFound = GroupRoot && GroupRoot != Widget && ShowsItems(*GroupRoot);
+			}
+		});
+		return bFound;
 	}
 
 	/** The grid cell, list entry or slot for a spot in a container, among Parent's widgets. */
@@ -424,14 +449,23 @@ void UInventoryScreenWidget::SetStartTab(FName TabId)
 
 bool UInventoryScreenWidget::IsItemsPageOpen() const
 {
-	const int32 OpenPage = GetOpenPage();
-	return OpenPage == INDEX_NONE || OpenPage == ItemsPage;
+	return DoesPageShowItems(GetOpenPage());
+}
+
+bool UInventoryScreenWidget::DoesPageShowItems(int32 PageIndex) const
+{
+	UWidget* Page = Pages && PageIndex != INDEX_NONE ? Pages->GetWidgetAtIndex(PageIndex) : nullptr;
+	if (!Pages || PageIndex == INDEX_NONE)
+	{
+		return true;
+	}
+	return Page && ShowsItems(*Page);
 }
 
 void UInventoryScreenWidget::HandleTabSelected(FName TabId)
 {
 	// Left at once, so what was held is put back. Shown again once the page is drawn, as Return To Items waits for it.
-	SetInventoryShown(TabList && TabList->GetTabIndexOf(TabId) == ItemsPage);
+	SetInventoryShown(TabList && DoesPageShowItems(TabList->GetTabIndexOf(TabId)));
 }
 
 void UInventoryScreenWidget::SetTransferContainer(FInventoryContainerHandle Container)
@@ -685,23 +719,23 @@ void UInventoryScreenWidget::RefreshActions()
 	const UCommonInputSubsystem* Input = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
 	const bool bMouse = Input && Input->GetCurrentInputType() == ECommonInputType::MouseAndKeyboard;
 	SetConfirmShown(!bMouse && !IsClosing());
-	const bool bCanConfirm = bUsable && bMouse && (!bByTarget || Interaction->CanActivateAimed());
-	SetActionBound(ConfirmHandle, ConfirmAction, bCanConfirm, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleConfirmAction));
+	SetConfirmBound(bUsable && bMouse && (!bByTarget || Interaction->CanActivateAimed()));
 
 	const bool bCanMove = bByTarget ? bUsable && Interaction->CanPickUpOrPlace() : bBrowsing || bHolding;
-	SetActionBound(MoveHandle, MoveAction, bCanMove, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleMoveAction));
+	SetActionBound(MoveHandle, MoveInputAction, bCanMove, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleMoveAction));
 
 	const bool bCanOpenItemMenu = bBrowsing && (!bByTarget || (Inventory && Inventory->IsValidItem(Hovered)));
-	SetActionBound(ItemMenuHandle, ItemMenuAction, bCanOpenItemMenu, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleItemMenuAction));
+	SetActionBound(ItemMenuHandle, ItemMenuInputAction, bCanOpenItemMenu, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleItemMenuAction));
 
 	const bool bCanRotate = bHolding && (bByTarget ? Interaction->CanRotateHeld() : Interaction->CanEverRotateHeld());
-	SetActionBound(RotateHandle, RotateAction, bCanRotate, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleRotateAction));
-	SetActionBound(SplitHandle, SplitAction, bHolding && Interaction->CanSplitHeld(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleSplitAction));
+	SetActionBound(RotateHandle, RotateInputAction, bCanRotate, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleRotateAction));
+	SetActionBound(SplitHandle, SplitInputAction, bHolding && Interaction->CanSplitHeld(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleSplitAction));
 
 	const bool bCanTransfer = bBrowsing && (bByTarget ? Interaction->CanTransferItem(Hovered) : TransferContainer.IsSet());
-	SetActionBound(TransferHandle, TransferAction, bCanTransfer, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleTransferAction));
-	SetActionBound(TakeAllHandle, TakeAllAction, bUsable && Interaction->CanTakeAll(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleTakeAllAction));
-	SetActionBound(SortHandle, SortAction, bUsable && !Interaction->IsChoosingItem() && GetSortContainer().IsSet(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleSortAction));
+	SetActionBound(TransferHandle, TransferInputAction, bCanTransfer, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleTransferAction));
+	SetActionBound(TakeAllHandle, TakeAllInputAction, bUsable && Interaction->CanTakeAll(), FSimpleDelegate::CreateUObject(this, &ThisClass::HandleTakeAllAction));
+	SetActionBound(SortHandle, SortInputAction, bUsable && !Interaction->IsChoosingItem() && GetSortContainer().IsSet(),
+		FSimpleDelegate::CreateUObject(this, &ThisClass::HandleSortAction));
 
 	// While an item is held, the tab keys can turn it instead of changing pages. Neither works while the screen closes.
 	if (TabList)
@@ -709,16 +743,17 @@ void UInventoryScreenWidget::RefreshActions()
 		const bool bTurnHeld = bTabKeysTurnHeldItem && bUsable && Interaction->IsHolding();
 		const FSimpleDelegate Rotate = FSimpleDelegate::CreateUObject(this, &ThisClass::HandleRotateAction);
 		TabList->SetListeningForInput(!bTurnHeld && !IsClosing());
-		SetActionBound(PreviousTabRotateHandle, TabList->GetPreviousTabAction(), bTurnHeld, Rotate, /*bShowInActionBar*/ false);
-		SetActionBound(NextTabRotateHandle, TabList->GetNextTabAction(), bTurnHeld, Rotate, /*bShowInActionBar*/ false);
+		SetActionBound(PreviousTabRotateHandle, TabList->GetPreviousTabEnhancedInputAction(), bTurnHeld, Rotate, /*bShowInActionBar*/ false);
+		SetActionBound(NextTabRotateHandle, TabList->GetNextTabEnhancedInputAction(), bTurnHeld, Rotate, /*bShowInActionBar*/ false);
 	}
 }
 
-void UInventoryScreenWidget::SetActionBound(FUIActionBindingHandle& Handle, const FDataTableRowHandle& Row, bool bBound, const FSimpleDelegate& Handler, bool bShowInActionBar)
+void UInventoryScreenWidget::SetActionBound(FUIActionBindingHandle& Handle, const UInputAction* InputAction, bool bBound, const FSimpleDelegate& Handler,
+	bool bShowInActionBar)
 {
-	if (bBound && !Handle.IsValid() && !Row.IsNull())
+	if (bBound && !Handle.IsValid() && InputAction)
 	{
-		Handle = RegisterUIActionBinding(FBindUIActionArgs(Row, bShowInActionBar, Handler));
+		Handle = RegisterInputAction(InputAction, bShowInActionBar, Handler);
 	}
 	else if (!bBound && Handle.IsValid())
 	{
@@ -883,10 +918,10 @@ void UInventoryScreenWidget::HandleInputMethodChanged(ECommonInputType InputType
 
 void UInventoryScreenWidget::SetConfirmShown(bool bShown)
 {
-	if (bShown && !ConfirmShownHandle.IsValid() && !ConfirmAction.IsNull())
+	if (bShown && !ConfirmShownHandle.IsValid() && HasConfirmAction())
 	{
 		// Not consuming it lets Accept reach the focused cell.
-		FBindUIActionArgs ConfirmArgs(ConfirmAction, true, FSimpleDelegate::CreateWeakLambda(this, [] {}));
+		FBindUIActionArgs ConfirmArgs = MakeConfirmBindArgs(true, FSimpleDelegate::CreateWeakLambda(this, [] {}));
 		ConfirmArgs.bConsumeInput = false;
 		ConfirmShownHandle = RegisterUIActionBinding(ConfirmArgs);
 	}
@@ -894,6 +929,19 @@ void UInventoryScreenWidget::SetConfirmShown(bool bShown)
 	{
 		ConfirmShownHandle.Unregister();
 		ConfirmShownHandle = FUIActionBindingHandle();
+	}
+}
+
+void UInventoryScreenWidget::SetConfirmBound(bool bBound)
+{
+	if (bBound && !ConfirmHandle.IsValid() && HasConfirmAction())
+	{
+		ConfirmHandle = RegisterUIActionBinding(MakeConfirmBindArgs(true, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleConfirmAction)));
+	}
+	else if (!bBound && ConfirmHandle.IsValid())
+	{
+		ConfirmHandle.Unregister();
+		ConfirmHandle = FUIActionBindingHandle();
 	}
 }
 

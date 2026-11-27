@@ -89,7 +89,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Inventory|Shortcut")
 	FGameplayTag SlotTag;
 
-	/** A right-click on it empties the slot. The item stays where it is. */
+	/**
+	 * A right-click on it empties the slot. The item stays where it is. On an empty slot the right-click goes on, such as to Back with Right
+	 * Mouse Button in Modular UI's Extra Back Keys.
+	 */
 	UPROPERTY(EditAnywhere, Category = "Inventory|Shortcut")
 	bool bRightClickClears = true;
 

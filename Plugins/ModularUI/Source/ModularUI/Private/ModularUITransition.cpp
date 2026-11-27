@@ -184,13 +184,36 @@ FModularUITransitionPlayer::FLook FModularUITransitionPlayer::GetHiddenLook(cons
 	}
 	if (InTransition.bSlide)
 	{
-		Hidden.Offset = GetSlideStart(InTransition.SlideFrom, Away) * InTransition.SlideDistance;
+		const FVector2D Start = GetSlideStart(InTransition.SlideFrom, Away);
+		Hidden.Offset = Start * GetSlideLength(InTransition, Start);
 	}
 	if (InTransition.bScale)
 	{
 		Hidden.Scale = InTransition.ScaleFrom;
 	}
 	return Hidden;
+}
+
+double FModularUITransitionPlayer::GetSlideLength(const FModularUITransition& InTransition, const FVector2D& Direction) const
+{
+	if (InTransition.SlideUnit == EModularUISlideUnit::Pixels)
+	{
+		return InTransition.SlideDistance;
+	}
+
+	// The widget's own size along the slide: as it was laid out when last drawn, or as it wants to be before it has been. Asked again each
+	// frame, so a widget that changes size as it comes in still starts and ends where it should.
+	FVector2D Size = FVector2D::ZeroVector;
+	if (const UWidget* Moving = MoveTarget.Get())
+	{
+		Size = FVector2D(Moving->GetCachedGeometry().GetLocalSize());
+		if (Size.IsNearlyZero())
+		{
+			Size = Moving->GetDesiredSize();
+		}
+	}
+	const FVector2D Along = Direction.GetAbs();
+	return InTransition.SlideDistance * (Size.X * Along.X + Size.Y * Along.Y);
 }
 
 FModularUITransitionPlayer::FLook FModularUITransitionPlayer::GetLook() const

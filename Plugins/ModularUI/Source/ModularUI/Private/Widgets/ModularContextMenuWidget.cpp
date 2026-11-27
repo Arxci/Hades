@@ -174,25 +174,56 @@ void UModularContextMenuWidget::NativeOnInitialized()
 		PromptBackdrop->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
+	// Sliding from behind the anchor, Menu Panel stays where the menu ends up and clips what slides inside it, so the part still behind the
+	// anchor's edge isn't drawn over the anchor.
+	if (SlidesFromBehindAnchor())
+	{
+		MenuPanel->SetClipping(EWidgetClipping::ClipToBounds);
+	}
+	else if (bSlideFromBehindAnchor)
+	{
+		UE_LOG(LogModularUI, Warning, TEXT("[Modular UI] %s has Slide From Behind Anchor on, but no Menu Content inside Menu Panel to slide, so it slides as Open Transition says."),
+			*GetPathNameSafe(this));
+	}
+
 	Super::NativeOnInitialized();
+}
+
+bool UModularContextMenuWidget::SlidesFromBehindAnchor() const
+{
+	return bSlideFromBehindAnchor && MenuPanel && MenuContent && MenuContent != MenuPanel && MenuContent->IsChildOf(MenuPanel.Get());
 }
 
 void UModularContextMenuWidget::AddRevealParts(FModularUIReveal& InReveal)
 {
-	// The whole menu fades, a full-screen backdrop included, and Menu Panel moves, as it alone is laid out around its anchor.
-	if (MenuPanel)
+	if (!MenuPanel)
 	{
-		InReveal.Add(*this, *MenuPanel, OpenTransition);
+		return;
 	}
+
+	// The whole menu fades, a full-screen backdrop included. Sliding from behind the anchor, Menu Content moves inside Menu Panel, by its own
+	// width or height, so it starts all the way behind Menu Panel's edge nearest the anchor; otherwise Menu Panel moves, as it alone is laid
+	// out around the anchor.
+	if (SlidesFromBehindAnchor())
+	{
+		FModularUITransition FromBehind = OpenTransition;
+		FromBehind.bSlide = true;
+		FromBehind.SlideFrom = EModularUISlide::FromOrigin;
+		FromBehind.SlideUnit = EModularUISlideUnit::OwnSize;
+		FromBehind.SlideDistance = 1.0f;
+		InReveal.Add(*this, *MenuContent, FromBehind);
+		return;
+	}
+	InReveal.Add(*this, *MenuPanel, OpenTransition);
 }
 
 void UModularContextMenuWidget::RegisterConfirmAction()
 {
 	// Bound once, and never changed while the menu is open, so action bars showing it stay as they are. It only shows what Accept does:
 	// not consuming it lets Accept go on to the focused entry, or with the mouse on an entry, to that one (see Native On Preview Key Down).
-	if (!ConfirmAction.IsNull())
+	if (HasConfirmAction())
 	{
-		FBindUIActionArgs ConfirmArgs(ConfirmAction, true, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleConfirmAction));
+		FBindUIActionArgs ConfirmArgs = MakeConfirmBindArgs(true, FSimpleDelegate::CreateUObject(this, &ThisClass::HandleConfirmAction));
 		ConfirmArgs.bConsumeInput = false;
 		RegisterUIActionBinding(ConfirmArgs);
 	}

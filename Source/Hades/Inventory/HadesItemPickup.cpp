@@ -16,6 +16,7 @@
 
 #include "Data/InventoryItemCosmetics.h"
 #include "Data/InventoryItemDefinition.h"
+#include "Equipment/InventoryEquipmentComponent.h"
 #include "InventoryComponent.h"
 #include "InventorySubsystem.h"
 
@@ -36,6 +37,9 @@ AHadesItemPickup::AHadesItemPickup()
 	Interactable->SetShowPromptMessage(true);
 
 	Inventory = CreateDefaultSubobject<UInventoryComponent>(TEXT("Inventory"));
+
+	TakeText = LOCTEXT("TakePrompt", "Take");
+	SwapText = LOCTEXT("SwapPrompt", "Swap");
 }
 
 void AHadesItemPickup::OnConstruction(const FTransform& Transform)
@@ -67,6 +71,7 @@ void AHadesItemPickup::BeginPlay()
 	Interactable->OnStateTagChanged.AddDynamic(this, &ThisClass::HandleStateTagChanged);
 	Inventory->OnInventoryChanged.AddDynamic(this, &ThisClass::HandleInventoryChanged);
 	ShowFirstItem();
+	RefreshRoom();
 }
 
 void AHadesItemPickup::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -89,23 +94,33 @@ void AHadesItemPickup::HandleInteractionCompleted(AActor* Interactor)
 	}
 
 	// A pouch is a capacity upgrade the taker applies as it's taken: it grows the inventory and is used up, so it never needs room.
-	// New things to hold go on a free quick slot, as weapons do when they're found.
+	// New things to hold go on a free quick slot, as weapons do when they're found. A light source goes into its slot, as that container
+	// takes new items, or swaps with the one there, which is left here in its place.
 	UHadesQuickSlotComponent* QuickSlots = Interactor->FindComponentByClass<UHadesQuickSlotComponent>();
 	const UHadesInventoryComponent* HadesTaker = Cast<UHadesInventoryComponent>(Taker);
+	UInventoryEquipmentComponent* TakerEquipment = UInventoryEquipmentComponent::FindEquipmentComponent(Interactor);
+	bool bSwapped = false;
 	for (const FInventoryItemHandle& Item : GetItems())
 	{
 		EInventoryError Error;
-		if (Taker->TakeItem(Item, 0, true, Error) && QuickSlots && HadesTaker && HadesTaker->CanDraw(Item))
+		if (Taker->TakeItem(Item, 0, true, Error))
 		{
-			QuickSlots->AssignToFreeSlot(Item);
+			if (QuickSlots && HadesTaker && HadesTaker->CanDraw(Item))
+			{
+				QuickSlots->AssignToFreeSlot(Item);
+			}
+			continue;
 		}
+
+		const FGameplayTag SwapSlot = TakerEquipment ? FindSwapSlot(*Taker, Item) : FGameplayTag();
+		bSwapped |= SwapSlot.IsValid() && TakerEquipment->EquipItem(Item, SwapSlot, Error);
 	}
 
 	if (Inventory->CountItems(FInventoryItemQuery()) == 0)
 	{
 		Destroy();
 	}
-	else
+	else if (!bSwapped)
 	{
 		AHadesPlayerController::ShowMessageTo(Interactor, LOCTEXT("NoRoomForRest", "Not enough space for the rest."));
 	}
@@ -147,26 +162,37 @@ void AHadesItemPickup::WatchTaker(UInventoryComponent* NewTaker)
 
 void AHadesItemPickup::RefreshRoom()
 {
+	// Taken while the player has room for any of it, a pouch counting as room while the inventory can still grow, as taking it applies it.
+	// Swapped while what doesn't fit can take the place of what's in one of the player's equipment slots, such as a second light source.
 	const UInventoryComponent* Taker = WatchedTaker.Get();
-	Interactable->SetInteractionEnabled(!Taker || HasRoomFor(*Taker));
-}
-
-bool AHadesItemPickup::HasRoomFor(const UInventoryComponent& Taker) const
-{
-	if (!UInventorySubsystem::Get(this))
+	bool bCanTake = !Taker || !UInventorySubsystem::Get(this);
+	bool bCanSwap = false;
+	if (!bCanTake)
 	{
-		return true;
-	}
-
-	// A pouch counts as room while the inventory can still grow, as taking it applies it.
-	for (const FInventoryItemHandle& Item : GetItems())
-	{
-		if (Taker.CanTakeItem(Item, 0, true))
+		for (const FInventoryItemHandle& Item : GetItems())
 		{
-			return true;
+			bCanTake |= Taker->CanTakeItem(Item, 0, true);
+			bCanSwap |= !bCanTake && FindSwapSlot(*Taker, Item).IsValid();
 		}
 	}
-	return false;
+
+	const FText& Text = bCanTake || !bCanSwap ? TakeText : SwapText;
+	if (!Interactable->GetInteractionText().EqualTo(Text))
+	{
+		Interactable->SetInteractionText(Text);
+	}
+	Interactable->SetInteractionEnabled(bCanTake || bCanSwap);
+}
+
+FGameplayTag AHadesItemPickup::FindSwapSlot(const UInventoryComponent& Taker, FInventoryItemHandle Item) const
+{
+	// Only into an equipment container that takes new items, such as the light source slot, and only with something there to come back here:
+	// an empty one takes the item as it's taken.
+	const UInventoryEquipmentComponent* Equipment = UInventoryEquipmentComponent::FindEquipmentComponent(Taker.GetOwner());
+	const FGameplayTag Slot = Equipment ? Equipment->FindSlotFor(Item) : FGameplayTag();
+	const FInventoryContainerHandle Container = Slot.IsValid() ? Equipment->FindEquipmentContainer(Slot) : FInventoryContainerHandle();
+	const bool bSwaps = Container.IsSet() && Taker.TakesNewItems(Container) && Equipment->GetEquippedItem(Slot).IsSet() && Equipment->CanEquipItem(Item, Slot);
+	return bSwaps ? Slot : FGameplayTag();
 }
 
 TArray<FInventoryItemHandle> AHadesItemPickup::GetItems() const
@@ -192,11 +218,10 @@ void AHadesItemPickup::ShowFirstItem()
 		return;
 	}
 
-	// The prompt names the item and shows its icon, as the player looks at it.
+	// The prompt names the item and shows its icon, as the player looks at it. What interacting does is Refresh Room's.
 	const UInventoryItemCosmetics* Cosmetics = Definition->Cosmetics;
 	if (!Definition->DisplayName.IsEmpty())
 	{
-		Interactable->SetInteractionText(LOCTEXT("TakePrompt", "Take"));
 		Interactable->SetPromptTitle(Definition->DisplayName);
 	}
 	if (Cosmetics && !Cosmetics->Icon.IsNull())
@@ -204,10 +229,14 @@ void AHadesItemPickup::ShowFirstItem()
 		Interactable->SetPromptIcon(Cosmetics->Icon);
 	}
 
-	if (Mesh->GetStaticMesh() || !Cosmetics || Cosmetics->WorldMesh.IsNull())
+	// The mesh shows the first item: as set in the editor for its starting item, and loaded once another comes first, such as one swapped in.
+	const bool bShownAlready = ShownMeshDefinition.Get() == Definition || (!ShownMeshDefinition.IsValid() && Mesh->GetStaticMesh());
+	if (bShownAlready || !Cosmetics || Cosmetics->WorldMesh.IsNull())
 	{
+		ShownMeshDefinition = Definition;
 		return;
 	}
+	ShownMeshDefinition = Definition;
 
 	const TSoftObjectPtr<UStaticMesh> WorldMesh = Cosmetics->WorldMesh;
 	MeshHandle = UAssetManager::GetStreamableManager().RequestAsyncLoad(WorldMesh.ToSoftObjectPath(), FStreamableDelegate::CreateWeakLambda(this, [this, WorldMesh]()

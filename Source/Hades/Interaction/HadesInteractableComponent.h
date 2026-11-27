@@ -114,11 +114,20 @@ public:
 	UFUNCTION(BlueprintNativeEvent, Category = "Interaction")
 	void OnFocusEnd();
 
-	/** Occluded while another actor or one of the occlusion components blocks the view from ViewLocation to the marker, ignoring Viewer. Occluded interactables hide their marker and cannot be focused. */
+	/**
+	 * Occluded while another actor or one of the occlusion components blocks the view from ViewLocation to the visibility point, ignoring
+	 * Viewer and the actors attached to it, such as what it holds. Occluded interactables hide their marker and cannot be focused.
+	 */
 	void UpdateOcclusion(const FVector& ViewLocation, const AActor* Viewer);
 	bool IsOccluded() const;
 
 	FVector GetMarkerLocation() const;
+
+	/**
+	 * Where occlusion is checked to: the middle of the focus target's bounds, which the player sees, rather than the marker's anchor, which is
+	 * often the actor's pivot, resting on or just inside the surface the actor lies on. The marker location without a focus target.
+	 */
+	FVector GetVisibilityPoint() const;
 
 	UFUNCTION(BlueprintPure, Category = "Interaction")
 	USceneComponent* GetMarkerAnchor() const { return MarkerAnchor; }
@@ -211,6 +220,13 @@ protected:
 	/** Components on this actor that hide it when they are between the player and the marker. Other actors always do. */
 	UPROPERTY(EditAnywhere, Category = "Interaction|Occlusion")
 	TArray<FComponentPicker> OcclusionComponents;
+
+	/**
+	 * Something blocking the view this close to the visibility point doesn't occlude it, such as the table an item lies on, whose surface the
+	 * view grazes on its way there. 0 counts every blocking hit.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Interaction|Occlusion", meta = (ClampMin = "0", Units = "cm"))
+	float OcclusionTolerance = 5.0f;
 
 private:
 	void CompleteInteraction();

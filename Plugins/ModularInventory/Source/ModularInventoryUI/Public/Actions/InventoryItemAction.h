@@ -3,13 +3,13 @@
 #include "CoreMinimal.h"
 
 #include "Engine/DataAsset.h"
-#include "Engine/DataTable.h"
 
 #include "InventoryTypes.h"
 
 #include "InventoryItemAction.generated.h"
 
 class APlayerController;
+class UInputAction;
 class UInventoryItemMenuWidget;
 class UInventoryScreenWidget;
 class UInventoryUISubsystem;
@@ -116,11 +116,11 @@ public:
 	TObjectPtr<UTexture2D> Icon;
 
 	/**
-	 * A key that runs the action while its menu is open, shown on its button by the button's Input Action Widget: a row of a UI input
-	 * action table.
+	 * A key that runs the action while its menu is open, shown on its button by the button's Input Action Widget: an input action players
+	 * can rebind, mapped in an Input Mapping Context that's added for the player. Optional.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action", meta = (RowType = "/Script/CommonUI.CommonInputActionDataBase"))
-	FDataTableRowHandle InputAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action")
+	TObjectPtr<UInputAction> InputAction;
 
 	/**
 	 * Only items that match are offered the action, such as a Tag Query of Item.Type.Consumable for Use, or one leaving out items tagged

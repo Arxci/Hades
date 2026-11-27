@@ -10,11 +10,14 @@
 class APawn;
 class UCommonActivatableWidget;
 class UHadesQuickSlotComponent;
+class UInputAction;
 class UWidgetAnimation;
 
 /**
- * The player's HUD, pushed onto the Game layer by the player controller. Escape opens Escape Menu Class on the Menu layer, Inventory opens
- * Inventory Screen Class on the GameMenu layer, and Crafting opens it there on its Crafting Tab.
+ * The player's HUD, pushed onto the Game layer by the player controller. Pause Input Action opens Escape Menu Class on the Menu layer,
+ * Inventory Input Action opens Inventory Screen Class on the GameMenu layer, and Crafting Input Action opens it there on its Crafting Tab.
+ * They only work while the HUD is the top of what's open, as in gameplay: each screen they open binds its own keys to close it, in its
+ * Close Input Actions, and the Crafting tab's in its Shortcut Input Action.
  * Its input config defaults to Game and Menu: with Game alone, Common UI ignores those actions.
  * Lay a Modular Message Feed for UI.Message.Prompt in it to show what the player looks at, such as an item's icon and name over the key that
  * takes it: the HUD hides while menus pause the game, and the prompt with it.
@@ -34,6 +37,7 @@ protected:
 	virtual void NativeDestruct() override;
 	//~ End UUserWidget Interface
 
+	/** The pause menu, which Pause Input Action opens. Give it a Close Input Action that's only the gamepad's Start, such as IA_UI_Resume. */
 	UPROPERTY(EditDefaultsOnly, Category = "HUD")
 	TSoftClassPtr<UCommonActivatableWidget> EscapeMenuClass;
 
@@ -41,8 +45,8 @@ protected:
 	TSoftClassPtr<UCommonActivatableWidget> InventoryScreenClass;
 
 	/**
-	 * The Tab Id of the inventory screen's crafting tab, in its Tab List, which the Crafting action opens it on. Give that tab the Crafting
-	 * action as its Shortcut too, so the key also switches to it, and closes the screen from it, while the screen is open.
+	 * The Tab Id of the inventory screen's crafting tab, in its Tab List, which Crafting Input Action opens it on. Give that tab the same
+	 * input action as its Shortcut Input Action, so the key also switches to it, and closes the screen from it, while the screen is open.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "HUD")
 	FName CraftingTab = TEXT("Crafting");
@@ -51,8 +55,21 @@ protected:
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "HUD", meta = (BindWidgetAnimOptional))
 	TObjectPtr<UWidgetAnimation> ShowQuickSlotsAnimation;
 
+	// Input actions, mapped in an Input Mapping Context in the player controller's Menu Mapping Contexts so they're added and can be rebound.
+	/** Opens Escape Menu Class, such as IA_UI_Pause on Escape and the gamepad's Start. Escape is Back in menus, so menus don't use this one. */
+	UPROPERTY(EditDefaultsOnly, Category = "HUD|Input")
+	TObjectPtr<const UInputAction> PauseInputAction;
+
+	/** Opens Inventory Screen Class. Give the inventory screen the same action in its Close Input Actions, so the key closes it too. */
+	UPROPERTY(EditDefaultsOnly, Category = "HUD|Input")
+	TObjectPtr<const UInputAction> InventoryInputAction;
+
+	/** Opens Inventory Screen Class on Crafting Tab. Give that tab the same action as its Shortcut Input Action. */
+	UPROPERTY(EditDefaultsOnly, Category = "HUD|Input")
+	TObjectPtr<const UInputAction> CraftingInputAction;
+
 private:
-	void HandleEscapeAction();
+	void HandlePauseAction();
 	void HandleInventoryAction();
 	void HandleCraftingAction();
 

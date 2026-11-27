@@ -76,6 +76,26 @@ FInventoryItemHandle UHadesInventoryComponent::GetItemInHand() const
 	return Right.IsSet() ? Right : Equipment->GetEquippedItem(HadesGameplayTags::Equipment_Slot_Hand_Left);
 }
 
+// Light source
+FInventoryItemHandle UHadesInventoryComponent::GetLightSource() const
+{
+	const UInventoryEquipmentComponent* Equipment = UInventoryEquipmentComponent::FindEquipmentComponent(GetOwner());
+	return Equipment ? Equipment->GetEquippedItem(HadesGameplayTags::Equipment_Slot_LightSource) : FInventoryItemHandle();
+}
+
+bool UHadesInventoryComponent::IsLightSourceOn() const
+{
+	const UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
+	const FInventoryItemHandle Light = GetLightSource();
+	return InventorySubsystem && Light.IsSet() && InventorySubsystem->GetTagValue(Light, HadesGameplayTags::Item_State_LightOn) > 0.5f;
+}
+
+bool UHadesInventoryComponent::IsLightSource(FInventoryItemHandle Item) const
+{
+	const UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);
+	return InventorySubsystem && InventorySubsystem->HasItemTag(Item, HadesGameplayTags::Item_Type_LightSource);
+}
+
 FGameplayTag UHadesInventoryComponent::ChooseHand(FInventoryItemHandle Item) const
 {
 	const UInventorySubsystem* InventorySubsystem = UInventorySubsystem::Get(this);

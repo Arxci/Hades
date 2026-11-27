@@ -596,7 +596,7 @@ EInventoryDropAction UInventoryUISubsystem::ResolvePlacement(FInventoryContainer
 	const bool bEquipmentSlot = TargetLayout.bEquipment && TargetLayout.Slots.IsValidIndex(Target.Index);
 	const FGameplayTag EquipSlot = bEquipmentSlot ? TargetLayout.Slots[Target.Index].Tag : FGameplayTag();
 	const UInventoryComponent* SlotOwner = bEquipmentSlot ? Cast<UInventoryComponent>(Registry->GetOwner(Container)) : nullptr;
-	const TArray<FInventoryContainerHandle> Storage = SlotOwner ? SlotOwner->GetStorageContainers() : TArray<FInventoryContainerHandle>();
+	const TArray<FInventoryContainerHandle> Storage = SlotOwner ? SlotOwner->GetStowContainers() : TArray<FInventoryContainerHandle>();
 
 	auto MoveHeld = [&]() { return Registry->MoveItem(HeldItem, Container, Target, MoveCount); };
 

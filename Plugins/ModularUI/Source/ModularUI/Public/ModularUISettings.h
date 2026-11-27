@@ -4,6 +4,7 @@
 
 #include "Engine/DeveloperSettings.h"
 #include "Engine/Scene.h"
+#include "InputCoreTypes.h"
 
 #include "ModularUISettings.generated.h"
 
@@ -55,6 +56,17 @@ public:
 	/** The space bar presses the focused button, as Enter does. Off, the space bar is free for UI actions bound to it. */
 	UPROPERTY(config, EditAnywhere, Category = "Navigation")
 	bool bSpaceBarAccepts = true;
+
+	// Input
+	/**
+	 * Keys that go Back on a Modular Activatable Widget that handles Back, besides Common UI's own Back keys, such as Right Mouse Button for a
+	 * game where the right mouse button means Back. Whatever is under the cursor, or has focus, gets the press first: a widget that uses it,
+	 * such as a quick slot that clears on a right-click, still does, and only a press nothing used goes Back. Widgets with a setting of their
+	 * own for it, such as a context menu's Right Click or a prompt's Right Click Cancels, follow that. Where no widget handles Back, such as in
+	 * gameplay, the keys keep their own use. Back's own keys are fixed, so these are too: they aren't Enhanced Input actions.
+	 */
+	UPROPERTY(config, EditAnywhere, Category = "Input")
+	TArray<FKey> ExtraBackKeys;
 
 	// Pause
 	/**

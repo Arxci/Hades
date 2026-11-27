@@ -12,7 +12,9 @@
 #endif
 
 #include "ModularUIFocus.h"
+#include "ModularUIInput.h"
 #include "ModularUIPauseSubsystem.h"
+#include "ModularUISettings.h"
 #include "Widgets/ModularButton.h"
 
 #define LOCTEXT_NAMESPACE "ModularActivatableWidget"
@@ -72,21 +74,39 @@ void UModularActivatableWidget::NativeOnInitialized()
 	AddRevealParts(Reveal);
 
 	RegisterConfirmAction();
-	if (CloseAction.IsValid())
+	for (const UInputAction* CloseInputAction : CloseInputActions)
 	{
-		RegisterUIActionBinding(FBindUIActionArgs(CloseAction, false, FSimpleDelegate::CreateUObject(this, &ThisClass::CloseWidget)));
+		RegisterInputAction(CloseInputAction, /*bDisplayInActionBar*/ false, FSimpleDelegate::CreateUObject(this, &ThisClass::CloseWidget));
 	}
 
 	// Description Panel starts as it should, hidden while there's nothing to say, even for a widget shown before it's activated.
 	RefreshDescription();
 }
 
+FUIActionBindingHandle UModularActivatableWidget::RegisterInputAction(const UInputAction* InputAction, bool bShouldDisplayInActionBar, const FSimpleDelegate& OnExecuteAction)
+{
+	return ModularUI::RegisterInputAction([this](const FBindUIActionArgs& Args) { return RegisterUIActionBinding(Args); }, *this, InputAction, bShouldDisplayInActionBar,
+		OnExecuteAction);
+}
+
+bool UModularActivatableWidget::HasConfirmAction() const
+{
+	return !ConfirmDisplayName.IsEmpty() && ModularUI::HasAcceptAction();
+}
+
+FBindUIActionArgs UModularActivatableWidget::MakeConfirmBindArgs(bool bShouldDisplayInActionBar, const FSimpleDelegate& OnExecuteAction) const
+{
+	FBindUIActionArgs Args = ModularUI::MakeAcceptBindArgs(bShouldDisplayInActionBar, OnExecuteAction);
+	Args.OverrideDisplayName = ConfirmDisplayName;
+	return Args;
+}
+
 void UModularActivatableWidget::RegisterConfirmAction()
 {
-	if (!ConfirmAction.IsNull())
+	if (HasConfirmAction())
 	{
 		// Not consuming it lets Accept reach the focused button.
-		FBindUIActionArgs ConfirmArgs(ConfirmAction, true, FSimpleDelegate::CreateWeakLambda(this, [] {}));
+		FBindUIActionArgs ConfirmArgs = MakeConfirmBindArgs(true, FSimpleDelegate::CreateWeakLambda(this, [] {}));
 		ConfirmArgs.bConsumeInput = false;
 		RegisterUIActionBinding(ConfirmArgs);
 	}
@@ -458,6 +478,39 @@ FReply UModularActivatableWidget::NativeOnPreviewKeyDown(const FGeometry& InGeom
 		return FReply::Handled();
 	}
 	return Super::NativeOnPreviewKeyDown(InGeometry, InKeyEvent);
+}
+
+// Extra Back Keys: a press reaches here, after whatever is under the cursor or has focus, only when nothing on this widget used it, so a
+// widget's own use of the key, such as a quick slot clearing on a right-click, wins, and only a press nothing used goes Back.
+FReply UModularActivatableWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	const FReply Reply = Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+	if (!Reply.IsEventHandled() && HandleExtraBackKey(InMouseEvent.GetEffectingButton()))
+	{
+		return FReply::Handled();
+	}
+	return Reply;
+}
+
+FReply UModularActivatableWidget::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
+{
+	const FReply Reply = Super::NativeOnKeyDown(InGeometry, InKeyEvent);
+	if (!Reply.IsEventHandled() && !InKeyEvent.IsRepeat() && HandleExtraBackKey(InKeyEvent.GetKey()))
+	{
+		return FReply::Handled();
+	}
+	return Reply;
+}
+
+bool UModularActivatableWidget::HandleExtraBackKey(const FKey& Key)
+{
+	// Only on an open widget that handles Back, so where nothing does, such as in gameplay under a HUD, the key keeps its own use.
+	if (!bIsBackHandler || !IsActivated() || bClosing || !GetDefault<UModularUISettings>()->ExtraBackKeys.Contains(Key))
+	{
+		return false;
+	}
+	NativeOnHandleBackAction();
+	return true;
 }
 
 #undef LOCTEXT_NAMESPACE

@@ -67,7 +67,7 @@ void AHadesPlayerController::BeginPlay()
 	// Again here, as Enhanced Input may only make its user settings once the player is set up, which can be after input was.
 	if (IsLocalController() && bRegisterMappingsWithSettings && !RegisterMappingContextsWithSettings())
 	{
-		UE_LOG(LogHadesInput, Warning, TEXT("[Input] %s: Enhanced Input has no user settings, so the keys in Default Mapping Contexts can't be rebound. Turn on Enable User Settings in Project Settings > Engine > Enhanced Input."),
+		UE_LOG(LogHadesInput, Warning, TEXT("[Input] %s: Enhanced Input has no user settings, so the keys in Default Mapping Contexts and Menu Mapping Contexts can't be rebound. Turn on Enable User Settings in Project Settings > Engine > Enhanced Input."),
 			*GetNameSafe(this));
 	}
 }
@@ -103,6 +103,15 @@ void AHadesPlayerController::SetupInputComponent()
 				Subsystem->AddMappingContext(MappingContext, 0);
 			}
 		}
+
+		// Above gameplay's, so a gameplay action consuming a key never drops a menu action's mapping of it.
+		for (UInputMappingContext* MappingContext : MenuMappingContexts)
+		{
+			if (MappingContext)
+			{
+				Subsystem->AddMappingContext(MappingContext, FMath::Max(1, MenuMappingPriority));
+			}
+		}
 	}
 }
 
@@ -117,12 +126,15 @@ bool AHadesPlayerController::RegisterMappingContextsWithSettings()
 
 	// Registering a context twice does nothing. One registered after it was added only uses the player's keys once the mappings rebuild.
 	bool bRegisteredAny = false;
-	for (UInputMappingContext* MappingContext : DefaultMappingContexts)
+	for (const TArray<TObjectPtr<UInputMappingContext>>* MappingContexts : { &DefaultMappingContexts, &MenuMappingContexts })
 	{
-		if (MappingContext && Settings->RegisterInputMappingContext(MappingContext))
+		for (UInputMappingContext* MappingContext : *MappingContexts)
 		{
-			bRegisteredAny = true;
-			UE_LOG(LogHadesInput, Log, TEXT("[Input] Registered %s with Enhanced Input's user settings. Its player mappable keys can be rebound."), *GetNameSafe(MappingContext));
+			if (MappingContext && Settings->RegisterInputMappingContext(MappingContext))
+			{
+				bRegisteredAny = true;
+				UE_LOG(LogHadesInput, Log, TEXT("[Input] Registered %s with Enhanced Input's user settings. Its player mappable keys can be rebound."), *GetNameSafe(MappingContext));
+			}
 		}
 	}
 	if (bRegisteredAny)

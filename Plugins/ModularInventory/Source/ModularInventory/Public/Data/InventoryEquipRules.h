@@ -32,6 +32,14 @@ struct MODULARINVENTORY_API FInventoryAbilityGrant
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Ability")
 	bool bScaleWithItemLevel = true;
+
+	/**
+	 * Added to the granted ability's dynamic source tags, for a game whose ability system activates abilities by the input tag of the key
+	 * pressed, as Lyra does, such as the key that toggles a light or fires a weapon. One ability class can then answer a different key on each
+	 * item. None adds nothing, for abilities that know their input already, or aren't activated by input.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Ability")
+	FGameplayTag InputTag;
 };
 
 

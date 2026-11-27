@@ -27,6 +27,20 @@ enum class EModularUISlide : uint8
 };
 
 
+/** What a transition's Slide Distance is measured in. */
+UENUM(BlueprintType)
+enum class EModularUISlideUnit : uint8
+{
+	/** Pixels. */
+	Pixels,
+	/**
+	 * A fraction of the widget's own size along the slide: its width for a slide from the side, its height for one from above or below. 1
+	 * brings it in from just past where it ends, such as out from behind the edge of a panel that clips it.
+	 */
+	OwnSize
+};
+
+
 /** Where a widget grows from as it opens, and shrinks back to as it closes. */
 UENUM(BlueprintType)
 enum class EModularUIScaleOrigin : uint8
@@ -91,9 +105,13 @@ struct MODULARUI_API FModularUITransition
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transition")
 	bool bSlide = true;
 
-	/** How far it slides, in pixels. */
+	/** How far it slides: in pixels, or as a fraction of its own size, as Slide Unit says. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transition", meta = (ClampMin = "0", EditCondition = "bSlide", EditConditionHides))
 	float SlideDistance = 16.0f;
+
+	/** What Slide Distance is measured in: pixels, or the widget's own size along the slide, so 1 slides it in from just outside where it ends. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transition", meta = (EditCondition = "bSlide", EditConditionHides))
+	EModularUISlideUnit SlideUnit = EModularUISlideUnit::Pixels;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transition", meta = (EditCondition = "bSlide", EditConditionHides))
 	EModularUISlide SlideFrom = EModularUISlide::FromOrigin;
@@ -172,6 +190,9 @@ private:
 
 	/** How the widgets look hidden by Transition: before it comes in, or once it has gone out. What it doesn't change stays as in Look. */
 	FLook GetHiddenLook(const FModularUITransition& InTransition, const FLook& Look) const;
+
+	/** How far Transition slides along Direction, a unit offset: its Slide Distance in pixels, or times Move Target's size along Direction. */
+	double GetSlideLength(const FModularUITransition& InTransition, const FVector2D& Direction) const;
 	FLook GetLook() const;
 	void Apply(const FLook& Look) const;
 

@@ -7,6 +7,7 @@
 #include "Containers/Ticker.h"
 #include "GameplayTagContainer.h"
 
+#include "Messages/ModularMessageEntryWidget.h"
 #include "Messages/ModularMessageTypes.h"
 #include "ModularUITransition.h"
 
@@ -14,7 +15,6 @@
 
 class UImage;
 class UModularInputKeyWidget;
-class UModularMessageEntryWidget;
 class UPanelWidget;
 class UTextBlock;
 class UWidgetAnimation;
@@ -30,6 +30,26 @@ enum class EModularMessageFeedMode : uint8
 	Queue,
 	/** One at a time, a new one taking the place of the one shown at once, such as hints, or what the player is looking at. */
 	Replace
+};
+
+
+/**
+ * A message a feed shows, or is sending away. A struct the garbage collector sees, so what the message refers to, such as its Payload, is
+ * cleared rather than left dangling should it be destroyed while the message shows.
+ */
+USTRUCT()
+struct FModularShownMessage
+{
+	GENERATED_BODY()
+
+	int32 Id = 0;
+
+	UPROPERTY()
+	FModularMessage Message;
+
+	TWeakObjectPtr<UModularMessageEntryWidget> Entry;
+	FTSTicker::FDelegateHandle Expiry;
+	bool bHiding = false;
 };
 
 
@@ -172,14 +192,7 @@ protected:
 	TObjectPtr<UWidgetAnimation> HideAnimation;
 
 private:
-	struct FShownMessage
-	{
-		int32 Id = 0;
-		FModularMessage Message;
-		TWeakObjectPtr<UModularMessageEntryWidget> Entry;
-		FTSTicker::FDelegateHandle Expiry;
-		bool bHiding = false;
-	};
+	using FShownMessage = FModularShownMessage;
 
 	bool UsesEntries() const;
 	UWidget* GetSingleMessageWidget();
@@ -212,11 +225,16 @@ private:
 	/** Drops every message shown and waiting at once, without hiding them. Those to come back stay. */
 	void Reset();
 
-	TArray<FShownMessage> Shown;
+	UPROPERTY(Transient)
+	TArray<FModularShownMessage> Shown;
+
+	UPROPERTY(Transient)
 	TArray<FModularMessage> Waiting;
+
 	int32 NextId = 0;
 
 	/** Messages that stay until hidden, which newer ones took the place of, the newest last, to come back once there's room. */
+	UPROPERTY(Transient)
 	TArray<FModularMessage> Displaced;
 
 	UPROPERTY(Transient)

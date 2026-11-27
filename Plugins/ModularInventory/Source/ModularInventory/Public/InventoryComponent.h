@@ -23,6 +23,22 @@ struct FInventoryItemRecord;
 struct FInventoryRegistry;
 
 
+/** Whether items an Inventory Component takes in can go into one of its containers. */
+UENUM(BlueprintType)
+enum class EInventoryNewItems : uint8
+{
+	/** Storage containers take new items and equipment slots don't, so picked-up items are never equipped by themselves. */
+	Auto,
+	/**
+	 * New items can go into it, equipment slots included: an item whose equip rules allow a free slot goes into it, and is equipped, such as a
+	 * single light source slot that the light the player finds goes straight into.
+	 */
+	Take,
+	/** New items never go into it; only moving items into it puts them there, such as a stash the player fills by hand. */
+	Skip
+};
+
+
 USTRUCT(BlueprintType)
 struct MODULARINVENTORY_API FInventoryContainerConfig
 {
@@ -35,6 +51,14 @@ struct MODULARINVENTORY_API FInventoryContainerConfig
 	/** Its shape and rules. For a grid that grows during play, give it the size it starts at and the Max Rows it can grow to. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory")
 	TObjectPtr<UInventoryContainerLayout> Layout;
+
+	/**
+	 * Whether items the component takes in, with Add Item, Take Item, Take All, loot and crafting, can go into it, in the order of the
+	 * component's containers: Auto lets storage containers take them and not equipment slots; Take lets this one take them, equipment slots
+	 * included, which equips what goes in; Skip never puts new items in it.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory")
+	EInventoryNewItems NewItems = EInventoryNewItems::Auto;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Inventory", meta = (InlineEditConditionToggle))
 	bool bOverrideStartingCapacity = false;
@@ -110,12 +134,27 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory")
 	FInventoryContainerHandle GetContainer(FGameplayTag Tag) const;
 
-	/** Where new items go, in order: root containers, then containers inside items, breadth first. Skips equipment slots but includes what equipped items carry, like a worn backpack. */
+	/**
+	 * Where new items go, in order: root containers, then containers inside items, breadth first. Root containers go by their New Items, which
+	 * by default skips equipment slots; containers inside items always skip them, but what equipped items carry is included, like a worn
+	 * backpack's storage.
+	 */
 	UFUNCTION(BlueprintPure, Category = "Inventory")
 	TArray<FInventoryContainerHandle> GetStorageContainers() const;
 
 	UFUNCTION(BlueprintPure, Category = "Inventory")
 	TArray<FInventoryContainerHandle> GetEquipmentContainers() const;
+
+	/** Whether new items can go into the container, one of this component's at any depth, as its New Items says. */
+	UFUNCTION(BlueprintPure, Category = "Inventory")
+	bool TakesNewItems(FInventoryContainerHandle Container) const;
+
+	/**
+	 * Where items leaving an equipment slot go, such as one unequipped, or one making way for another: the storage containers, in order,
+	 * without equipment slots, so an item leaving one slot never lands in another by itself.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Inventory")
+	TArray<FInventoryContainerHandle> GetStowContainers() const;
 
 	/** Whether the container is one of this component's, or nested anywhere inside them. */
 	UFUNCTION(BlueprintPure, Category = "Inventory")
@@ -409,6 +448,9 @@ private:
 	UInventorySubsystem* GetSubsystem() const { return Subsystem.Get(); }
 	FGameplayTagContainer GatherContextTags(const FGameplayTagContainer& ExtraTags) const;
 
+	/** Takes New Items for a container the registry has: its root config's New Items, or for a container inside an item, whether it's storage. */
+	bool TakesNewItemsIn(const FInventoryRegistry& Registry, FInventoryContainerHandle Container) const;
+
 	/** Every item in storage a recipe can take ingredients from, those of Preferred Items among them first, in their order. */
 	TArray<FInventoryItemHandle> GatherCraftCandidates(TConstArrayView<FInventoryItemHandle> PreferredItems) const;
 	void HandleRegistryChanged(const FInventoryChangeSet& Changes);
@@ -447,6 +489,10 @@ private:
 	void RefreshCarryLimitState();
 
 	TArray<FInventoryContainerHandle> RootContainers;
+
+	/** Each root container's New Items, in the same order. */
+	TArray<EInventoryNewItems> RootNewItems;
+
 	TWeakObjectPtr<UInventorySubsystem> Subsystem;
 	FDelegateHandle RegistryChangedHandle;
 
