@@ -75,6 +75,7 @@ public:
 
 #if WITH_EDITOR
 	virtual void ValidateCompiledWidgetTree(const UWidgetTree& BlueprintWidgetTree, class IWidgetCompilerLog& CompileLog) const override;
+	virtual void ValidateCompiledDefaults(class IWidgetCompilerLog& CompileLog) const override;
 #endif
 
 	/**
@@ -166,6 +167,7 @@ protected:
 	virtual void NativeOnInitialized() override;
 	virtual void NativeConstruct() override;
 	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+	virtual FReply NativeOnMouseButtonDoubleClick(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	virtual FReply NativeOnMouseWheel(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	//~ End UUserWidget Interface
 
@@ -192,7 +194,8 @@ protected:
 	 * Binds the input action while bBound, with Register Input Action, so one with a Hold trigger holds, and unbinds it otherwise. A null
 	 * action is never bound.
 	 */
-	void SetActionBound(FUIActionBindingHandle& Handle, const UInputAction* InputAction, bool bBound, const FSimpleDelegate& Handler, bool bShowInActionBar = true);
+	void SetActionBound(FUIActionBindingHandle& Handle, const UInputAction* InputAction, bool bBound, const FSimpleDelegate& Handler,
+		bool bShouldDisplayInActionBar = true);
 
 	/**
 	 * Adds a menu Open Item Menu made to Item Menu Layer, or else to Item Menu Stack. Override to open it somewhere else, such as a stack of
@@ -408,6 +411,9 @@ private:
 	bool IsItemsPageOpen() const;
 
 	void PlayInventorySound(USoundBase* Sound) const;
+
+	/** Puts back or turns the held item for a right-click, as Held Right Click says. False when it's for nothing here. */
+	bool HandleHeldRightClick(const FPointerEvent& InMouseEvent);
 
 	void HandleInputMethodChanged(ECommonInputType InputType);
 

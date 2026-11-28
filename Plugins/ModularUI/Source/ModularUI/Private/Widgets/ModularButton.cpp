@@ -11,6 +11,7 @@
 
 #include "ModularActivatableWidget.h"
 #include "ModularUIFocus.h"
+#include "Widgets/ModularInputKeyWidget.h"
 
 void UModularButton::SetLabelText(const FText& InText)
 {
@@ -73,6 +74,46 @@ void UModularButton::NativeConstruct()
 	SetHoverLit(false);
 	ApplyTextStyle();
 	ApplyJustification();
+	RefreshKeyWidget();
+}
+
+void UModularButton::NativeOnEnabled()
+{
+	Super::NativeOnEnabled();
+
+	RefreshKeyWidget();
+}
+
+void UModularButton::NativeOnDisabled()
+{
+	Super::NativeOnDisabled();
+
+	RefreshKeyWidget();
+}
+
+void UModularButton::UpdateInputActionWidget()
+{
+	// Common UI updates its own Input Action Widget here, such as when the button's triggering action changes.
+	Super::UpdateInputActionWidget();
+
+	RefreshKeyWidget();
+}
+
+void UModularButton::RefreshKeyWidget()
+{
+	if (!KeyWidget)
+	{
+		return;
+	}
+
+	// Only the button's own key, never Accept's: none without a triggering action, and none while the button can't be pressed, unless
+	// Common UI's Display Input Action When Not Interactable says to show it then too.
+	const bool bPressable = GetIsEnabled() && IsInteractionEnabled();
+	const UInputAction* ShownAction = bPressable || bDisplayInputActionWhenNotInteractable ? GetEnhancedInputAction() : nullptr;
+	if (KeyWidget->GetInputAction() != ShownAction)
+	{
+		KeyWidget->SetInputAction(ShownAction);
+	}
 }
 
 void UModularButton::NativeOnHovered()
@@ -180,6 +221,12 @@ void UModularButton::ApplyTextStyle()
 
 void UModularButton::ApplyJustification()
 {
+	// The designer's layout stands.
+	if (Justification == EModularButtonJustify::AsDesigned)
+	{
+		return;
+	}
+
 	const EHorizontalAlignment RowAlignment = Justification == EModularButtonJustify::Center ? HAlign_Center
 		: Justification == EModularButtonJustify::Right ? HAlign_Right
 		: HAlign_Left;

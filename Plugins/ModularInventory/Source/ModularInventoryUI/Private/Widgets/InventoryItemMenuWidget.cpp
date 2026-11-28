@@ -6,6 +6,10 @@
 #include "Components/TextBlock.h"
 #include "InputCoreTypes.h"
 
+#if WITH_EDITOR
+#include "Editor/WidgetCompilerLog.h"
+#endif
+
 #include "Data/InventoryItemDefinition.h"
 #include "InputAction.h"
 #include "InventorySubsystem.h"
@@ -23,8 +27,8 @@ void UInventoryItemMenuWidget::PostLoad()
 	Super::PostLoad();
 
 #if WITH_EDITORONLY_DATA
-	// Menus saved before Right Click replaced Right Press Outside and Close On Right Press. Only what was changed from their defaults, which
-	// Right Click's default matches off the menu, is carried over, so a menu saved since keeps its Right Click.
+	// Menus saved before Right Click replaced Right Press Outside and Close On Right Press. Only what was changed from their defaults is
+	// carried over, so a menu saved since keeps its Right Click.
 	if (RightPressOutside_DEPRECATED != EModularMenuOutsideClick::PassThrough || !bCloseOnRightPress_DEPRECATED)
 	{
 		if (RightPressOutside_DEPRECATED == EModularMenuOutsideClick::PassThrough)
@@ -59,6 +63,41 @@ void UInventoryItemMenuWidget::PostLoad()
 	}
 #endif
 }
+
+#if WITH_EDITOR
+#define LOCTEXT_NAMESPACE "InventoryItemMenuWidget"
+
+void UInventoryItemMenuWidget::ValidateCompiledDefaults(IWidgetCompilerLog& CompileLog) const
+{
+	Super::ValidateCompiledDefaults(CompileLog);
+
+	TArray<UInventoryItemAction*> Gathered;
+	GatherActions(Gathered);
+	bool bAnyInputAction = false;
+	for (const UInventoryItemAction* Action : Gathered)
+	{
+		if (!Action || !Action->InputAction)
+		{
+			continue;
+		}
+		bAnyInputAction = true;
+
+		// An item action's key presses its button, so Modular UI never times a hold for it.
+		if (ModularUI::GetHoldTime(Action->InputAction) > 0.0f)
+		{
+			const FText ActionName = Action->DisplayName.IsEmpty() ? FText::FromString(Action->GetName()) : Action->DisplayName;
+			CompileLog.Warning(FText::Format(LOCTEXT("ItemActionHold", "{0}'s input action, {1}, has a Hold trigger, but an item action's key presses its button, and Modular UI doesn't time holds for it. Remove the trigger, or give the action another input action."),
+				ActionName, FText::FromString(Action->InputAction->GetName())));
+		}
+	}
+	if (bAnyInputAction && !ModularUI::IsEnhancedInputSupportEnabled())
+	{
+		CompileLog.Warning(LOCTEXT("ItemActionKeysIgnored", "The item actions' input actions do nothing while Common UI's Enable Enhanced Input Support is off, in Project Settings > Game > Common Input Settings."));
+	}
+}
+
+#undef LOCTEXT_NAMESPACE
+#endif
 
 void UInventoryItemMenuWidget::SetItem(FInventoryItemHandle InItem, UInventoryItemWidget* ItemWidget)
 {

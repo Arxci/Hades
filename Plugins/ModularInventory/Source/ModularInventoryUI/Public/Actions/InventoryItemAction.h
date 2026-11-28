@@ -116,8 +116,9 @@ public:
 	TObjectPtr<UTexture2D> Icon;
 
 	/**
-	 * A key that runs the action while its menu is open, shown on its button by the button's Input Action Widget: an input action players
-	 * can rebind, mapped in an Input Mapping Context that's added for the player. Optional.
+	 * A key that runs the action while its menu is open, by pressing its button, which shows the key with its Input Action Widget: an input
+	 * action players can rebind, mapped in an Input Mapping Context that's added for the player. Modular UI doesn't time a Hold trigger on
+	 * it. Optional.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Action")
 	TObjectPtr<UInputAction> InputAction;

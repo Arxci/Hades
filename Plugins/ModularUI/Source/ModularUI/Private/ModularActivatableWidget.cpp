@@ -2,15 +2,23 @@
 
 #include "Animation/WidgetAnimation.h"
 #include "Components/TextBlock.h"
+#include "Engine/LocalPlayer.h"
+#include "Framework/Application/IInputProcessor.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Input/CommonUIActionRouterBase.h"
 #include "Input/CommonUIInputTypes.h"
+#include "InputAction.h"
 #include "Kismet/GameplayStatics.h"
+#include "Layout/WidgetPath.h"
 #include "Sound/SoundBase.h"
+#include "UObject/UnrealType.h"
 
 #if WITH_EDITOR
 #include "Blueprint/WidgetTree.h"
 #include "Editor/WidgetCompilerLog.h"
 #endif
 
+#include "ModularUI.h"
 #include "ModularUIFocus.h"
 #include "ModularUIInput.h"
 #include "ModularUIPauseSubsystem.h"
@@ -18,6 +26,54 @@
 #include "Widgets/ModularButton.h"
 
 #define LOCTEXT_NAMESPACE "ModularActivatableWidget"
+
+/**
+ * Keeps double-clicks from a closing widget and from everything on it, as the widget's preview keeps every other press from them. Slate
+ * sends the second of two quick presses as a double-click, which goes straight to what's under the cursor and bubbles up from there with no
+ * preview, so without this a button on the widget would take it as a press. Only a double-click Slate would send into the widget is kept
+ * from it: one on something drawn over it, or under it past its empty space, goes where it would anyway.
+ */
+class FModularUIClosingGuard final : public IInputProcessor
+{
+public:
+	explicit FModularUIClosingGuard(const UModularActivatableWidget& InWidget) : Widget(&InWidget)
+	{
+	}
+
+	//~ Begin IInputProcessor Interface
+	virtual void Tick(const float DeltaTime, FSlateApplication& SlateApp, TSharedRef<ICursor> Cursor) override
+	{
+	}
+
+	virtual bool HandleMouseButtonDoubleClickEvent(FSlateApplication& SlateApp, const FPointerEvent& MouseEvent) override
+	{
+		const UModularActivatableWidget* Closing = Widget.Get();
+		const TSharedPtr<SWidget> SlateWidget = Closing && Closing->IsClosing() ? Closing->GetCachedWidget() : TSharedPtr<SWidget>();
+		if (!SlateWidget)
+		{
+			return false;
+		}
+
+		// The widgets the double-click would go to, found as Slate finds them.
+		const FVector2D Position = MouseEvent.GetScreenSpacePosition();
+		const FWidgetPath Path = SlateApp.LocateWindowUnderMouse(Position, SlateApp.GetInteractiveTopLevelWindows(), /*bIgnoreEnabledStatus*/ false,
+			static_cast<int32>(MouseEvent.GetUserIndex()));
+		for (int32 Index = 0; Index < Path.Widgets.Num(); ++Index)
+		{
+			if (&Path.Widgets[Index].Widget.Get() == SlateWidget.Get())
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	virtual const TCHAR* GetDebugName() const override { return TEXT("ModularUIClosingGuard"); }
+	//~ End IInputProcessor Interface
+
+private:
+	TWeakObjectPtr<const UModularActivatableWidget> Widget;
+};
 
 UModularActivatableWidget::UModularActivatableWidget(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
@@ -63,6 +119,45 @@ void UModularActivatableWidget::ValidateCompiledWidgetTree(const UWidgetTree& Bl
 		CompileLog.Note(Message);
 	}
 }
+
+void UModularActivatableWidget::ValidateCompiledDefaults(IWidgetCompilerLog& CompileLog) const
+{
+	Super::ValidateCompiledDefaults(CompileLog);
+
+	bool bHasCloseInputAction = false;
+	for (const UInputAction* CloseInputAction : CloseInputActions)
+	{
+		if (!CloseInputAction)
+		{
+			CompileLog.Note(LOCTEXT("EmptyCloseInputAction", "Close Input Actions has an empty entry, which closes nothing."));
+			continue;
+		}
+		bHasCloseInputAction = true;
+		if (bShowCloseInputActions && CloseInputAction->ActionDescription.IsEmpty())
+		{
+			CompileLog.Warning(FText::Format(LOCTEXT("NamelessCloseInputAction", "{0}, in Close Input Actions, shows in action bars without a name. Give it a Description."),
+				FText::FromString(CloseInputAction->GetName())));
+		}
+	}
+	if (bHasCloseInputAction && !ModularUI::IsEnhancedInputSupportEnabled())
+	{
+		CompileLog.Warning(LOCTEXT("CloseInputActionsIgnored", "Close Input Actions do nothing while Common UI's Enable Enhanced Input Support is off, in Project Settings > Game > Common Input Settings."));
+	}
+	// Common UI only runs menu actions while the input mode is Menu or All, and this widget sets it while it's on top.
+	if (bHasCloseInputAction && InputConfig == EModularUIInputMode::Game)
+	{
+		CompileLog.Warning(LOCTEXT("CloseInputActionsInGame", "Close Input Actions do nothing while this widget is on top, as its Input Config is Game and Common UI ignores menu actions then. Use Game And Menu, or Menu."));
+	}
+	// Common UI shows every action a widget binds when its own Display in Action Bar is ticked.
+	if (bHasCloseInputAction && !bShowCloseInputActions && bDisplayInActionBar)
+	{
+		CompileLog.Note(LOCTEXT("DisplaysEveryAction", "Display in Action Bar, under Input, is ticked, so Common UI shows every action this widget binds in action bars, Close Input Actions included, whatever Show Close Input Actions says."));
+	}
+	if (!ConfirmDisplayName.IsEmpty() && !ModularUI::HasAcceptAction())
+	{
+		CompileLog.Warning(LOCTEXT("NoAccept", "Confirm Display Name is set, but the project's Common UI Input Data has no Accept to show it beside: give it a Default Click Action, or an Enhanced Input Click Action."));
+	}
+}
 #endif
 
 void UModularActivatableWidget::NativeOnInitialized()
@@ -76,11 +171,30 @@ void UModularActivatableWidget::NativeOnInitialized()
 	RegisterConfirmAction();
 	for (const UInputAction* CloseInputAction : CloseInputActions)
 	{
-		RegisterInputAction(CloseInputAction, /*bDisplayInActionBar*/ false, FSimpleDelegate::CreateUObject(this, &ThisClass::CloseWidget));
+		RegisterInputAction(CloseInputAction, bShowCloseInputActions, FSimpleDelegate::CreateUObject(this, &ThisClass::CloseWidget));
 	}
 
 	// Description Panel starts as it should, hidden while there's nothing to say, even for a widget shown before it's activated.
 	RefreshDescription();
+}
+
+void UModularActivatableWidget::NativeConstruct()
+{
+	Super::NativeConstruct();
+
+	// Back on screen while it's still closing, such as after being taken off it partway: double-clicks are kept from it again.
+	if (bClosing)
+	{
+		AddClosingGuard();
+	}
+}
+
+void UModularActivatableWidget::NativeDestruct()
+{
+	// Off screen, there's nothing to keep double-clicks from.
+	RemoveClosingGuard();
+
+	Super::NativeDestruct();
 }
 
 FUIActionBindingHandle UModularActivatableWidget::RegisterInputAction(const UInputAction* InputAction, bool bShouldDisplayInActionBar, const FSimpleDelegate& OnExecuteAction)
@@ -116,7 +230,7 @@ void UModularActivatableWidget::NativeOnActivated()
 {
 	Super::NativeOnActivated();
 
-	bClosing = false;
+	SetClosing(false);
 	AwaitedAnimation.Reset();
 	AfterClosing = TFunction<void()>();
 	SetPauseRequested(bPauseGame);
@@ -150,7 +264,7 @@ void UModularActivatableWidget::NativeOnDeactivated()
 
 	// Closed some other way while closing, such as at once: what was to happen after the close doesn't.
 	const bool bWasClosing = bClosing;
-	bClosing = false;
+	SetClosing(false);
 	AfterClosing = TFunction<void()>();
 	SetPauseRequested(false);
 
@@ -197,7 +311,7 @@ void UModularActivatableWidget::CloseWidgetThen(TFunction<void()>&& AfterClose)
 	}
 
 	// From here it takes no more input, and the world starts again, so it comes back while this goes.
-	bClosing = true;
+	SetClosing(true);
 	AfterClosing = MoveTemp(AfterClose);
 	ModularUI::CancelCallWhenDrawn(DrawnHandle);
 	SetPauseRequested(false);
@@ -440,6 +554,42 @@ void UModularActivatableWidget::FinishClosing()
 	}
 }
 
+void UModularActivatableWidget::SetClosing(bool bInClosing)
+{
+	bClosing = bInClosing;
+
+	// The guard only matters while it's on screen; constructed later, it adds the guard then.
+	if (bClosing && GetCachedWidget().IsValid())
+	{
+		AddClosingGuard();
+	}
+	else if (!bClosing)
+	{
+		RemoveClosingGuard();
+	}
+}
+
+void UModularActivatableWidget::AddClosingGuard()
+{
+	if (!ClosingGuard && FSlateApplication::IsInitialized())
+	{
+		ClosingGuard = MakeShared<FModularUIClosingGuard>(*this);
+		FSlateApplication::Get().RegisterInputPreProcessor(ClosingGuard);
+	}
+}
+
+void UModularActivatableWidget::RemoveClosingGuard()
+{
+	if (ClosingGuard)
+	{
+		if (FSlateApplication::IsInitialized())
+		{
+			FSlateApplication::Get().UnregisterInputPreProcessor(ClosingGuard);
+		}
+		ClosingGuard.Reset();
+	}
+}
+
 void UModularActivatableWidget::SetPauseRequested(bool bRequested)
 {
 	if (bRequested == bPauseRequested)
@@ -463,7 +613,8 @@ void UModularActivatableWidget::SetPauseRequested(bool bRequested)
 
 FReply UModularActivatableWidget::NativeOnPreviewMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
-	// It sees a press before anything on it does, so while it's closing, nothing on it can be pressed.
+	// It sees a press before anything on it does, so while it's closing, nothing on it can be pressed. Double-clicks have no preview: the
+	// closing guard keeps those from it.
 	if (bClosing)
 	{
 		return FReply::Handled();
@@ -484,12 +635,13 @@ FReply UModularActivatableWidget::NativeOnPreviewKeyDown(const FGeometry& InGeom
 // widget's own use of the key, such as a quick slot clearing on a right-click, wins, and only a press nothing used goes Back.
 FReply UModularActivatableWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
-	const FReply Reply = Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
-	if (!Reply.IsEventHandled() && HandleExtraBackKey(InMouseEvent.GetEffectingButton()))
-	{
-		return FReply::Handled();
-	}
-	return Reply;
+	return GoBackForUnusedPress(Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent), InMouseEvent.GetEffectingButton());
+}
+
+FReply UModularActivatableWidget::NativeOnMouseButtonDoubleClick(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	// The second of two quick presses comes as a double-click, and goes Back as the first did.
+	return GoBackForUnusedPress(Super::NativeOnMouseButtonDoubleClick(InGeometry, InMouseEvent), InMouseEvent.GetEffectingButton());
 }
 
 FReply UModularActivatableWidget::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
@@ -502,15 +654,57 @@ FReply UModularActivatableWidget::NativeOnKeyDown(const FGeometry& InGeometry, c
 	return Reply;
 }
 
+FReply UModularActivatableWidget::GoBackForUnusedPress(const FReply& Reply, const FKey& Button)
+{
+	const bool bUsed = Reply.IsEventHandled() && !ConsumesPointerInput();
+	return !bUsed && HandleExtraBackKey(Button) ? FReply::Handled() : Reply;
+}
+
+bool UModularActivatableWidget::ConsumesPointerInput() const
+{
+	// Common UI keeps the setting private, with a setter and no getter. Found once: a native class's properties last as long as it does.
+	static const FBoolProperty* const ConsumeProperty = FindFProperty<FBoolProperty>(UCommonUserWidget::StaticClass(), TEXT("bConsumePointerInput"));
+	if (!ConsumeProperty)
+	{
+		static bool bWarned = false;
+		if (!bWarned)
+		{
+			bWarned = true;
+			UE_LOG(LogModularUI, Warning, TEXT("[Modular UI] Common UI's Consume Pointer Input setting wasn't found, so on a widget with it ticked, Extra Back Keys pressed on its empty space don't go Back."));
+		}
+		return false;
+	}
+	return ConsumeProperty->GetPropertyValue_InContainer(this);
+}
+
 bool UModularActivatableWidget::HandleExtraBackKey(const FKey& Key)
 {
-	// Only on an open widget that handles Back, so where nothing does, such as in gameplay under a HUD, the key keeps its own use.
-	if (!bIsBackHandler || !IsActivated() || bClosing || !GetDefault<UModularUISettings>()->ExtraBackKeys.Contains(Key))
+	// Only on an open widget that handles Back, so where nothing does, such as in gameplay under a HUD, the key keeps its own use. And only
+	// where Common UI's Back would go, not on a widget under a menu or a dialog.
+	if (!bIsBackHandler || !IsActivated() || bClosing || !GetDefault<UModularUISettings>()->ExtraBackKeys.Contains(Key) || !IsTakingInput())
 	{
 		return false;
 	}
 	NativeOnHandleBackAction();
 	return true;
+}
+
+bool UModularActivatableWidget::IsTakingInput() const
+{
+	const ULocalPlayer* LocalPlayer = GetOwningLocalPlayer();
+	UCommonUIActionRouterBase* Router = LocalPlayer ? LocalPlayer->GetSubsystem<UCommonUIActionRouterBase>() : nullptr;
+	if (!Router)
+	{
+		return false;
+	}
+	for (const FUIActionBindingHandle& Handle : Router->GatherActiveBindings())
+	{
+		if (Handle.GetBoundWidget() == this)
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 #undef LOCTEXT_NAMESPACE

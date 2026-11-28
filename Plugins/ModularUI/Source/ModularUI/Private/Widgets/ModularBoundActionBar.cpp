@@ -15,6 +15,7 @@
 #include "InputAction.h"
 
 #include "ModularUI.h"
+#include "ModularUIInput.h"
 
 #define LOCTEXT_NAMESPACE "ModularBoundActionBar"
 
@@ -220,7 +221,7 @@ TArray<UModularBoundActionBar::FWantedAction> UModularBoundActionBar::GatherWant
 	const FName GamepadName = Input->GetCurrentGamepadName();
 	const bool bEnhancedInput = CommonUI::IsEnhancedInputSupportEnabled();
 
-	TSet<FName> Accepted;
+	TSet<FActionKey> Accepted;
 	for (const FUIActionBindingHandle& Handle : Router->GatherActiveBindings())
 	{
 		const TSharedPtr<FUIActionBinding> Binding = FUIActionBinding::FindBinding(Handle);
@@ -232,6 +233,7 @@ TArray<UModularBoundActionBar::FWantedAction> UModularBoundActionBar::GatherWant
 		// As Common UI's own bar shows them: an Enhanced Input action the player has a key for on the device in use, or a row of an input
 		// action table that shows for it. Actions bound only by a UI action tag never show in action bars.
 		int32 Priority = 0;
+		FActionKey ActionKey;
 		const UInputAction* InputAction = Binding->InputAction.Get();
 		if (bEnhancedInput && InputAction)
 		{
@@ -242,6 +244,7 @@ TArray<UModularBoundActionBar::FWantedAction> UModularBoundActionBar::GatherWant
 			// Its Nav Bar Priority is in its Common Input Metadata, as Common UI's own bar reads it.
 			const UCommonInputMetadata* Metadata = CommonUI::GetEnhancedInputActionMetadata(InputAction);
 			Priority = Metadata ? Metadata->NavBarPriority : 0;
+			ActionKey.InputAction = FObjectKey(InputAction);
 		}
 		else if (const FCommonInputActionDataBase* Data = Binding->GetLegacyInputActionData())
 		{
@@ -250,6 +253,7 @@ TArray<UModularBoundActionBar::FWantedAction> UModularBoundActionBar::GatherWant
 				continue;
 			}
 			Priority = Data->NavBarPriority;
+			ActionKey.RowName = Binding->ActionName;
 		}
 		else
 		{
@@ -257,7 +261,7 @@ TArray<UModularBoundActionBar::FWantedAction> UModularBoundActionBar::GatherWant
 		}
 
 		bool bAlreadyAccepted = false;
-		Accepted.Add(Binding->ActionName, &bAlreadyAccepted);
+		Accepted.Add(ActionKey, &bAlreadyAccepted);
 		if (bAlreadyAccepted && bIgnoreDuplicateActions)
 		{
 			continue;
@@ -265,9 +269,9 @@ TArray<UModularBoundActionBar::FWantedAction> UModularBoundActionBar::GatherWant
 
 		FWantedAction& Action = Wanted.AddDefaulted_GetRef();
 		Action.Handle = Handle;
-		Action.Key = Binding->ActionName;
+		Action.Key = ActionKey;
 		Action.Priority = Priority;
-		Action.ShownIndex = Shown.IndexOfByPredicate([Key = Action.Key](const FShownAction& Other) { return Other.Key == Key; });
+		Action.ShownIndex = Shown.IndexOfByPredicate([&ActionKey](const FShownAction& Other) { return Other.Key == ActionKey; });
 	}
 
 	// A lower Nav Bar Priority first, as Common UI sorts them. Then the actions shown already, in the order they're shown, so they keep their
@@ -296,8 +300,8 @@ void UModularBoundActionBar::ShowActions(const TArray<FWantedAction>& Wanted)
 	// Actions no longer wanted go, and the others keep their buttons.
 	for (int32 Index = Shown.Num() - 1; Index >= 0; --Index)
 	{
-		const FName Key = Shown[Index].Key;
-		if (!Wanted.ContainsByPredicate([Key](const FWantedAction& Action) { return Action.Key == Key; }))
+		const FActionKey ShownKey = Shown[Index].Key;
+		if (!Wanted.ContainsByPredicate([&ShownKey](const FWantedAction& Action) { return Action.Key == ShownKey; }))
 		{
 			RemoveButton(Shown[Index]);
 			Shown.RemoveAt(Index);
@@ -325,9 +329,14 @@ void UModularBoundActionBar::ShowActions(const TArray<FWantedAction>& Wanted)
 		if (!(Shown[Index].Handle == Wanted[Index].Handle))
 		{
 			Shown[Index].Handle = Wanted[Index].Handle;
-			if (ICommonBoundActionButtonInterface* Button = Cast<ICommonBoundActionButtonInterface>(Shown[Index].Button.Get()))
+			UUserWidget* KeptButton = Shown[Index].Button.Get();
+			if (ICommonBoundActionButtonInterface* BoundButton = Cast<ICommonBoundActionButtonInterface>(KeptButton))
 			{
-				Button->SetRepresentedAction(Wanted[Index].Handle);
+				BoundButton->SetRepresentedAction(Wanted[Index].Handle);
+			}
+			if (KeptButton)
+			{
+				ApplyButtonInput(*KeptButton, Wanted[Index].Handle);
 			}
 		}
 	}
@@ -365,7 +374,23 @@ UUserWidget* UModularBoundActionBar::MakeButton(const FUIActionBindingHandle& Ha
 	{
 		BoundButton->SetRepresentedAction(Handle);
 	}
+	if (Button)
+	{
+		ApplyButtonInput(*Button, Handle);
+	}
 	return Button;
+}
+
+void UModularBoundActionBar::ApplyButtonInput(UUserWidget& Button, const FUIActionBindingHandle& Handle) const
+{
+	// Set again whenever a button shows an action, as the bar reuses its buttons for other actions.
+	const TSharedPtr<FUIActionBinding> Binding = FUIActionBinding::FindBinding(Handle);
+	const bool bHold = Binding && ModularUI::GetHoldTime(Binding->InputAction.Get()) > 0.0f;
+	Button.SetVisibility(bClickableButtons && !bHold ? ESlateVisibility::Visible : ESlateVisibility::HitTestInvisible);
+	if (UCommonButtonBase* CommonButton = Cast<UCommonButtonBase>(&Button))
+	{
+		CommonButton->SetIsFocusable(false);
+	}
 }
 
 void UModularBoundActionBar::RemoveButton(const FShownAction& Action)

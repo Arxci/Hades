@@ -45,7 +45,7 @@ A data-driven inventory system for Unreal Engine 5.7. Items live in grid, slot o
 | Loot | Weighted pools, nested tables, tag conditions and random tag values. |
 | Crafting | Recipes with consumed ingredients and tools, tag requirements, fixed and random outputs. |
 | Safety | Every change is a transaction: it fully succeeds or is fully undone. |
-| UI | Common UI screens and widgets for mouse, keyboard, gamepad and touch: drag and drop, placement previews, item menus and actions, recipe menus listing what an item makes, a description line, tabbed pages, numbers on items, details with stat comparisons, shortcut bars, and what the player has equipped. Every key the screens bind is an Enhanced Input action the player can rebind, and any can be a hold. |
+| UI | Common UI screens and widgets for mouse, keyboard, gamepad and touch: drag and drop, placement previews, item menus and actions, recipe menus listing what an item makes, a description line, tabbed pages, numbers on items, details with stat comparisons, shortcut bars, and what the player has equipped. Every key the screens and item menus bind is an Enhanced Input action the player can rebind, and any of the screen's actions can be a hold. |
 | Shortcuts | Quick slots that point at items the owner carries, follow them as they move, and move on to the next of the same kind. |
 | Editor | A Modular Inventory menu on the Level Editor toolbar with this guide and the tools, an Inventory section in the Add menu, one-click item creation, an icon generator with a live studio, icon thumbnails, a socket preview, live loot drop rates, extra validation and automatic Asset Manager setup. |
 | Debugging | A Gameplay Debugger category, Unreal Insights scopes, automation tests, and a console command to give items. |
@@ -164,9 +164,9 @@ Slot tags are matched hierarchically: equip rules that allow `Equipment.Slot.Han
 
 ### 2.4 Common UI input
 
-Only needed for the widgets. Every key the screens and item menus bind is an Enhanced Input action players can rebind, set up as Modular UI's guide describes under **Input actions**: one input action per key, its keys mapped in an Input Mapping Context for menus, such as `IMC_UI`, and the action set in the widget's field. There are no data table rows or UI action tags to fill in.
+Only needed for the widgets. Every key the screens and item menus bind is an Enhanced Input action players can rebind, set up as Modular UI's guide describes under **Input actions**: one input action per key, its keys mapped in an Input Mapping Context for menus, such as `IMC_UI`, and the action set in the widget's field. There are no data table rows or UI action tags to fill in. Common UI only routes these keys with **Project Settings > Engine > General Settings > Default Classes > Game Viewport Client Class** set to `CommonGameViewportClient`, or a class based on it.
 
-- **Accept and Back** stay your project's Common UI defaults (**Project Settings > Game > Common Input Settings > Input Data**). If menus already work with a gamepad, nothing changes here. Keys that go Back as well, such as the right mouse button, are Modular UI's **Extra Back Keys** setting.
+- **Accept and Back** stay your project's Common UI defaults (**Project Settings > Game > Common Input Settings > Input Data**). If menus already work with a gamepad, nothing changes here. Keys that go Back as well, such as the right mouse button, are Modular UI's **Extra Back Keys** setting. A screen's or item menu's **Confirm Display Name**, such as Select, says what Accept does there, beside Accept's key.
 - **Move, Item Menu, Rotate, Split, Transfer, Take All and Sort** are input actions on the inventory screen ([11.3](#113-building-an-inventory-screen)), and each item action can have one of its own ([11.8](#118-item-menus-and-item-actions)). For each:
   1. Create an Input Action, such as `IA_UI_Rotate`: **Value Type** Digital (bool), a **Description**, which action bars show as its name, and **Consume Lower Priority Enhanced Input Mappings** unticked. Give it **Player Mappable Key Settings** with a unique **Name**, so players can rebind it.
   2. Map its keys in `IMC_UI`, such as:
@@ -177,7 +177,9 @@ Only needed for the widgets. Every key the screens and item menus bind is an Enh
      | `IA_UI_ItemMenu` | Tab; Gamepad Face Button Left |
      | `IA_UI_Transfer` | T; Gamepad Right Shoulder |
   3. Set it in the screen's field, such as **Rotate Input Action**.
-- **A hold**, such as sorting only once the key has been held for a moment, is a **Hold** trigger on the input action, with its **Hold Time Threshold**. The action bar button shows the progress through On Action Progress.
+- **The key that opens the screen**, such as an inventory key, closes it too when it's in the screen's **Close Input Actions**, and a tab's **Shortcut Input Action** opens that tab ([11.14](#1114-pages-tabs-on-an-inventory-screen)). Set the same input action in each place it should work.
+- **A hold**, such as sorting only once the key has been held for a moment, is a **Hold** trigger on the input action itself, with its **Hold Time Threshold**: a trigger on its mapping in `IMC_UI` isn't read. A Modular Bound Action Button in the action bar shows it filling ([11.3](#113-building-an-inventory-screen)). An item action's key presses its button: Modular UI doesn't time a Hold trigger on it.
+- **Tab** moves focus, which wins over any action mapped to it, until Modular UI's **Tab Navigation** is off, in **Project Settings > Plugins > Modular UI**. Turn it off to map Tab, such as to Item Menu below.
 
 Add `IMC_UI` for the player above the gameplay contexts, with a higher **Priority**, and keep it added during gameplay: Common UI only routes a menu action to the widget that bound it, and while a menu with the Menu input mode is active, the game doesn't get the key. Register it with Enhanced Input's user settings, so the keys players choose are used. Each action is bound while the player is doing something it's for, such as Rotate while an item is held, as the screen's **Action Availability** says. See [11.4](#114-input-and-interaction-style) for what they do.
 
@@ -1034,9 +1036,10 @@ The screen, item menu, shortcut, recipe menu and equipped item widgets are cover
 
 **6. The screen.** A Widget Blueprint with parent **Inventory Screen Widget**, which is a Modular Activatable Widget, so it can pause the game and play an open reveal.
 - Place `W_InventoryGrid`, named **`MainGrid`**, so gamepad focus starts on its first cell. Place your slots and `W_ItemDetails` beside it.
+- Give the screen a background that takes clicks, such as an Image filling it with Visibility set to Visible. A click on empty space only reaches the screen through something there that's hit-testable, so without it, a right-click there doesn't go Back with Right Mouse Button in Modular UI's Extra Back Keys.
 - For item menus, add a **Common Activatable Widget Stack** named `ItemMenuStack` over the rest of the screen, filling it, and set **Item Menu Class** ([11.8](#118-item-menus-and-item-actions)).
 - Set **Interaction Style** ([11.4](#114-input-and-interaction-style)) and **Sounds**.
-- Under **Input › Inventory Actions**, set the input actions you want for **Move**, **Item Menu**, **Rotate**, **Split**, **Transfer**, **Take All** and **Sort** ([2.4](#24-common-ui-input)), and under **Input**, **Confirm Display Name**, such as Select: what Accept does, shown beside Accept's key. Place a **Modular Bound Action Bar** (Modular UI) to show them: it keeps the buttons that stay and only adds and removes the ones that change, where a Common Bound Action Bar rebuilds all of them on every change, which flickers as a menu opens. **Action Availability** says when each is bound, and so shown:
+- Under **Input › Inventory Actions**, set the input actions you want for **Move**, **Item Menu**, **Rotate**, **Split**, **Transfer**, **Take All** and **Sort** ([2.4](#24-common-ui-input)), and under **Input**, **Confirm Display Name**, such as Select: what Accept does, shown beside Accept's key. Compiling the screen warns about each of those input actions without a Description, which action bars show as its name, and about any set while Common UI's Enhanced Input support is off. Place a **Modular Bound Action Bar** (Modular UI) to show them: it keeps the buttons that stay and only adds and removes the ones that change, where a Common Bound Action Bar rebuilds all of them on every change, which flickers as a menu opens. Make its Action Button Class a child of **Modular Bound Action Button** to show which actions are holds and fill a ring as one is held, and untick its **Clickable Buttons** for a bar that only shows keys, as console games do. **Action Availability** says when each is bound, and so shown:
 
   | Action Availability | Bound | The action bar |
   | --- | --- | --- |
@@ -1045,9 +1048,9 @@ The screen, item menu, shortcut, recipe menu and equipped item widgets are cover
 - Optionally add a description line along the bottom: a Text Block named `DescriptionText`, inside a `DescriptionPanel` such as a Border, and fill in the hint texts ([11.13](#1113-the-description-line)).
 - Optionally put the screen's parts on pages, such as Map, Items and Crafting, with a Tab List and a Modular Page Switcher ([11.14](#1114-pages-tabs-on-an-inventory-screen)).
 - Optionally show what the player has equipped, such as the weapon in hand and the light carried, with Inventory Equipped Item Widgets beside the details panel ([11.16](#1116-equipped-item-widgets)).
-- Open the screen by pushing it onto one of your Common UI layer stacks. Close it with **Close Widget**, or the **Close Input Actions** under Input, such as the key that opened it.
+- Open the screen by pushing it onto one of your Common UI layer stacks. Close it with **Close Widget**, or the **Close Input Actions** under Input, such as the key that opened it; tick **Show Close Input Actions** to show them in the action bar too.
 
-The screen takes menu input and shows the cursor (tick **Game Keeps Input** to keep the game's input too). Back cancels choosing an item, then puts back the held item, then closes the screen, and closing drops whatever was held or chosen.
+The screen takes menu input and shows the cursor (set **Input Config**, under Input, to Game And Menu to keep the game's input too). Back cancels choosing an item, then puts back the held item, then closes the screen, and closing drops whatever was held or chosen.
 
 ### 11.4 Input and interaction style
 
@@ -1057,7 +1060,7 @@ The screen takes menu input and shows the cursor (tick **Game Keeps Input** to k
 | Pick up half a stack | Shift + drag | Pick up, then Split |
 | Put down | Release over the target, or click | Accept on a focused cell, or Move |
 | Where it lands | Its cell under the cursor follows the cursor | Its cell picked up by goes on the focused cell |
-| Rotate | The screen's Rotate action, a right-click or the mouse wheel as the style says | The Rotate action |
+| Rotate | The screen's Rotate action, a right-click or the mouse wheel as the style says, or the tab keys with the screen's **Tab Keys Turn Held Item** | The Rotate action, or the tab keys with **Tab Keys Turn Held Item** |
 | Split | The Split action halves the held count; at one it goes back to the whole stack | same |
 | Cancel | Release over nothing, or a refused spot | Back |
 | Item menu | Right-click, as the style says | The Item Menu action, or Accept as the style says |
@@ -1130,7 +1133,7 @@ An **item action** is something the player can do with an item, such as Use, Equ
 | Field | Description |
 | --- | --- |
 | Display Name, Description, Icon | What its entry shows, and what Description Text, the menu's and the screen's, says while it's highlighted. |
-| Input Action | A key that runs it while the menu is open, shown on its button: an input action players can rebind, mapped in your menu context ([2.4](#24-common-ui-input)). Optional. |
+| Input Action | A key that runs it while the menu is open, by pressing its button: an input action players can rebind, mapped in your menu context ([2.4](#24-common-ui-input)). The button shows the key in its `KeyWidget`, on a Modular Button, or in Common UI's `InputActionWidget`, not in the action bar. Modular UI doesn't time a Hold trigger on it, and compiling the menu warns about one. Optional. |
 | Item Filter | Only items that match are offered the action at all, such as Tag Query `Item.Type.Consumable` for Use, or one leaving out `Item.Trait.NoDiscard` for Discard. |
 | When Unavailable | Hide it while Can Run says no, or Show Disabled with **Get Unavailable Reason**, such as "Not enough space". |
 | Prompt, Prompt Text | Run at once, Confirm first, or ask for a Quantity. `{Item}` and `{Count}` are filled in. |
@@ -1143,7 +1146,7 @@ Built in: **Move** (picks the item up, for gamepads), **Split** (asks how many),
 - **`MenuPanel`** (required): the menu itself, inside a full-screen Canvas Panel with Size To Content ticked, so it can be moved beside the item. Give the root a full-screen, hit-testable border so presses outside the menu reach it.
 - `ActionPanel` (such as a Vertical Box) gets a button of **Action Button Class** for each action. `ItemNameText` and `DescriptionText` are optional.
 - For prompts: `PromptPanel` with `PromptText`, `ConfirmButton` and `CancelButton`, and for counts `QuantitySlider` and `QuantityText`.
-- **Placement** (Toward Center, Right, Left, As Designed or At Cursor), **Menu Gap** and **Screen Padding** decide where it opens. **Outside Click** decides what a click off it does: **Close** only closes it, **Pass Through** closes it and goes on to the item under it, and **Block** does nothing, so the menu stays open until the player picks an action or goes Back. **Right Click** is **Back**, as in games where the right mouse button means Back, **Pass Through**, so right-clicking another item opens its menu instead, or **Ignore**. They're Modular UI context menu settings; see its guide.
+- **Placement** (Toward Center, Right, Left, As Designed or At Cursor), **Menu Gap** and **Screen Padding** decide where it opens. **Outside Click** decides what a click off it does: **Close** only closes it, **Pass Through** closes it and goes on to the item under it, and **Block** does nothing, so the menu stays open until the player picks an action or goes Back. **Right Click** is **Project Default**, the default, which is Back while Right Mouse Button is in Modular UI's Extra Back Keys and Pass Through otherwise; **Back**, as in games where the right mouse button means Back; **Pass Through**, so right-clicking another item opens its menu instead; or **Ignore**. They're Modular UI context menu settings; see its guide.
 - **Open Transition** fades, slides and grows the menu out of the item, and **Close Reverses Open** sends it back the same way, or **Close Transition** plays instead; animations named `OpenAnimation` and `CloseAnimation` play too. **Action Timing** runs a picked action as the menu starts closing, or once it has closed.
 - To have the menu slide out from behind the item, as a drawer does, rather than appear over it: put everything the menu shows, its background included, in a widget named `MenuContent` inside `MenuPanel`, leave Menu Panel itself without a background, and tick **Slide From Behind Anchor**. Menu Panel then clips what's inside it, and Menu Content slides in from the item's side by its own size, so it seems to come out from under the item. With Placement Toward Center, it comes out of whichever side the menu opens on.
 - Give it a **Confirm Display Name**, such as Select, and a Modular Bound Action Bar on the screen shows Back and Confirm while it's open. They're bound once, so they don't flicker or swap places as the mouse moves over the actions.
@@ -1201,9 +1204,9 @@ An **Inventory Shortcut Widget** shows one slot of the owning player's Inventory
 
 | Part | Details |
 | --- | --- |
-| Named widgets | `ItemWidget` (your item widget), `NameText` (the slot's Display Name), `NumberText` (1 for the first slot), `EmptyMarker` (shown while empty) |
+| Named widgets | `ItemWidget` (your item widget), `NameText` (the slot's Display Name), `NumberText` (1 for the first slot), `EmptyMarker` (shown while empty), `KeyWidget` (a Modular Input Key Widget: the key the player has mapped to the slot's input action, which follows rebinding), `SelectedMarker` (shown while the slot is the selected one, such as a frame on a hotbar) |
 | Settings | **Slot Index**, or **Slot Tag** to follow a slot by its tag. **Right Click Clears** empties a slot that has an item; on an empty slot the right-click goes on, such as to Back with Right Mouse Button in Modular UI's Extra Back Keys |
-| Events | On Shortcut Changed, On Shortcut Activated (to flash it), On Assign Refused (the held item doesn't suit the slot) |
+| Events | On Shortcut Changed, On Shortcut Activated (to flash it), On Assign Refused (the held item doesn't suit the slot), On Selected Changed (the slot became the selected one, or stopped being it) |
 | Functions | Set Slot Index, Get Slot Index, Get Slot Item, Get Shortcuts |
 
 While an item is held, clicking a shortcut, pressing Accept on it or dropping a dragged item on it puts the item on the slot and puts the held item back where it was, as the slot only points at it.
@@ -1230,7 +1233,7 @@ Descriptions and hints say what to do; details say what something is. A tooltip 
 
 An inventory screen can have pages, such as Map, Items and Crafting, as survival horror inventories do:
 
-1. Add a **Modular Tab List** named **`TabList`** with a Tab Button Class, and a tab for each page, in order. Give each a **Tab Id**, such as `Items` and `Crafting`, and optionally a **Description** for the description line and a **Shortcut**, a UI action that opens it directly.
+1. Add a **Modular Tab List** named **`TabList`** with a Tab Button Class, and a tab for each page, in order. Give each a **Tab Id**, such as `Items` and `Crafting`, and optionally a **Description** for the description line and a **Shortcut Input Action**, an input action that opens it directly.
 2. Add a **Modular Page Switcher** named **`Pages`** holding the pages, in the same order. A Common Activatable Widget Switcher already there can be swapped with **Replace With**.
 3. Set **Items Page** to the index of the page the screen opens on, usually the one with the grids.
 
@@ -1249,7 +1252,9 @@ UI->PushStreamedWidgetToLayer(ModularUIGameplayTags::UI_Layer_GameMenu, Inventor
 	});
 ```
 
-While the screen is open, the crafting tab's **Shortcut** opens that tab, and with the tab list's **Shortcut Toggles Screen**, pressed on that tab it closes the screen, so one key opens the crafting page, switches to it and closes it, as an inventory key does for the items.
+While the screen is open, the crafting tab's **Shortcut Input Action** opens that tab, and with the tab list's **Shortcut Toggles Screen**, on by default, pressed on that tab it closes the screen, so one key opens the crafting page, switches to it and closes it, as an inventory key does for the items. Set the same input action as the key that opens the screen on that page and as the tab's Shortcut Input Action.
+
+With the screen's **Tab Keys Turn Held Item**, under **Inventory Screen › Pages**, the tab list's Next Tab and Previous Tab keys turn the held item instead of changing pages while an item is held, and change pages again once it's put down.
 
 ### 11.15 Recipe menus: what an item makes
 
@@ -1849,9 +1854,9 @@ An ammo case lets the player carry more ammo in each cell, instead of adding cel
 | A list has no empty entry to put items on | Show Empty Entry is off, the list is full, or its Player Access doesn't let the player put items in | Check the list's capacity and Player Access |
 | The description line never says anything | The screen has no Text Block named `DescriptionText`, or the hint texts, the actions' and the buttons' Descriptions are empty. Browsing the items, it says nothing by design | Name the Text Block `DescriptionText` and fill them in ([11.13](#1113-the-description-line)) |
 | The action bar flickers, or its actions swap places, as the cursor moves or a menu opens | A Common Bound Action Bar rebuilds all its buttons whenever the bound actions change. With Action Availability By Target, they change as the cursor moves from item to item | Use a **Modular Bound Action Bar**, which keeps the buttons that stay, and set **Action Availability** to By Mode, its default, so they change only as the player picks up, puts down or opens a menu ([11.3](#113-building-an-inventory-screen)). Item menus bind Back and Confirm once, so they stay put while open |
-| A screen key does nothing, or isn't shown in the action bar | Common UI's Enhanced Input support is off, the input action isn't mapped in a context that's added for the player, or the field is empty | Turn on **Enable Enhanced Input Support** in Common Input Settings, map the action in your menu context and add the context, and set the field ([2.4](#24-common-ui-input)) |
+| A screen key does nothing, or isn't shown in the action bar | Common UI's Enhanced Input support is off, the Game Viewport Client Class isn't a Common Game Viewport Client, the input action isn't mapped in a context that's added for the player, the field is empty, or the same input action is in two of the screen's fields, as a widget binds each input action once: the log says Common UI didn't bind it | Turn on **Enable Enhanced Input Support** in Common Input Settings, set the Game Viewport Client Class, map the action in your menu context and add the context, and give each field its own input action ([2.4](#24-common-ui-input)). `ModularUI.Input.Status`, in the console, lists what takes input now, with its keys |
 | Players can't rebind a screen key | The input action has no Player Mappable Key Settings, or its context isn't registered with Enhanced Input's user settings | Give it Player Mappable Key Settings with a unique Name, and register the context ([2.4](#24-common-ui-input)) |
-| A hold action runs at once, or its ring never fills | The input action has no Hold trigger, or the action bar button doesn't use On Action Progress | Add a **Hold** trigger with a Hold Time Threshold; drive the button's fill from On Action Progress ([2.4](#24-common-ui-input)) |
+| A hold action runs at once, or its ring never fills | The Hold trigger is on the key's mapping in the Input Mapping Context instead of on the input action, the input action has none, it's an item action's key, which presses its button without a hold of Modular UI's, or the action bar's Action Button Class fills nothing from On Action Progress | Add a **Hold** trigger with a Hold Time Threshold to the input action's own Triggers, and make the bar's Action Button Class a child of Modular Bound Action Button whose fill follows On Action Progress ([2.4](#24-common-ui-input)) |
 | A rebindable menu key does nothing, or a gameplay key on the same key stops working | The menu context's priority is below the gameplay contexts', or its actions consume input, so one context's mapping drops the other's | Give the menu context the higher Priority and untick **Consume Lower Priority Enhanced Input Mappings** on its actions ([2.4](#24-common-ui-input)) |
 | A picked-up item went into an equipment slot by itself | That container's **New Items** is Take | Set it to Auto, or keep Take only for slots meant to fill by themselves, such as a light source's ([6.1](#61-inventory-component)) |
 | An item that should only go in its own slot lands in the grid | The grid's filter takes it | Leave it out of the grid layout's Filter ([16.1](#161-a-flashlight-that-uses-battery-charge)) |
@@ -1892,7 +1897,7 @@ To be ready, mark the properties of your fragment structs `SaveGame`.
 - **The screen knows its pages.** Inventory interaction depends on what's on screen: a held item has to go back when the items leave the screen, focus and hover come back with them, and the tab list's keys turn a held item instead of changing pages. A Blueprint can't easily get those right from outside, so Tab List and Pages are named widgets the screen binds to. Both are optional, and a screen without them is one page. The screen doesn't assume one page holds the items: it finds the pages that do, and a C++ subclass can decide otherwise.
 - **New items never equip by surprise.** By default, picked-up items go to storage, never to an equipment slot. A container meant to fill by itself, such as a light source slot, says so in its config with New Items Take, so the rule is data, not code.
 - **Items don't know keys.** An item's inputs, such as fire, reload or switching a light, are abilities it grants with an input tag the game's ability system reads. The plugin never binds gameplay keys, and one ability class can serve many items.
-- **Every key can be rebindable.** Data table rows are Common UI's default and keep working; every screen action, item action, Confirm and Close also takes an Enhanced Input action, used while Common UI's Enhanced Input support is on.
+- **Every key is rebindable, and set once.** Every key the screens and item menus bind is an Enhanced Input action, its keys mapped once in an Input Mapping Context, so a rebind reaches every screen, action bar and key widget at once. Accept and Back stay Common UI's, as Common UI and Slate's navigation own them.
 - **Checks that can't disagree.** A recipe menu's counts and reasons come from the real craft, tried and undone, as placement previews do, so a recipe listed as craftable has the ingredients and the room it needs.
 - **No view models.** Widgets read the registry directly through handles. Item state is cheap to look up, so view models would mostly copy it.
 - **Singleplayer.** There is no replication. The registry is per world.

@@ -21,6 +21,7 @@
 #include "Layers/ModularUISubsystem.h"
 #include "ModularUI.h"
 #include "ModularUIFocus.h"
+#include "ModularUISettings.h"
 #include "Widgets/ModularButton.h"
 #include "Widgets/ModularPromptWidget.h"
 
@@ -783,7 +784,7 @@ FReply UModularContextMenuWidget::NativeOnMouseButtonDown(const FGeometry& InGeo
 	const bool bOverlayAsks = bPromptShown && ShownPresentation == EModularPromptPresentation::Overlay;
 	if (Button == EKeys::RightMouseButton)
 	{
-		switch (RightClick)
+		switch (GetEffectiveRightClick())
 		{
 		case EModularMenuRightClick::Back:
 			GoBack();
@@ -791,6 +792,7 @@ FReply UModularContextMenuWidget::NativeOnMouseButtonDown(const FGeometry& InGeo
 		case EModularMenuRightClick::PassThrough:
 			return bOnMenu || bOverlayAsks ? FReply::Handled() : PressOutside(InGeometry, InMouseEvent, /*bPassThrough*/ true);
 		case EModularMenuRightClick::Ignore:
+		case EModularMenuRightClick::ProjectDefault:
 			break;
 		}
 		return FReply::Handled();
@@ -821,6 +823,16 @@ FReply UModularContextMenuWidget::NativeOnMouseButtonDoubleClick(const FGeometry
 {
 	// A double-click is a press like any other.
 	return NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+}
+
+EModularMenuRightClick UModularContextMenuWidget::GetEffectiveRightClick() const
+{
+	if (RightClick != EModularMenuRightClick::ProjectDefault)
+	{
+		return RightClick;
+	}
+	const bool bRightClickIsBack = GetDefault<UModularUISettings>()->ExtraBackKeys.Contains(EKeys::RightMouseButton);
+	return bRightClickIsBack ? EModularMenuRightClick::Back : EModularMenuRightClick::PassThrough;
 }
 
 FReply UModularContextMenuWidget::PressOutside(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent, bool bPassThrough)
@@ -861,9 +873,9 @@ FReply UModularContextMenuWidget::NativeOnPreviewKeyDown(const FGeometry& InGeom
 	return Super::NativeOnPreviewKeyDown(InGeometry, InKeyEvent);
 }
 
-// Confirm: Accept goes on to whatever has focus once this returns. That's normally an entry, as focus follows the highlight, but should focus
-// have left the menu, such as for something behind it, the entry under the mouse, or else the one highlighted, takes it first, so Accept picks
-// the entry the player sees rather than reaching whatever had focus.
+// Confirm: Common UI only runs action bindings for a key nothing focused took first, so with focus on an entry, Accept presses that entry
+// and never gets here. It gets here only when focus has left the entries, such as for something behind the menu: the entry under the mouse,
+// or else the one highlighted, takes focus, so the next Accept picks the entry the player sees rather than whatever had focus.
 void UModularContextMenuWidget::HandleConfirmAction()
 {
 	if (!IsActivated() || IsClosing() || PromptDialog.IsValid() || HasAnyUserFocus() || HasFocusedDescendants())

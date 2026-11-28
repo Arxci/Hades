@@ -57,6 +57,10 @@ public:
 	virtual void PostLoad() override;
 	//~ End UObject Interface
 
+#if WITH_EDITOR
+	virtual void ValidateCompiledDefaults(class IWidgetCompilerLog& CompileLog) const override;
+#endif
+
 	/**
 	 * Opens the menu for InItem beside Item Widget, usually found with the screen's Find Item Widget, as Placement says. Without one, it
 	 * opens beside the focused widget on a gamepad, or at the cursor. The menu is placed after On Item Changed, so it's measured with the

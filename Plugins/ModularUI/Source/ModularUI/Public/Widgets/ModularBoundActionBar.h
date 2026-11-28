@@ -5,6 +5,7 @@
 #include "Components/DynamicEntryBoxBase.h"
 #include "Containers/Ticker.h"
 #include "Input/UIActionBindingHandle.h"
+#include "UObject/ObjectKey.h"
 
 #include "ModularBoundActionBar.generated.h"
 
@@ -23,6 +24,8 @@ enum class ECommonInputType : uint8;
  * whose Back and Confirm are bound as the screen's were changes nothing on screen, and an action that comes or goes leaves the rest alone.
  * A change waits until the bindings have settled for Settle Time, so the states Common UI passes through as menus open and close never show.
  * Actions keep the order they were shown in; new ones go after them, earlier only for a lower Nav Bar Priority, as Common UI sorts them.
+ * Its buttons never take gamepad focus: a gamepad presses the key a button shows. With Clickable Buttons off, they don't take the mouse
+ * either.
  */
 UCLASS(meta = (DisplayName = "Modular Bound Action Bar"))
 class MODULARUI_API UModularBoundActionBar : public UDynamicEntryBoxBase
@@ -66,6 +69,14 @@ protected:
 	bool bIgnoreDuplicateActions = true;
 
 	/**
+	 * A click or tap on a button does its action, as Common UI's own action bar does, which suits menus played with the mouse. Off, the
+	 * buttons only show each action's key and name, as console games show them: the mouse goes through them to whatever is under them, and
+	 * they never light up under it. A hold action's button never takes clicks either way, as only its key can hold it.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Action Bar")
+	bool bClickableButtons = true;
+
+	/**
 	 * How long, in seconds of real time, what's bound must stay the same before the bar shows it, so it skips what Common UI passes through
 	 * for a frame or two as menus open and close. 0 shows each change on the next frame.
 	 */
@@ -79,11 +90,24 @@ protected:
 #endif
 
 private:
+	/**
+	 * What tells an action apart from others: its input action, or for a data table row, the row's name. Kept apart from how Common UI names
+	 * bindings, so two input actions never count as one.
+	 */
+	struct FActionKey
+	{
+		FObjectKey InputAction;
+		FName RowName;
+
+		bool operator==(const FActionKey& Other) const { return InputAction == Other.InputAction && RowName == Other.RowName; }
+		friend uint32 GetTypeHash(const FActionKey& ActionKey) { return HashCombine(GetTypeHash(ActionKey.InputAction), GetTypeHash(ActionKey.RowName)); }
+	};
+
 	/** One action shown: the binding it shows, what tells it apart from other actions, and its button. */
 	struct FShownAction
 	{
 		FUIActionBindingHandle Handle;
-		FName Key;
+		FActionKey Key;
 		TWeakObjectPtr<UUserWidget> Button;
 	};
 
@@ -91,7 +115,7 @@ private:
 	struct FWantedAction
 	{
 		FUIActionBindingHandle Handle;
-		FName Key;
+		FActionKey Key;
 		int32 Priority = 0;
 		int32 ShownIndex = INDEX_NONE;
 	};
@@ -118,6 +142,9 @@ private:
 	UUserWidget* MakeButton(const FUIActionBindingHandle& Handle);
 	void RemoveButton(const FShownAction& Shown);
 	void ResetButtons();
+
+	/** Lets the button take the mouse only while Clickable Buttons is on and its action isn't a hold, and never gamepad focus. */
+	void ApplyButtonInput(UUserWidget& Button, const FUIActionBindingHandle& Handle) const;
 
 #if WITH_EDITOR
 	void RefreshDesignerPreview();

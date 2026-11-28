@@ -1,24 +1,24 @@
-﻿﻿﻿﻿﻿# Modular UI
+﻿﻿﻿﻿﻿﻿# Modular UI
 
 Common UI building blocks for any Unreal Engine 5.7 project: a layered root layout and the subsystem that pushes widgets onto its layers, screens that set the input mode and come in and go with transitions, context menus with prompts, prompt dialogs, buttons, tabs and key glyphs, a message system for toasts, banners, headings and prompts, world markers, keyboard navigation settings, and pause requests that fade a look over the world while a menu is open. It doesn't depend on any game, and other plugins, such as Modular Inventory, build on it.
 
 ## Contents
 
 1. [Overview](#1-overview)
-2. [Installation](#2-installation)
-3. [Layers and the root layout](#3-layers-and-the-root-layout)
-4. [Screens](#4-screens)
-5. [Transitions, reveals and animations](#5-transitions-reveals-and-animations)
-6. [Context menus](#6-context-menus)
-7. [Prompts](#7-prompts)
-8. [Buttons, tabs, keys and meters](#8-buttons-tabs-keys-and-meters)
-9. [Messages](#9-messages)
-10. [World markers](#10-world-markers)
-11. [Keyboard navigation](#11-keyboard-navigation)
-12. [Pausing](#12-pausing)
-13. [Example: a layered opening](#13-example-a-layered-opening)
-14. [C++ reference](#14-c-reference)
-15. [Design notes](#15-design-notes)
+1. [Installation](#2-installation)
+2. [Layers and the root layout](#3-layers-and-the-root-layout)
+3. [Screens](#4-screens)
+4. [Transitions, reveals and animations](#5-transitions-reveals-and-animations)
+5. [Context menus](#6-context-menus)
+6. [Prompts](#7-prompts)
+7. [Buttons, tabs, keys and meters](#8-buttons-tabs-keys-and-meters)
+8. [Messages](#9-messages)
+9. [World markers](#10-world-markers)
+10. [Keyboard navigation](#11-keyboard-navigation)
+11. [Pausing](#12-pausing)
+12. [Example: a layered opening](#13-example-a-layered-opening)
+13. [C++ reference](#14-c-reference)
+14. [Design notes](#15-design-notes)
 
 ---
 
@@ -32,9 +32,10 @@ Common UI building blocks for any Unreal Engine 5.7 project: a layered root layo
 | **Modular Context Menu Widget** | A small menu opened beside something, placed to stay on screen, dismissed as you choose, with one entry highlighted and prompts asked inline, over the menu or in a dialog. |
 | **Modular Prompt Widget** | A confirmation or how-many dialog, and the **Show Modular Prompt** node that waits for its answer. |
 | **Modular Button**, **Tab Button**, **Tab List**, **Page Switcher** and **Input Key Widget** | Common UI buttons with a label, an icon and a description, tabs that remember where focus was on each page and can each have a key, pages that come in with a quick transition of their own, and the key a player has mapped to an input action. |
-| **Modular Bound Action Bar** | The actions the player can press now, as Common UI's bound action bar shows them, without rebuilding every button each time a binding changes, so it doesn't flicker as menus open. |
+| **Modular Bound Action Bar** and **Modular Bound Action Button** | The actions the player can press now, as Common UI's bound action bar shows them, without rebuilding every button each time a binding changes, so it doesn't flicker as menus open. Its buttons can take clicks or only show each key, and a Modular Bound Action Button shows which actions are holds, and how far along a hold is. |
 | **Modular Segmented Meter** | A meter of separate segments, such as health, a battery or stamina, that leaves a trail behind what was just lost. |
-| **Input actions** | Every key a Modular UI widget binds is an Enhanced Input action players can rebind, with its keys set in one place: an Input Mapping Context. A Hold trigger makes one a hold, its progress shown on its action bar button. |
+| **Input actions** | Every key a Modular UI widget binds is an Enhanced Input action players can rebind, with its keys set in one place: an Input Mapping Context. A Hold trigger makes one a hold, its progress shown on its action bar button. `ModularUI.Input.Status` lists what takes input now, with its keys. |
+| **Modular Key Binding List** | A keybinding menu: the actions players can rebind, under their categories, for keyboard and mouse or for gamepad, each key changed by pressing it and then the new one. |
 | **Modular Message Subsystem** and **Message Feeds** | Messages sent to channels, shown by whichever feeds show those channels: toasts, banners, headings, hints, prompts. |
 | **World markers** | Widgets that follow things in the world, such as interaction prompts and objective markers, kept on screen or faded at the edge. |
 | **Navigation settings** | Whether Tab, the arrow keys and Space move focus and press buttons, and extra keys that go Back, such as the right mouse button. |
@@ -45,8 +46,8 @@ Everything that animates runs from the core ticker in real time, so it plays whi
 ## 2. Installation
 
 1. Copy the `ModularUI` folder into your project's `Plugins` folder, so you have `YourProject/Plugins/ModularUI/ModularUI.uplugin`.
-2. If your C++ uses it, add `"ModularUI"` to your module's `PublicDependencyModuleNames`.
-3. Close the editor, regenerate project files and build the **Development Editor** configuration from your IDE.
+1. If your C++ uses it, add `"ModularUI"` to your module's `PublicDependencyModuleNames`.
+2. Close the editor, regenerate project files and build the **Development Editor** configuration from your IDE.
 
 It needs **Common UI** and **Enhanced Input**, which it turns on for you. Its settings are in **Project Settings › Plugins › Modular UI**.
 
@@ -79,8 +80,8 @@ The **Modular UI Function Library** has the same pushes by player controller, fo
 ```cpp
 UModularUISubsystem::OnFindLayer().BindStatic([](const ULocalPlayer* LocalPlayer, FGameplayTag LayerTag) -> UCommonActivatableWidgetContainerBase*
 {
-	// Find the player's root layout and return its layer with this tag.
-	return FindMyRootLayout(LocalPlayer) ? FindMyRootLayout(LocalPlayer)->GetLayerWidget(LayerTag) : nullptr;
+ // Find the player's root layout and return its layer with this tag.
+ return FindMyRootLayout(LocalPlayer) ? FindMyRootLayout(LocalPlayer)->GetLayerWidget(LayerTag) : nullptr;
 });
 ```
 
@@ -92,15 +93,16 @@ Make your screens, menus and popups Widget Blueprints whose parent is **Modular 
 
 | Setting | Group | Description |
 | --- | --- | --- |
-| Input Config | Input | Whether input reaches the game, the UI or both while it's active: **Default** leaves it to what's under it, **Game And Menu** gives both, such as for a HUD, **Game** only the game, **Menu** only the UI, with the cursor. |
+| Input Config | Input | Whether input reaches the game, the UI or both while it's active: **Default** leaves it to what's under it, **Game And Menu** gives both, such as for a HUD, **Game** only the game, **Menu** only the UI, with the cursor. Common UI ignores input actions while the input mode is Game, so a widget with keys of its own, such as a HUD whose key opens an inventory, needs Game And Menu or Menu. |
 | Game Mouse Capture Mode | Input | How the mouse behaves while the game gets input. |
 | Confirm Display Name | Input | What Accept does here, such as Select, shown in an action bar beside Accept's key. Accept stays Common UI's, so its key is set once, in your Common UI Input Data, and Accept itself still goes to the focused button. Empty shows nothing. |
 | Close Input Actions | Input | Input actions that close it as Back does, such as the key that opened it, so the same key toggles it: I for an inventory, M for a map. |
+| Show Close Input Actions | Input | Close Input Actions show in action bars too, each by its Description beside its key, such as Resume beside the gamepad's Start on a pause menu. Off, the default, they work without showing, as for the key that opened the screen. Common UI's own **Display in Action Bar**, under Input too, shows every action the widget binds when ticked, whatever this says, so leave it off. |
 | Pause Game | Pause | The world stops while it's open. It starts again as the close begins, so the world comes back while it goes. |
 | Open Reveal, Close Reverses Open, Close Transition | Transition | How its parts come in and go ([5](#5-transitions-reveals-and-animations)). |
 | Open Sound, Close Sound | Sound | Played as it opens, and as its close starts. |
 
-Every key a screen binds is an input action players can rebind, whose keys are set in an Input Mapping Context, not on the screen ([8.4](#84-input-actions)). In C++, **Register Input Action** binds one of your own, holds included.
+Every key a screen binds is an input action players can rebind, whose keys are set in an Input Mapping Context, not on the screen ([8.4](#84-input-actions)). In C++, **Register Input Action** binds one of your own, holds included. Compiling a screen warns about a Close Input Action shown in action bars without a Description, and Close Input Actions while Common UI's Enhanced Input support is off or with Input Config set to Game. It notes a Close Input Actions entry left empty, and Display in Action Bar ticked while Show Close Input Actions is off. A Confirm Display Name with no Accept in the project's Common UI Input Data to show it beside is logged as the game runs instead, once per screen class: in the editor, Common UI may not have loaded its Input Data when a Blueprint compiles.
 
 Name a widget animation **OpenAnimation** and it plays as it opens; name one **CloseAnimation** and it plays as it closes.
 
@@ -132,9 +134,9 @@ The line describes actions, never things. What a thing is, such as an item's nam
 What it says, the first that has something:
 
 1. What's said on its behalf, the newest first: a [context menu](#6-context-menus) open over it saying what its highlighted entry does, or anything given **Show Description From**. **Show Description** does this for the widget itself, such as for a mode it's in. Each source clears only its own, with **Clear Description From** or empty text, so a menu closing never clears what a newer menu says, and as one stops, the one before it shows again.
-2. What the widget asks of the player now, from C++ (`GetHint`), such as an inventory screen's hint for the item being moved. Call **Refresh Description** as it changes.
-3. What's highlighted: the **Description** of the [Modular Button](#8-buttons-tabs-keys-and-meters) the mouse is over or focus is on, or whatever a widget of your own passes to **Highlight For Description**. In C++, `SetHighlightedDescription` describes something that isn't a widget of its own, such as a menu's entry; give it empty text for something that says nothing, such as an item under the cursor, so a button's description isn't kept for it.
-4. Default Description.
+1. What the widget asks of the player now, from C++ (`GetHint`), such as an inventory screen's hint for the item being moved. Call **Refresh Description** as it changes.
+2. What's highlighted: the **Description** of the [Modular Button](#8-buttons-tabs-keys-and-meters) the mouse is over or focus is on, or whatever a widget of your own passes to **Highlight For Description**. In C++, `SetHighlightedDescription` describes something that isn't a widget of its own, such as a menu's entry; give it empty text for something that says nothing, such as an item under the cursor, so a button's description isn't kept for it.
+3. Default Description.
 
 A button reports itself to the nearest Modular Activatable Widget around it with a description line, so a button on a page inside a screen describes itself in the screen's line. **On Description Changed** fires as the line changes, such as to fade it.
 
@@ -189,6 +191,7 @@ A transition always starts and ends exactly where it should, whatever the curve 
 A **Modular Context Menu Widget** is a small menu opened beside something, such as Use, Equip and Drop beside an item, or Set Waypoint beside a map marker. Push it onto a layer, give it an anchor, and it places itself beside it, staying on screen. Modular Inventory's item menus are context menus.
 
 **Layout.**
+
 - **`MenuPanel`** (required): the menu, inside a Canvas Panel that fills the screen, with Size To Content ticked, so it can be moved beside its anchor.
 - `MenuContent`, optional: everything the menu shows, its background included, inside Menu Panel, for **Slide From Behind Anchor**. Menu Panel then has no background of its own.
 - The root: a full-screen, hit-testable Border, so clicks off the menu reach it and nothing behind it can be hovered while it's open. It can be a dim backdrop for a modal menu.
@@ -205,7 +208,7 @@ A **Modular Context Menu Widget** is a small menu opened beside something, such 
 | Placement | **Toward Center** (beside the anchor, toward the middle of the screen), **Right**, **Left**, **As Designed** (wherever Menu Panel is laid out, such as the middle of the screen for a modal picker) or **At Cursor** (down and to the right of the cursor, as desktop menus open). Each but As Designed moves in as far as it takes to stay on screen. |
 | Menu Gap, Screen Padding | Space between the anchor and the menu, and kept between the menu and the screen's edges. |
 | Outside Click | What a click off the menu does, with any button but the right: **Close** only closes it, **Pass Through** closes it and goes on to what's under it, where the menu knows how to reach it, and **Block** keeps it open until an entry is picked or Back. |
-| Right Click | **Back** goes back a step wherever the cursor is, as Escape does: out of a prompt, then out of the menu, as in games where the right mouse button means Back. **Pass Through** does as desktop menus do: off the menu, it closes it and reaches what's under it, so right-clicking something else opens its menu instead; on the menu, nothing. **Ignore** does nothing. It decides for the menu even with Right Mouse Button in the project's **Extra Back Keys** ([11](#11-keyboard-navigation)). |
+| Right Click | **Project Default**, the default, is Back while the project's **Extra Back Keys** have Right Mouse Button ([11](#11-keyboard-navigation)), and Pass Through otherwise. **Back** goes back a step wherever the cursor is, as Escape does: out of a prompt, then out of the menu, as in games where the right mouse button means Back. **Pass Through** does as desktop menus do: off the menu, it closes it and reaches what's under it, so right-clicking something else opens its menu instead; on the menu, nothing. **Ignore** does nothing. Whichever it comes to decides for the menu: Extra Back Keys don't go Back on it as well. **Get Effective Right Click** says which it is. |
 | Keep Entry Highlighted | One entry always shows highlighted, as console-style menus keep one: the first as it opens, then whichever the mouse or focus reached last, with its button style's Selected look. Off, an entry looks highlighted only while hovered or focused. |
 | Show Description On Screen | What the highlighted entry does shows in the [description line](#41-the-description-line) of the screen the menu opened from too, as console menus say it along the bottom of the screen, from as it opens until it starts to close. That screen is the nearest Modular Activatable Widget with a description line around the menu's anchor widget, or the one **Set Description Screen** gives, such as for a menu anchored to the cursor. On by default. |
 | Prompt Presentation | Where an entry's question goes: **Inline**, **Overlay** or **Dialog** ([7](#7-prompts)). |
@@ -222,8 +225,8 @@ Its **Input Config** is Menu, and it's modal: whatever is under it keeps its act
 
 | Style | Outside Click | Right Click | Placement |
 | --- | --- | --- | --- |
-| Console-style, such as survival horror played with a mouse: right-click is Back | Close | Back | Toward Center |
-| Desktop-style, such as a CRPG or a looter: right-click opens a menu | Pass Through | Pass Through | At Cursor |
+| Console-style, such as survival horror played with a mouse: right-click is Back | Close | Back, or Project Default with Right Mouse Button in Extra Back Keys | Toward Center |
+| Desktop-style, such as a CRPG or a looter: right-click opens a menu | Pass Through | Pass Through, or Project Default without Right Mouse Button in Extra Back Keys | At Cursor |
 | A modal picker that must be answered | Block | Back | As Designed, over a dim backdrop |
 
 **Entries made in Blueprint.** **Add Entry** takes an entry with an **Id**, **Label**, **Description**, **Icon**, **Enabled**, **Ask First** with a **Prompt**, and **Keeps Menu Open**. On Entry Chosen gives its Id and the count chosen. **Clear Entries** removes them, and placed buttons stay.
@@ -242,13 +245,15 @@ A context menu asks where its **Prompt Presentation** says:
 | Overlay | In `PromptPanel` wherever it's laid out, such as the middle of the screen, over the menu, whose entries stay where they are, disabled. `PromptBackdrop`, such as a dim full-screen image, shows behind the question. Clicks off it don't close the menu. |
 | Dialog | In a **Prompt Class** dialog of its own, pushed onto **Prompt Layer**, so one dialog serves every menu, as a game's confirmation dialog. Pick a layer above the menu's, as a stack only shows its top. Without the layer it asks inline. |
 
-**Confirm Starts On Cancel** starts a confirmation on Cancel Button, so the quick answer is the safe one; a count to choose starts on Quantity Slider. Back, or Right Click set to Back, answers no and goes back to the entries.
+**Confirm Starts On Cancel** starts a confirmation on Cancel Button, so the quick answer is the safe one; a count to choose starts on Quantity Slider. Back, or a right-click while the menu's Right Click comes to Back, answers no and goes back to the entries.
 
-**Prompt dialogs.** A Widget Blueprint with parent **Modular Prompt Widget**, with `PromptPanel`, `TitleText`, `PromptText`, `ConfirmButton`, `CancelButton`, `QuantitySlider` and `QuantityText`. **Right Click Cancels** and **Click Outside Cancels** decide what the mouse does off it. To ask from anywhere, use the **Show Modular Prompt** node with a Prompt Class, a layer such as `UI.Layer.Modal` and a request: it fires **Confirmed** with the count chosen, or **Cancelled**.
+**Prompt dialogs.** A Widget Blueprint with parent **Modular Prompt Widget**, with `PromptPanel`, `TitleText`, `PromptText`, `ConfirmButton`, `CancelButton`, `QuantitySlider` and `QuantityText`. **Right Click** decides what a right-click does, on the dialog or off it: **Cancel** answers no, as Back does, **Ignore** does nothing, and **Project Default**, the default, cancels while the project's Extra Back Keys have Right Mouse Button and does nothing otherwise. A dialog saved with the old Right Click Cancels off loads as Ignore. **Click Outside Cancels** makes a left-click off Prompt Panel answer no. To ask from anywhere, use the **Show Modular Prompt** node with a Prompt Class, a layer such as `UI.Layer.Modal` and a request: it fires **Confirmed** with the count chosen, or **Cancelled**.
 
 ## 8. Buttons, tabs, keys and meters
 
-**Modular Button** is a Common UI button with a `Label` and an `Icon`: **Label Text**, **Icon Texture**, **Icon Color** and **Lit Icon Color** (while hovered or selected), and **Justification**. Its **Description** shows in the [description line](#41-the-description-line) of the screen it's on while the mouse is over it or focus is on it; Set Description changes it. **Modular Tab Button** adds a `SelectedFrame`, a **Selected Icon Scale** and **Always Show Label**.
+**Modular Button** is a Common UI button with a `Label` and an `Icon`: **Label Text**, **Icon Texture**, **Icon Color** and **Lit Icon Color** (while hovered or selected), and **Justification**, which moves the Horizontal Box holding Icon and Label, or with **As Designed** leaves it where the designer has it. Its **Description** shows in the [description line](#41-the-description-line) of the screen it's on while the mouse is over it or focus is on it; Set Description changes it. **Modular Tab Button** adds a `SelectedFrame`, a **Selected Icon Scale** and **Always Show Label**.
+
+**A button's key.** A Common UI button can have a key of its own, its **Triggering Enhanced Input Action**, that presses it, such as an item action's key in an item menu. Name a [Modular Input Key Widget](#81-pages) `KeyWidget` in a Modular Button and the button shows that key there: only its own key, never Accept's, collapsed while it has none or is disabled, and following rebinding and the device in use. Its **Show On** shows the key only on a gamepad, or only on keyboard and mouse. Where it sits is the designer's. Give it a column of its own: an outer Horizontal Box holding the Overlay with the Icon and Label row, set to Fill, then a Size Box with the key widget. The keys of a list then line up at the button's edge whatever the labels' length, never cover a label, and a button without a key keeps its whole width, as a Size Box whose child is collapsed takes no space. The Size Box's size is the key's: wrap the key widget's `KeyIcon` in a Scale Box set to Scale To Fit, Down Only, and it shrinks to fit without making the button any bigger. Common UI's own `InputActionWidget`, a Common Action Widget, shows the same key; use one or the other. Without either, the key still presses the button, unseen.
 
 **Modular Tab List** makes a Tab Button Class button in `TabButtonPanel` for each of its **Tabs**, each opening the page at the same index in the linked switcher: link a [Modular Page Switcher](#81-pages), or any Common Animated Switcher, holding the pages with Set Linked Switcher. Its **Next Tab Enhanced Input Action** and **Previous Tab Enhanced Input Action**, Common UI's own fields, change tabs ([8.4](#84-input-actions)); leave the row fields beside them empty.
 
@@ -276,22 +281,31 @@ With **Focus Pages**, as a page shows again focus goes back to where it was when
 
 Why not the Common Animated Switcher's transition? It plays the old page out before the new one comes in, both within its Transition Duration, so the player waits on the old page leaving, nothing on the new page can take focus until it's switched to partway through, and a short duration squeezes both halves into a jolt. Its pages are the real widgets, moving under the cursor and lighting up as they pass. A tab change that feels instant shows the new page at once and lets it settle in for a tenth to a fifth of a second, with Ease Out, which is what Page Transition does.
 
-**Modular Input Key Widget** shows the key the player has mapped to an Enhanced Input action in `KeyIcon`, using Common Input's controller data for the icon, and follows rebinding and the input method. Set **Input Action**, or call Set Input Action.
+**Modular Input Key Widget** shows the key the player has mapped to an Enhanced Input action in `KeyIcon`, using Common Input's controller data for the icon, and follows rebinding and the input method. Set **Input Action**, or call Set Input Action. **Show On** limits it to **Gamepad** or **Keyboard And Mouse**; on any other device it's collapsed, as it is without a key to show. In the designer it stays as laid out, so it can be seen and placed. Use it for any key that isn't a button's own, such as a tab list's Next Tab and Previous Tab beside it, a quick slot's key or a message's.
 
 ### 8.2 Action bars
 
-**Modular Bound Action Bar** shows the actions the player can press now, each a button with its key and name, as Common UI's **Common Bound Action Bar** does: whatever the screens and menus taking input have bound to show in action bars. Use it in its place, with the same **Action Button Class**, such as a Common Bound Action Button.
+**Modular Bound Action Bar** shows the actions the player can press now, each a button with its key and name, as Common UI's **Common Bound Action Bar** does: whatever the screens and menus taking input have bound to show in action bars. Use it in its place, with the same **Action Button Class**, such as a Common Bound Action Button, or a **Modular Bound Action Button** to show holds.
 
 A Common Bound Action Bar makes every button again whenever any binding changes, even one it doesn't show, such as when a menu opens over a screen and binds its own Back: the whole bar blinks out and back. This bar only changes what changed. An action still shown keeps its button and its place, so a menu whose Back and Confirm the screen had already shown changes nothing on screen, and an action that comes or goes leaves the others where they are.
 
 | Setting | Description |
 | --- | --- |
-| Action Button Class | Made for each action: a Common UI button that shows a bound action. |
+| Action Button Class | Made for each action: a Common UI button that shows a bound action, such as a Common Bound Action Button, or a Modular Bound Action Button, which shows holds. |
 | Ignore Duplicate Actions | An action bound more than once, such as Back by a screen and the menu over it, shows once. On by default. |
+| Clickable Buttons | A click or tap on a button does its action, as Common UI's own action bar does, which suits menus played with the mouse. Off, the buttons only show each action's key and name, as console games show them: the mouse goes through them to whatever is under them, and they never light up under it. On by default. A hold action's button never takes clicks either way: only its key holds it. |
 | Settle Time | How long what's bound must stay the same before the bar shows it, 0.05 seconds by default, so it skips what Common UI passes through for a frame or two as menus open and close. |
 | Num Designer Preview Entries | Buttons drawn in the designer, to see the bar laid out. |
 
-It follows the input method, showing only actions with a key for the device in use, and rebinding. Actions keep the order they were shown in; new ones go after them, earlier only for a lower Nav Bar Priority, as Common UI sorts them: an input action's comes from the Common Input Metadata in its Player Mappable Key Settings ([8.4](#84-input-actions)). A hold action's button gets its progress through **On Action Progress**, as for Common UI's own holds. **On Actions Changed** fires once the buttons are updated, such as to fade the bar in when it had nothing. **Refresh Actions** works it out again at once.
+Its buttons never take gamepad focus, so focus stays on the menu: a gamepad presses the key a button shows. It follows the input method, showing only actions with a key for the device in use, and rebinding. Actions keep the order they were shown in; new ones go after them, earlier only for a lower Nav Bar Priority, as Common UI sorts them: an input action's comes from the Common Input Metadata in its Player Mappable Key Settings ([8.4](#84-input-actions)). **On Actions Changed** fires once the buttons are updated, such as to fade the bar in when it had nothing. **Refresh Actions** works it out again at once.
+
+**Showing holds.** Any Common Bound Action Button gets a hold's progress through **On Action Progress**. Make the Action Button Class a Widget Blueprint with parent **Modular Bound Action Button**, and it also knows an action is a hold before it's held, so it can show an empty ring for the player to fill:
+
+| Event or function | Description |
+| --- | --- |
+| On Represented Action Changed (Hold Action, Action Hold Time) | The button was given an action to show. Show an empty ring around its key for a hold, so the player knows to hold it, and hide the ring for anything else. Action Hold Time is the hold's length in seconds. |
+| On Action Progress (Held Percent) | How far the hold is, 0 to 1, as the key is held: fill the ring from it. It reaches 1 as the hold completes, and drops to 0 at once as the hold ends or the key is let go early. |
+| Is Hold Action, Get Action Hold Time | The same, from Blueprint, at any time. |
 
 ### 8.3 Segmented meters
 
@@ -312,24 +326,73 @@ It follows the input method, showing only actions with a key for the device in u
 Every key a Modular UI widget binds is an Enhanced Input action, so players can rebind all of them: a screen's Close Input Actions, a tab list's Next Tab, Previous Tab and tab shortcuts, keys your own widgets bind with Register Input Action, and, in plugins built on it, such as Modular Inventory, their actions. A widget field only says which action. The keys are set once, in an Input Mapping Context, never on a widget, so there's no data table row or UI action tag to keep in step. Accept and Back stay Common UI's own, as the end of this section explains.
 
 **Once per project.**
+
+1. Set **Project Settings › Engine › General Settings › Default Classes › Game Viewport Client Class** to `CommonGameViewportClient`, or a class based on it, and restart the editor. Common UI routes keys to the widgets that bound them from there, so without it no widget's key does anything.
 1. Turn on **Project Settings › Game › Common Input Settings › Enable Enhanced Input Support**. While it's off, Common UI ignores the actions, and Modular UI logs a warning.
 2. Make an Input Mapping Context for menus, such as `IMC_UI`, and add it for the player above the gameplay contexts, with a higher **Priority**, as your game adds those. Keep it added during play: Common UI only routes a menu action to the widget that bound it, so a menu's key does nothing while that menu isn't open, and a menu whose Input Config is Menu keeps its keys from the game.
 3. Turn on **Project Settings › Engine › Enhanced Input › Enable User Settings**, and register the context with Enhanced Input's user settings (**Register Input Mapping Context**), so the keys players choose are the ones used.
 
 **For each key.**
-1. Make an Input Action, such as `IA_UI_Rotate`: **Value Type** Digital (bool), a **Description**, which action bars show as its name, such as Rotate, and **Consume Lower Priority Enhanced Input Mappings** unticked. For a key players can rebind, give it **Player Mappable Key Settings** with a unique **Name**, and the **Display Name** a keybinding menu shows.
-2. Map its keyboard and gamepad keys in the menu context.
-3. Set it in the widget field for that action.
+
+1. Make an Input Action, such as `IA_UI_Rotate`: **Value Type** Digital (bool), a **Description**, which action bars show as its name, such as Rotate, and **Consume Lower Priority Enhanced Input Mappings** unticked. For a key players can rebind, give it **Player Mappable Key Settings** with a unique **Name**, the **Display Name** and **Display Category** a keybinding menu shows ([8.5](#85-key-bindings)), and for its place in action bars, **Metadata** (below).
+1. Map its keyboard and gamepad keys in the menu context, with no triggers on the mappings.
+2. Set it in the widget field for that action.
 
 A rebound key then works in menus at once, and every action bar and Modular Input Key Widget shows it. Why Consume Lower Priority Enhanced Input Mappings off and a higher priority: Enhanced Input drops a lower-priority context's mapping of a key that a higher-priority action consumes, so with both, a key shared by a menu action and a gameplay action, such as R for Rotate and Reload, stays mapped to both.
 
-**Holds.** A **Hold** trigger on an input action makes it a hold: it runs once its key has been held for the trigger's **Hold Time Threshold**. Letting go first cancels it, and its progress drops to 0 at once. Common UI doesn't time holds for Enhanced Input actions, so the **Modular UI Hold Subsystem** does, in real time, so holds work while a menu pauses the game. Meanwhile the action bar button showing the action gets its progress, 0 to 1, through **On Action Progress**, as for Common UI's own holds: drive a fill or a ring from it, and hide it at 0. Only the key holds it: a click on its button in an action bar does nothing.
+**One input action, many places.** Set the same input action wherever its key should work, such as an inventory key as the HUD's open key, the inventory screen's Close Input Action and a tab's Shortcut Input Action. Each widget that binds it gets it while that widget takes input, and nothing hands a key from one widget to another. A widget binds each input action once, so give each field of one widget its own.
 
-**Action bar order.** Action bars order input actions by the **Nav Bar Priority** in their Common Input Metadata, lower first. Make a **Common Mapping Context Metadata** data asset, add each action that shows in action bars under **Per Action Enhanced Input Metadata** with its Nav Bar Priority, and set the asset as **Metadata** in each of those actions' **Player Mappable Key Settings** ([Using CommonUI with Enhanced Input](https://dev.epicgames.com/documentation/en-us/unreal-engine/using-commonui-with-enhnaced-input-in-unreal-engine)).
+**Holds.** A **Hold** trigger on an input action makes it a hold: it runs once its key has been held for the trigger's **Hold Time Threshold**. Put the trigger on the input action itself, under **Triggers**: a trigger on a mapping in the Input Mapping Context isn't read. **Hold And Release** is a trigger of its own, and doesn't make a hold. Common UI doesn't time holds for Enhanced Input actions, so each local player's **Modular UI Hold Subsystem** does, in real time, so holds work while a menu pauses the game:
+
+- A hold is timed from its key's press. Letting go first cancels it, and so does the action no longer taking input meanwhile, such as when a menu opens over its screen; either way its progress drops to 0 at once.
+- Each press holds once: keeping the key down after the hold completes doesn't run it again.
+- Only the player's own keys hold: in split-screen, another player's press of the same key doesn't.
+- The action bar button showing the action gets its progress, 0 to 1, through **On Action Progress**: 1 as the hold completes, then 0. A Modular Bound Action Button also shows which actions are holds before they're held ([8.2](#82-action-bars)).
+- Only the key holds it: a click on its button in an action bar does nothing.
+- Holds work for actions Modular UI binds with Register Input Action: a screen's Close Input Actions, a tab list's tab shortcuts, keys your own widgets bind that way, and plugins' actions, such as Modular Inventory's screen actions. Modular UI doesn't time a Hold trigger on a tab list's Next Tab and Previous Tab, which Common UI binds itself, or on keys that press a button, such as a Common UI button's **Triggering Enhanced Input Action**; such a button can have a hold of Common UI's own, its **Requires Hold**.
+
+If the log says Common UI times a hold of its own for an action, the engine version holds Enhanced Input actions itself, and the key has to be held for both holds, one after the other. For an action you bind in C++, bind it with `ModularUI::MakeBindArgs` and the widget's Register UI Action Binding instead, which leaves the hold to Common UI.
+
+**Action bar order.** Action bars order input actions by the **Nav Bar Priority** in their Common Input Metadata, lower first. Make a **Common Mapping Context Metadata** data asset, add each action that shows in action bars under **Per Action Enhanced Input Metadata** with its Nav Bar Priority, and set the asset as **Metadata** in each of those actions' **Player Mappable Key Settings** ([Using CommonUI with Enhanced Input](https://dev.epicgames.com/documentation/en-us/unreal-engine/using-commonui-with-enhnaced-input-in-unreal-engine)). Leave **Is Generic Input Action** ticked in every entry: unticked, Common UI sends the action's key to Enhanced Input instead, and the widget's action never runs.
 
 **Accept and Back.** They stay Common UI's, set once in your **Common UI Input Data**: Accept presses the focused button through Slate's navigation keys, and Back is its **Default Back Action**, a data table row whose keys are fixed. A screen's **Confirm Display Name** only says what Accept does there, beside Accept's key: the **Default Click Action**, or the **Enhanced Input Click Action** when your Common UI Input Data has one. Keys that go Back as well, such as the right mouse button, are a project setting, **Extra Back Keys** ([11](#11-keyboard-navigation)).
 
 Epic describes Common UI's Enhanced Input support as limited ([Using CommonUI with Enhanced Input](https://dev.epicgames.com/documentation/en-us/unreal-engine/using-commonui-with-enhnaced-input-in-unreal-engine)). What Modular UI relies on is binding an action and finding the keys mapped to it; holds it times itself. In C++, `ModularUI::RegisterInputAction`, in `ModularUIInput.h`, binds an action for any Common User Widget, holds included; a Modular Activatable Widget's **Register Input Action** calls it for you.
+
+**When a key does nothing.** Run `ModularUI.Input.Status` in the console while playing. For each local player it logs whether Common UI's Enhanced Input support is on, then each action taking input now: the widget that bound it, its keys on keyboard and mouse and on gamepad, its name in action bars, whether it's a hold, and whether players can rebind it. An action missing from the list isn't bound now, or something modal is open over its widget; one listed without keys for a device isn't mapped for it in a context that's added for the player. Modular UI also logs warnings: once when Common UI's Enhanced Input support is off, and once for each action Common UI doesn't bind, such as one a widget binds twice, each action shown in action bars without a Description, and each action Common UI times a hold of its own for.
+
+### 8.5 Key bindings
+
+A keybinding menu lists the actions players can rebind, and lets them change each key: press its slot, then the new key. Make four Widget Blueprints, each with a Modular UI parent:
+
+| Parent | What it is | Named widgets |
+| --- | --- | --- |
+| **Modular Key Binding List** | The list, for one kind of device: a row for each action, under a heading for each category | **`RowPanel`** (required): any panel, such as a Vertical Box inside a Scroll Box. Leave it empty: the rows are made for it |
+| **Modular Key Binding Header** | A heading over one category's actions, such as Menus | `CategoryText` |
+| **Modular Key Binding Row** | One action: its name and its keys | `DisplayNameText`, `ResetButton` (any Common UI button), and a Modular Key Binding Slot for each key the row shows |
+| **Modular Key Binding Slot** | One key, as a Modular Button | `KeyIcon` (an Image), and the Modular Button's `Label` |
+
+The list shows what Enhanced Input's user settings know, for the player's active key profile: each input action with **Player Mappable Key Settings**, mapped in an Input Mapping Context registered with the user settings ([8.4](#84-input-actions)). A row shows the action's **Display Name**, under its **Display Category**, both from its Player Mappable Key Settings, the categories in the order their first action was registered.
+
+| List setting | Description |
+| --- | --- |
+| Device | **Keyboard And Mouse** or **Gamepad**: the keys it shows and takes. Make one list for each, such as on a Keyboard tab and a Gamepad tab. |
+| Row Class, Header Class | Made for each action, and over each category's actions. Without a Header Class, every action is listed without headings. |
+| Cancel Keys | Keys that stop the wait for a key, changing nothing, so players can't put them on actions. Escape and the gamepad's Start, Gamepad Special Right, by default. |
+| Reserved Keys | Keys players can't put on actions. Pressed while waiting, they're ignored. |
+| Allow Mouse Buttons | Mouse buttons can be put on actions, on a Keyboard And Mouse list. On by default. |
+| Key Conflict | What happens when the key picked is another action's already: **Allow**, the default, puts it on both; **Swap** gives the other action this one's old key; **Refuse** leaves the keys as they were. |
+| Conflicts Within Category | Only actions of the same category count as having the key already, so a key can be a menu action's and a gameplay action's, such as R for Rotate and Reload. On by default. |
+| Save On Change | Saves the player's keys after each change, so they're used next time too. On by default. Off, call **Save Keys** yourself. |
+| Num Designer Preview Rows | Rows drawn in the designer, after one heading when there's a Header Class. |
+
+**Slots.** Place a Modular Key Binding Slot in the row's designer for each key it shows, and set each one's **Key Index**: 0 for the action's first key for the device, 1 for its second, in the order Enhanced Input keeps them. Players change the keys mapped in the Input Mapping Context and don't add more, so a slot whose Key Index is past the keys mapped for the device is hidden, keeping its place: map a second key for the device to give players a second key to change. A slot shows its key's icon from Common Input's controller data in `KeyIcon`, and the key's name in Label where there's no icon, or beside it with **Show Name With Icon**. **Waiting Text**, "Press a key" by default, shows while it waits, and **Empty Text**, "Not Bound" by default, while its key is unbound. A slot is a Modular Button, so its **Description** shows in the screen's description line while it's highlighted.
+
+**Waiting for a key.** Pressing a slot waits for the next key or mouse button the player presses. Meanwhile nothing else sees that player's presses, so Back, the action bar and the button under the cursor don't react, and a key held since before the wait is let go as usual. One of Cancel Keys stops the wait; a key of the other device, a Reserved Key or a touch is ignored, so a gamepad button never lands on a keyboard list. **On Waiting Changed** (Waiting) fires as the wait starts and stops, such as to show "Press a key, or Esc to cancel". The list stops waiting by itself as it leaves the screen.
+
+**Keys change at once, everywhere**: action bars, key widgets and holds use the new key straight away. **On Keys Changed** (Mapping Name) fires after each change, and **On Key Conflict** (Action Name, Key, Other Actions, Bound) when the key was another action's too, such as to say "Also used by Reload"; Bound says whether it was put on the action anyway. A row's `ResetButton` puts the action's keys for the device back as the game set them, and shows only while one differs; **Reset All To Default** does it for every action listed. The list follows keys changed anywhere else, and the gamepad in use, for its icons.
+
+**Gamepads.** Put the list on a screen whose Get Desired Focus Target returns the list's **Get First Slot**, so focus starts on the first action's first key.
 
 ## 9. Messages
 
@@ -383,10 +446,10 @@ A message only says something; what's highlighted on a menu belongs in its [desc
 **A look-at banner, step by step.** What the player looks at, such as an item's icon and name over the key that takes it, while a world marker shows where it is:
 
 1. Make a Widget Blueprint with parent **Modular Message Feed**. Set **Channels** to `UI.Message.Prompt`, **Mode** to Replace, **Default Duration** to 0, and leave Entry Class empty.
-2. Lay it out: a **`MessagePanel`**, such as a Border with a dark brush, holding an Image **`IconImage`**, a Text Block **`TitleText`** for the name, a Text Block **`MessageText`** for what interacting does, such as Take, and a Modular Input Key Widget **`KeyWidget`**. Each collapses while the message has nothing for it.
-3. Set **Show Transition**, such as a 0.15 second fade sliding up 12 pixels, and tick **Hide Reverses Show**.
-4. Place it in the HUD, a quarter of the way up from the bottom, centered.
-5. From the interaction code, as the player starts looking at something that should have a banner, such as an item to pick up, send a message with Channel `UI.Message.Prompt`, a **Key** unique to that thing, **Title**, **Icon**, **Body** and **Input Action**, and **Duration** 0; as they look away, **Hide Message** with the same channel and key. Sending it again with the same key updates it, such as when the thing can't be taken any more. Send nothing for things whose world marker already says enough, such as doors and boxes.
+1. Lay it out: a **`MessagePanel`**, such as a Border with a dark brush, holding an Image **`IconImage`**, a Text Block **`TitleText`** for the name, a Text Block **`MessageText`** for what interacting does, such as Take, and a Modular Input Key Widget **`KeyWidget`**. Each collapses while the message has nothing for it.
+2. Set **Show Transition**, such as a 0.15 second fade sliding up 12 pixels, and tick **Hide Reverses Show**.
+3. Place it in the HUD, a quarter of the way up from the bottom, centered.
+4. From the interaction code, as the player starts looking at something that should have a banner, such as an item to pick up, send a message with Channel `UI.Message.Prompt`, a **Key** unique to that thing, **Title**, **Icon**, **Body** and **Input Action**, and **Duration** 0; as they look away, **Hide Message** with the same channel and key. Sending it again with the same key updates it, such as when the thing can't be taken any more. Send nothing for things whose world marker already says enough, such as doors and boxes.
 
 **Recipes.**
 
@@ -402,9 +465,9 @@ A message only says something; what's highlighted on a menu belongs in its [desc
 World markers are widgets that follow things in the world, such as an interaction prompt over a door or an objective marker.
 
 1. Add a **Modular World Marker Manager Component** to the player controller. It holds the player's markers.
-2. Place a **Modular World Marker Layer** in the HUD, filling the screen. It draws a widget for each visible marker, from a pool.
-3. Make the marker widgets: Widget Blueprints with parent **Modular World Marker Widget**.
-4. For each thing, make a **Modular World Marker** object, set its **Anchor** (a scene component, and a socket), **World Offset**, **Widget Class** and **Context Object**, and add it to the manager. **Set Visible**, **Set State Tag**, **Set Progress** and **Notify Event** drive its widget; **Unregister** removes it.
+1. Place a **Modular World Marker Layer** in the HUD, filling the screen. It draws a widget for each visible marker, from a pool.
+2. Make the marker widgets: Widget Blueprints with parent **Modular World Marker Widget**.
+3. For each thing, make a **Modular World Marker** object, set its **Anchor** (a scene component, and a socket), **World Offset**, **Widget Class** and **Context Object**, and add it to the manager. **Set Visible**, **Set State Tag**, **Set Progress** and **Notify Event** drive its widget; **Unregister** removes it.
 
 | Marker widget setting | Description |
 | --- | --- |
@@ -417,15 +480,15 @@ Its events, On Context Changed, On State Tag Changed, On Progress Changed, On Ev
 
 ## 11. Keyboard navigation
 
-By default Slate moves focus with Tab and the arrow keys, and Space presses the focused button like Enter, which beats any UI action bound to Space. **Project Settings › Modular UI › Navigation** turns each off, for games where those keys mean something else:
+By default Slate moves focus with Tab and the arrow keys, and Space presses the focused button like Enter. The focused widget takes those keys before any UI action bound to them, so an input action mapped to Tab, an arrow key or Space never sees them while they move focus or press buttons. **Project Settings › Plugins › Modular UI**, under **Navigation**, turns each off, for games where those keys mean something else:
 
 | Setting | Off |
 | --- | --- |
-| Tab Navigation | Tab doesn't move focus, so it can open and close an inventory. |
+| Tab Navigation | Tab doesn't move focus, so it can open and close an inventory, or open an item's menu. |
 | Arrow Key Navigation | The arrow keys don't move focus; the gamepad's D-pad and stick still do. |
 | Space Bar Accepts | Space doesn't press the focused button. |
 
-**Extra Back Keys**, under **Project Settings › Modular UI › Input**, are keys that go Back as well as Common UI's own, such as **Right Mouse Button** for a game where the right mouse button means Back, as the gamepad's Back button does: Common UI's Back takes one key per device. They work on any Modular Activatable Widget that handles Back, and whatever is under the cursor, or has focus, gets the press first: a widget that uses it still does, such as a quick slot that clears on a right-click, and only a press nothing used goes Back. A screen needs something under the cursor that takes clicks, such as a background image, for a right-click on its empty space to reach it. Widgets with a setting of their own for it, such as a context menu's **Right Click** or a prompt's **Right Click Cancels**, follow that. Where nothing handles Back, such as in gameplay under a HUD, the keys keep their own use, such as aiming. Don't add Common UI's own Back keys here, or one press goes back twice.
+**Extra Back Keys**, under **Input** on the same page, are keys that go Back as well as Common UI's own, such as **Right Mouse Button** for a game where the right mouse button means Back, as the gamepad's Back button does: Common UI's Back takes one key per device. They go Back where Common UI's Back would: on the Modular Activatable Widget taking input, when it handles Back, never on one under a menu or a dialog. Whatever is under the cursor, or has focus, gets the press first: a widget that uses it still does, such as a quick slot that clears on a right-click, and only a press nothing used goes Back. A quick second press goes Back too, and **Consume Pointer Input** doesn't stop them. A screen needs something under the cursor that takes clicks, such as a background image, for a right-click on its empty space to reach it. Context menus and prompt dialogs have a **Right Click** setting of their own, whose Project Default follows this list ([6](#6-context-menus), [7](#7-prompts)). Where nothing handles Back, such as in gameplay under a HUD, the keys keep their own use, such as aiming. Like Back's own keys, they're fixed: they aren't input actions players rebind.
 
 ## 12. Pausing
 
@@ -478,14 +541,16 @@ Then untick **Close Reverses Open**, so everything fades out together over Close
 | `UModularRootLayout` | Modular UI's root layout. |
 | `UModularActivatableWidget` | Base class for screens. Override `NativeOnCloseStarted`, `AddRevealParts` to add parts of your own to the reveal, `RegisterConfirmAction` to bind Confirm yourself, and `GetHint` and `GetDescriptionOf` for its description line. `RegisterInputAction` binds an input action, holds included; `HasConfirmAction` and `MakeConfirmBindArgs` bind Accept with Confirm Display Name. `CloseWidgetThen`, `CallWhenDrawn`, `SetTransitionOrigin`, `ShowDescription`, `ShowDescriptionFrom`, `ClearDescriptionFrom`, `SetHighlightedDescription`, `ClearHighlightedDescription`. |
 | `UModularPageSwitcher` | Pages that change at once and come in with a transition. `SetPageTransitionsEnabled`, `OnPageShown`, and `OnPageChanging`, which fires while the page being left is still drawn. |
-| `UModularContextMenuWidget` | Context menus. `ShowPrompt(Request, Callback)`, `PlaceMenu`, `HighlightEntry`, `DescribeHighlightedEntry`, `PassPressThrough`, `GetEntryDescription`, `FindDescriptionScreen`, `GetEntriesWidget`, `IsOnMenu`, `SlidesFromBehindAnchor`. |
+| `UModularContextMenuWidget` | Context menus. `ShowPrompt(Request, Callback)`, `PlaceMenu`, `HighlightEntry`, `DescribeHighlightedEntry`, `PassPressThrough`, `GetEntryDescription`, `FindDescriptionScreen`, `GetEntriesWidget`, `IsOnMenu`, `SlidesFromBehindAnchor`, `GetEffectiveRightClick`. |
 | `FModularPromptRequest`, `FModularPromptView` | A question, and the named widgets that show one. |
 | `UModularPromptWidget`, `UAsyncAction_ShowModularPrompt` | Prompt dialogs. `SetOnAnswered` takes a callback in C++. |
 | `UModularMessageSubsystem`, `FModularMessage`, `UModularMessageFeed`, `UModularMessageEntryWidget` | Messages. A message's Payload and Input Action are kept alive while it's waiting, showing, or kept to come back, so an object passed only in a message is safe to show. |
 | `UModularBoundActionBar` | The action bar that keeps its buttons. `RefreshActions`, `GetShownActions`. |
+| `UModularBoundActionButton` | An action bar button that shows holds. `IsHoldAction`, `GetActionHoldTime`, and the event `OnRepresentedActionChanged`. |
 | `UModularSegmentedMeter`, `SModularSegmentedMeter` | The segmented meter, and its Slate widget for Slate UIs. |
-| `ModularUI::RegisterInputAction`, `ModularUI::MakeBindArgs`, `ModularUI::GetHoldTime`, `ModularUI::MakeAcceptBindArgs`, `ModularUI::HasAcceptAction`, `ModularUI::IsEnhancedInputSupportEnabled` | Binding input actions, named by their Description and holding with a Hold trigger, and Common UI's Accept, in `ModularUIInput.h`. |
-| `UModularUIHoldSubsystem` | Times holds for input actions with a Hold trigger, and sends their progress to the action bar. `StartHold`. |
+| `ModularUI::RegisterInputAction`, `ModularUI::MakeBindArgs`, `ModularUI::GetHoldTime`, `ModularUI::IsKeyForInputType`, `ModularUI::GetAcceptInputAction`, `ModularUI::MakeAcceptBindArgs`, `ModularUI::HasAcceptAction`, `ModularUI::IsEnhancedInputSupportEnabled` | Binding input actions, named by their Description and holding with a Hold trigger, which keys belong to an input method, and Common UI's Accept, in `ModularUIInput.h`. |
+| `UModularUIHoldSubsystem` | One per local player: times holds for input actions with a Hold trigger, from that player's own keys, and sends their progress to the binding's action bar button. `UModularUIHoldSubsystem::Get(Widget)`, `StartHold(InputAction, ActionBinding, HoldSeconds, OnComplete)`. |
+| `UModularKeyBindingList`, `UModularKeyBindingRow`, `UModularKeyBindingHeader`, `UModularKeyBindingSlot` | The keybinding menu. `Refresh`, `ResetAllToDefault`, `SaveKeys`, `StopWaiting`, `IsWaitingForKey`, `GetFirstSlot`, `GetDeviceMappings(MappingName)`, `ResetMapping(MappingName)`. |
 | `UModularWorldMarker`, `UModularWorldMarkerManagerComponent`, `UModularWorldMarkerLayer`, `UModularWorldMarkerWidget` | World markers. |
 | `FModularUITransition`, `FModularUITransitionPlayer` | Transition settings, and the player that plays them on a fade target and a move target. Call `Advance` each frame, such as from `FTSTicker`. A slide's `SlideUnit` is pixels, or the move target's own size. |
 | `FModularUIRevealStep`, `FModularUIReveal` | A reveal's entries, and the player that runs them. `Init` finds the named widgets in a user widget; `Add` takes widgets directly. |
@@ -499,7 +564,7 @@ Automation tests are under **ModularUI** in the Session Frontend.
 
 - **Layers by tag, not by layout.** Widgets ask for a layer by its tag, so the same screen opens on Modular UI's root layout, CommonGame's, or a stack of your own, and a plugin can open dialogs without knowing your game.
 - **Code-driven transitions next to widget animations.** Transitions know things an animation can't, such as which side of its anchor a menu opened on, and many widgets share them through their base class; animations are better for everything artists tweak by eye. Both play from the same open and close, and a close waits for both.
-- **Right-click is a choice.** Console-style games treat the right mouse button as Back; desktop games open menus with it. Context menus let each game decide, rather than one guessing for all.
+- **Right-click is a choice.** Console-style games treat the right mouse button as Back; desktop games open menus with it. Context menus and prompts let each game decide, rather than one guessing for all, and their Project Default follows Extra Back Keys, so a game decides once.
 - **Prompts are where the game wants them.** Inline keeps the player's eyes on the menu; an overlay or a dialog stands out for a question that matters. One request shows the same wherever it's asked.
 - **Messages decouple saying from showing.** Gameplay sends to a channel; the HUD decides whether that's a toast, a banner or a heading, and can change its mind without touching gameplay.
 - **Descriptions follow what's highlighted; messages come and go.** A menu's description line is state, kept by the menu and following focus and the mouse, so it's right as menus open over one another and close again. A message is an event, with its own time on screen.

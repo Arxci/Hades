@@ -265,6 +265,47 @@ void UInventoryScreenWidget::ValidateCompiledWidgetTree(const UWidgetTree& Bluep
 		}
 	}
 }
+
+void UInventoryScreenWidget::ValidateCompiledDefaults(IWidgetCompilerLog& CompileLog) const
+{
+	Super::ValidateCompiledDefaults(CompileLog);
+
+	// Each action shows in action bars by its input action's Description.
+	struct FActionField
+	{
+		const UInputAction* InputAction;
+		FText FieldName;
+	};
+	const FActionField ActionFields[] =
+	{
+		{ MoveInputAction, LOCTEXT("MoveField", "Move Input Action") },
+		{ ItemMenuInputAction, LOCTEXT("ItemMenuField", "Item Menu Input Action") },
+		{ RotateInputAction, LOCTEXT("RotateField", "Rotate Input Action") },
+		{ SplitInputAction, LOCTEXT("SplitField", "Split Input Action") },
+		{ TransferInputAction, LOCTEXT("TransferField", "Transfer Input Action") },
+		{ TakeAllInputAction, LOCTEXT("TakeAllField", "Take All Input Action") },
+		{ SortInputAction, LOCTEXT("SortField", "Sort Input Action") }
+	};
+
+	bool bAnyActionSet = false;
+	for (const FActionField& Field : ActionFields)
+	{
+		if (!Field.InputAction)
+		{
+			continue;
+		}
+		bAnyActionSet = true;
+		if (Field.InputAction->ActionDescription.IsEmpty())
+		{
+			CompileLog.Warning(FText::Format(LOCTEXT("NamelessAction", "{0}, {1}, has no Description, so action bars show it without a name."),
+				Field.FieldName, FText::FromString(Field.InputAction->GetName())));
+		}
+	}
+	if (bAnyActionSet && !ModularUI::IsEnhancedInputSupportEnabled())
+	{
+		CompileLog.Warning(LOCTEXT("ActionsIgnored", "The inventory actions do nothing while Common UI's Enable Enhanced Input Support is off, in Project Settings > Game > Common Input Settings."));
+	}
+}
 #endif
 
 UInventoryItemMenuWidget* UInventoryScreenWidget::OpenItemMenu(FInventoryItemHandle Item, TSubclassOf<UInventoryItemMenuWidget> MenuClass)
@@ -501,22 +542,35 @@ UInventoryItemWidget* UInventoryScreenWidget::FindItemWidgetAt(const FVector2D& 
 // Mouse: clicks and the wheel that nothing on the screen used come here.
 FReply UInventoryScreenWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
+	return HandleHeldRightClick(InMouseEvent) ? FReply::Handled() : Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+}
+
+FReply UInventoryScreenWidget::NativeOnMouseButtonDoubleClick(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	// The second of two quick right-clicks comes as a double-click, and does what the first did.
+	return HandleHeldRightClick(InMouseEvent) ? FReply::Handled() : Super::NativeOnMouseButtonDoubleClick(InGeometry, InMouseEvent);
+}
+
+bool UInventoryScreenWidget::HandleHeldRightClick(const FPointerEvent& InMouseEvent)
+{
 	UInventoryUISubsystem* Interaction = GetInteraction();
-	if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton && Interaction && Interaction->IsHolding())
+	if (InMouseEvent.GetEffectingButton() != EKeys::RightMouseButton || !Interaction || !Interaction->IsHolding())
 	{
-		switch (Interaction->GetStyle().HeldRightClick)
-		{
-		case EInventoryHeldRightClick::PutBack:
-			Interaction->CancelHold();
-			return FReply::Handled();
-		case EInventoryHeldRightClick::Rotate:
-			Interaction->RotateHeld();
-			return FReply::Handled();
-		case EInventoryHeldRightClick::AsUsual:
-			break;
-		}
+		return false;
 	}
-	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+
+	switch (Interaction->GetStyle().HeldRightClick)
+	{
+	case EInventoryHeldRightClick::PutBack:
+		Interaction->CancelHold();
+		return true;
+	case EInventoryHeldRightClick::Rotate:
+		Interaction->RotateHeld();
+		return true;
+	case EInventoryHeldRightClick::AsUsual:
+		break;
+	}
+	return false;
 }
 
 FReply UInventoryScreenWidget::NativeOnMouseWheel(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
@@ -743,17 +797,17 @@ void UInventoryScreenWidget::RefreshActions()
 		const bool bTurnHeld = bTabKeysTurnHeldItem && bUsable && Interaction->IsHolding();
 		const FSimpleDelegate Rotate = FSimpleDelegate::CreateUObject(this, &ThisClass::HandleRotateAction);
 		TabList->SetListeningForInput(!bTurnHeld && !IsClosing());
-		SetActionBound(PreviousTabRotateHandle, TabList->GetPreviousTabEnhancedInputAction(), bTurnHeld, Rotate, /*bShowInActionBar*/ false);
-		SetActionBound(NextTabRotateHandle, TabList->GetNextTabEnhancedInputAction(), bTurnHeld, Rotate, /*bShowInActionBar*/ false);
+		SetActionBound(PreviousTabRotateHandle, TabList->GetPreviousTabEnhancedInputAction(), bTurnHeld, Rotate, /*bShouldDisplayInActionBar*/ false);
+		SetActionBound(NextTabRotateHandle, TabList->GetNextTabEnhancedInputAction(), bTurnHeld, Rotate, /*bShouldDisplayInActionBar*/ false);
 	}
 }
 
 void UInventoryScreenWidget::SetActionBound(FUIActionBindingHandle& Handle, const UInputAction* InputAction, bool bBound, const FSimpleDelegate& Handler,
-	bool bShowInActionBar)
+	bool bShouldDisplayInActionBar)
 {
 	if (bBound && !Handle.IsValid() && InputAction)
 	{
-		Handle = RegisterInputAction(InputAction, bShowInActionBar, Handler);
+		Handle = RegisterInputAction(InputAction, bShouldDisplayInActionBar, Handler);
 	}
 	else if (!bBound && Handle.IsValid())
 	{

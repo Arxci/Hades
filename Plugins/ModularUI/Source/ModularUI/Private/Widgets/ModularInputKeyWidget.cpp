@@ -14,6 +14,12 @@ void UModularInputKeyWidget::SetInputAction(const UInputAction* InInputAction)
 	Refresh();
 }
 
+void UModularInputKeyWidget::SetShowOn(EModularInputKeyShowOn InShowOn)
+{
+	ShowOn = InShowOn;
+	Refresh();
+}
+
 void UModularInputKeyWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
@@ -62,13 +68,22 @@ UEnhancedInputLocalPlayerSubsystem* UModularInputKeyWidget::GetEnhancedInput() c
 
 void UModularInputKeyWidget::Refresh()
 {
+	// In the designer there's no player to ask, so it stays as laid out, to be seen and placed.
+	if (IsDesignTime())
+	{
+		return;
+	}
+
 	UCommonInputSubsystem* CommonInput = UCommonInputSubsystem::Get(GetOwningLocalPlayer());
 	UEnhancedInputLocalPlayerSubsystem* EnhancedInput = GetEnhancedInput();
 	const ECommonInputType InputType = CommonInput ? CommonInput->GetCurrentInputType() : ECommonInputType::MouseAndKeyboard;
+	const bool bDeviceShown = ShowOn == EModularInputKeyShowOn::AnyDevice
+		|| (ShowOn == EModularInputKeyShowOn::Gamepad && InputType == ECommonInputType::Gamepad)
+		|| (ShowOn == EModularInputKeyShowOn::KeyboardAndMouse && InputType == ECommonInputType::MouseAndKeyboard);
 
 	// The first key bound for the device in use: a gamepad's own keys, or else the keyboard's and the mouse's. A touch screen has none.
 	FKey Key;
-	if (InputAction && EnhancedInput && InputType != ECommonInputType::Touch)
+	if (InputAction && EnhancedInput && InputType != ECommonInputType::Touch && bDeviceShown)
 	{
 		const bool bGamepad = InputType == ECommonInputType::Gamepad;
 		for (const FKey& Mapped : EnhancedInput->QueryKeysMappedToAction(InputAction))

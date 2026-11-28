@@ -60,10 +60,13 @@ public:
 	// Input
 	/**
 	 * Keys that go Back on a Modular Activatable Widget that handles Back, besides Common UI's own Back keys, such as Right Mouse Button for a
-	 * game where the right mouse button means Back. Whatever is under the cursor, or has focus, gets the press first: a widget that uses it,
-	 * such as a quick slot that clears on a right-click, still does, and only a press nothing used goes Back. Widgets with a setting of their
-	 * own for it, such as a context menu's Right Click or a prompt's Right Click Cancels, follow that. Where no widget handles Back, such as in
-	 * gameplay, the keys keep their own use. Back's own keys are fixed, so these are too: they aren't Enhanced Input actions.
+	 * game where the right mouse button means Back. They go Back where Common UI's Back would: on the widget taking input, never on one under
+	 * a menu or dialog. Whatever is under the cursor, or has focus, gets the press first: a widget that uses it, such as a quick slot that
+	 * clears on a right-click, still does, and only a press nothing used goes Back. A quick second press goes Back too, and Consume Pointer
+	 * Input doesn't stop them. For a press on a screen's empty space to reach the screen, something there has to take clicks, such as a
+	 * background image. Context menus and prompts have a Right Click setting of their own, whose Project Default follows this list. Where no
+	 * widget handles Back, such as in gameplay, the keys keep their own use. Back's own keys are fixed, so these are too: they aren't Enhanced
+	 * Input actions.
 	 */
 	UPROPERTY(config, EditAnywhere, Category = "Input")
 	TArray<FKey> ExtraBackKeys;

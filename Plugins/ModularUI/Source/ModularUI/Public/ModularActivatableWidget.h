@@ -12,6 +12,7 @@
 
 #include "ModularActivatableWidget.generated.h"
 
+class FModularUIClosingGuard;
 class UInputAction;
 class USoundBase;
 class UTextBlock;
@@ -62,6 +63,7 @@ public:
 
 #if WITH_EDITOR
 	virtual void ValidateCompiledWidgetTree(const UWidgetTree& BlueprintWidgetTree, class IWidgetCompilerLog& CompileLog) const override;
+	virtual void ValidateCompiledDefaults(class IWidgetCompilerLog& CompileLog) const override;
 #endif
 
 	/** Closes it once its close transition and animation end. It takes no clicks or keys meanwhile. */
@@ -147,9 +149,12 @@ public:
 protected:
 	//~ Begin UUserWidget Interface
 	virtual void NativeOnInitialized() override;
+	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
 	virtual FReply NativeOnPreviewMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	virtual FReply NativeOnPreviewKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
 	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+	virtual FReply NativeOnMouseButtonDoubleClick(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
 	//~ End UUserWidget Interface
 
@@ -232,10 +237,17 @@ protected:
 
 	/**
 	 * Input actions that close this as Back does, such as the key that opened it, so the same key toggles it: I for an inventory, or M for a
-	 * map. Not shown in action bars.
+	 * map. Shown in action bars only with Show Close Input Actions.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TArray<TObjectPtr<const UInputAction>> CloseInputActions;
+
+	/**
+	 * Close Input Actions show in action bars too, each by its Description beside its key, such as Resume beside the gamepad's Start on a
+	 * pause menu. Off, they work without showing, as for a key that opened the screen.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	bool bShowCloseInputActions = false;
 
 	/** Whether Confirm has anything to show: a Confirm Display Name, and an Accept in the project's Common UI Input Data. */
 	bool HasConfirmAction() const;
@@ -314,8 +326,23 @@ protected:
 private:
 	void SetPauseRequested(bool bRequested);
 
-	/** Goes Back for one of the project's Extra Back Keys, while this is open and handles Back. False when it didn't. */
+	/** Goes Back for one of the project's Extra Back Keys, while this is open, handles Back and takes input. False when it didn't. */
 	bool HandleExtraBackKey(const FKey& Key);
+
+	/**
+	 * Goes Back for a mouse button nothing on this widget used, if it's one of the Extra Back Keys, and says so in the reply. Consume Pointer
+	 * Input reports every press as handled, though nothing used it, so it doesn't stop them.
+	 */
+	FReply GoBackForUnusedPress(const FReply& Reply, const FKey& Button);
+
+	/** Whether Common UI's Consume Pointer Input is on for it. Common UI keeps the setting private, so it's read through reflection. */
+	bool ConsumesPointerInput() const;
+
+	/**
+	 * Whether it takes input now, as Common UI routes it: one of the bindings it made, such as its Back, is among its player's active ones, so
+	 * nothing modal is open over it.
+	 */
+	bool IsTakingInput() const;
 
 	/**
 	 * Moves the reveal on, and watches the close animation, from the core ticker, so both play with the game paused too. A close finishes
@@ -325,9 +352,20 @@ private:
 	void FinishClosingWhenDone();
 	void FinishClosing();
 
+	/**
+	 * Sets whether it's closing. While it is, and it's on screen, the closing guard keeps double-clicks from it and from everything on it, as
+	 * its preview keeps every other press from them.
+	 */
+	void SetClosing(bool bInClosing);
+	void AddClosingGuard();
+	void RemoveClosingGuard();
+
 	FModularUIReveal Reveal;
 	FTSTicker::FDelegateHandle TickHandle;
 	FTSTicker::FDelegateHandle DrawnHandle;
+
+	/** Keeps double-clicks from it while it closes. Registered with Slate only meanwhile. */
+	TSharedPtr<FModularUIClosingGuard> ClosingGuard;
 
 	/** The animation a close waits for. */
 	TWeakObjectPtr<const UWidgetAnimation> AwaitedAnimation;

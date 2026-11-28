@@ -5,11 +5,41 @@
 #include "Components/TextBlock.h"
 #include "InputCoreTypes.h"
 
+#include "ModularUISettings.h"
+
 UModularPromptWidget::UModularPromptWidget(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
 	bIsBackHandler = true;
 	bIsModal = true;
 	InputConfig = EModularUIInputMode::Menu;
+}
+
+void UModularPromptWidget::PostLoad()
+{
+	Super::PostLoad();
+
+#if WITH_EDITORONLY_DATA
+	// Dialogs saved before Right Click replaced Right Click Cancels. Only a dialog that turned it off saved it, so only that's carried over.
+	if (!bRightClickCancels_DEPRECATED)
+	{
+		RightClick = EModularPromptRightClick::Ignore;
+		bRightClickCancels_DEPRECATED = true;
+	}
+#endif
+}
+
+bool UModularPromptWidget::DoesRightClickCancel() const
+{
+	switch (RightClick)
+	{
+	case EModularPromptRightClick::Cancel:
+		return true;
+	case EModularPromptRightClick::Ignore:
+		return false;
+	case EModularPromptRightClick::ProjectDefault:
+		break;
+	}
+	return GetDefault<UModularUISettings>()->ExtraBackKeys.Contains(EKeys::RightMouseButton);
 }
 
 void UModularPromptWidget::NativeOnInitialized()
@@ -122,7 +152,7 @@ FReply UModularPromptWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
 	const FKey Button = InMouseEvent.GetEffectingButton();
 	if (Button == EKeys::RightMouseButton)
 	{
-		if (bRightClickCancels)
+		if (DoesRightClickCancel())
 		{
 			Cancel();
 		}
@@ -137,6 +167,12 @@ FReply UModularPromptWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry
 
 	// Presses on the dialog reach its buttons first, so whatever comes here goes no further.
 	return FReply::Handled();
+}
+
+FReply UModularPromptWidget::NativeOnMouseButtonDoubleClick(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	// The second of two quick presses comes as a double-click: a press like the first.
+	return NativeOnMouseButtonDown(InGeometry, InMouseEvent);
 }
 
 void UModularPromptWidget::Confirm()

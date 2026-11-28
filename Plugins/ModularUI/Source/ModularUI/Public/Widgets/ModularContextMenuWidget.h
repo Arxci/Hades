@@ -66,6 +66,11 @@ UENUM(BlueprintType)
 enum class EModularMenuRightClick : uint8
 {
 	/**
+	 * Back while the project's Extra Back Keys have Right Mouse Button, as in games where the right mouse button means Back; otherwise Pass
+	 * Through, as desktop context menus do.
+	 */
+	ProjectDefault,
+	/**
 	 * Back, wherever the cursor is: an open prompt is answered with no, or else the menu closes, a step at a time as Back goes. For games
 	 * where the right mouse button means Back, as the gamepad's Back button does on consoles.
 	 */
@@ -237,6 +242,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Context Menu|Prompt")
 	void CancelPrompt();
 
+	/** What a right-click does on this menu: Right Click, with Project Default worked out from the project's Extra Back Keys. */
+	UFUNCTION(BlueprintPure, Category = "Context Menu")
+	EModularMenuRightClick GetEffectiveRightClick() const;
+
 	/** An entry Add Entry made was picked, after its prompt was answered yes, with the count chosen, or 0. */
 	UPROPERTY(BlueprintAssignable, Category = "Context Menu|Entries")
 	FModularMenuEntryChosenSignature OnEntryChosen;
@@ -374,10 +383,11 @@ protected:
 
 	/**
 	 * What a right-click does, on the menu or off it: Back goes back a step, wherever the cursor is, as in games whose right mouse button means
-	 * Back; Pass Through does as desktop menus do, closing it and reaching what's under a right-click off it; Ignore does nothing.
+	 * Back; Pass Through does as desktop menus do, closing it and reaching what's under a right-click off it; Ignore does nothing. Project
+	 * Default is Back while the project's Extra Back Keys have Right Mouse Button, and Pass Through otherwise.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Context Menu|Dismissing")
-	EModularMenuRightClick RightClick = EModularMenuRightClick::PassThrough;
+	EModularMenuRightClick RightClick = EModularMenuRightClick::ProjectDefault;
 
 	// Highlight
 	/**
@@ -534,7 +544,10 @@ private:
 	UFUNCTION()
 	void HandleQuantityChanged(float Value);
 
-	/** Confirm's key was pressed: it only shows what Accept does, so Accept goes on, to the entry the player sees, once this returns. */
+	/**
+	 * Confirm's binding saw Accept, which only happens when nothing focused took it first, so focus has left the entries: the entry the player
+	 * sees takes focus, for Accept to pick it.
+	 */
 	void HandleConfirmAction();
 
 	// Description: says what the highlighted entry does on the screen's Description Text, or stops.
